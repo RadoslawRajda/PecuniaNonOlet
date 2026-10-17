@@ -5,20 +5,33 @@ import {
   Text,
   StyleSheet,
   StatusBar,
+  TouchableOpacity,
+  Vibration,
 } from 'react-native';
 import {
   SafeAreaProvider,
   SafeAreaView,
 } from 'react-native-safe-area-context';
 
+
 function App() {
+
+
+  function loginButtonPressed()
+  {
+    Vibration.vibrate(100);
+  }
+  function registerButtonPressed()
+  {
+    Vibration.vibrate(1000);
+  }
   return (
     <SafeAreaProvider>
       <StatusBar barStyle="light-content" backgroundColor="#101827" />
 
       <SafeAreaView style={styles.container}>
         <View style={styles.content}>
-          <Text style={styles.emoji}>💵 💰 🤑</Text>
+          <Text style={styles.emoji}>💵 💰 🤑 </Text>
 
           <Text style={styles.title}>
             Pecunia non olet
@@ -28,9 +41,22 @@ function App() {
             Turbo bank
           </Text>
 
-          <Text style={styles.dollars}>
-            💸 💲 💸
-          </Text>
+          <Text style={styles.dollars}>💸 💲 💸 </Text>
+
+          <View style={styles.buttons}>
+            <TouchableOpacity 
+            style={styles.button} 
+            activeOpacity={0.5} 
+            onPress={() => {loginButtonPressed()}}>
+              <Text style={styles.buttonText}>Zaloguj 💰💰💰 </Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+            style={styles.button} 
+            activeOpacity={0.5} 
+            onPress={() => {registerButtonPressed()}}>
+              <Text style={styles.buttonText}>Załóż konto🤑 </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.footer}>
@@ -95,6 +121,29 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 26,
     textAlign: 'center',
+  },
+  buttons: {
+    marginTop: 36,
+    width: '100%',
+    alignItems: 'center',
+    gap: 20
+  },
+
+  button: {
+    backgroundColor: '#FACC15',
+    paddingVertical: 18,
+    paddingHorizontal: 60,
+    width: '80%',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 5,
+  },
+
+  buttonText: {
+    color: '#000000',
+    fontSize: 20,
+    fontWeight: 'bold',
   },
 });
 
