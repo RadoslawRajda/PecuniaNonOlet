@@ -26,7 +26,7 @@ export function LoginScreen({
   onSubmit,
   onPasskey,
 }: Props) {
-  const [identifier, setIdentifier] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
   return (
@@ -55,8 +55,8 @@ export function LoginScreen({
           <FormInput
             label="Login lub e-mail"
             placeholder="Wpisz login lub e-mail"
-            value={identifier}
-            onChangeText={setIdentifier}
+            value={email}
+            onChangeText={setEmail}
             autoCapitalize="none"
             autoCorrect={false}
             autoComplete="username"
@@ -74,7 +74,7 @@ export function LoginScreen({
           <AppButton
             title="Zaloguj się"
             onPress={() =>
-              onSubmit({identifier, password})
+              onSubmit({email, password})
             }
           />
 

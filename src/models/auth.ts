@@ -1,7 +1,7 @@
-export type ScreenName = 'home' | 'login' | 'register';
+export type ScreenName = 'home' | 'login' | 'register' | 'dashboard';
 
 export type LoginData = {
-  identifier: string;
+  email: string;
   password: string;
 };
 
@@ -12,7 +12,7 @@ export type RegisterData = {
 };
 
 export function validateLogin(data: LoginData): string | null {
-  if (!data.identifier.trim()) {
+  if (!data.email.trim()) {
     return 'Podaj login lub adres e-mail.';
   }
 

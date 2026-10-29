@@ -1,6 +1,8 @@
 import {useState} from 'react';
 import {Alert} from 'react-native';
 
+import { API_URL } from '@env';
+
 import {
   LoginData,
   RegisterData,
@@ -11,12 +13,14 @@ import {
 
 export function useAppController() {
   const [screen, setScreen] = useState<ScreenName>('home');
+  const [username, setUsername] = useState<String>('test user');
 
   const goHome = () => setScreen('home');
   const goLogin = () => setScreen('login');
   const goRegister = () => setScreen('register');
+  const goDashboard = () => setScreen('dashboard');
 
-  function submitLogin(data: LoginData) {
+  async function submitLogin(data: LoginData) {
     const error = validateLogin(data);
 
     if (error) {
@@ -24,13 +28,48 @@ export function useAppController() {
       return;
     }
 
-    Alert.alert(
-      'Logowanie',
-      'Formularz jest poprawny. Logowanie do serwera nie jest jeszcze podłączone.',
-    );
+    try {
+      const response = await fetch(API_URL + "/api/login", {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      });
+
+      const responseData = await response.json().catch(() => null);
+      
+      Alert.alert(
+        'Odpowiedź serwera (Logowanie)',
+        JSON.stringify(responseData || { status: response.status, ok: response.ok }, null, 2),
+        //SetUsername(responseData.username)
+        [
+          {
+            text: 'OK',
+            onPress: () =>{
+              if (response.ok) {
+                goDashboard();
+              }
+            }
+          }
+        ]
+      );
+
+    } catch (e: any) {
+      Alert.alert('Błąd sieci', 
+        e?.message + " \nAddress: " + API_URL + "\n" + JSON.stringify(data) || 'Nie udało się połączyć z serwerem.' + " \nAddress: " + API_URL + "\n" + JSON.stringify(data),
+        [
+          {
+            text: 'OK',
+            onPress: () =>{
+                goDashboard();
+              }
+          }
+        ]);
+    }
   }
 
-  function submitRegister(data: RegisterData) {
+  async function submitRegister(data: RegisterData) {
     const error = validateRegister(data);
 
     if (error) {
@@ -38,10 +77,25 @@ export function useAppController() {
       return;
     }
 
-    Alert.alert(
-      'Rejestracja',
-      'Formularz jest poprawny. Rejestracja wymaga jeszcze backendu.',
-    );
+    try {
+      const response = await fetch(API_URL + "/api/register", {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      });
+
+      const responseData = await response.json().catch(() => null);
+
+      Alert.alert(
+        'Odpowiedź serwera (Rejestracja)',
+        JSON.stringify(responseData || { status: response.status, ok: response.ok }, null, 2)
+      );
+    } catch (e: any) {
+      Alert.alert('Błąd sieci', e?.message || 'Nie udało się połączyć z serwerem.');
+    }
+
   }
 
   function loginWithPasskey() {
@@ -53,9 +107,11 @@ export function useAppController() {
 
   return {
     screen,
+    username,
     goHome,
     goLogin,
     goRegister,
+    goDashboard,
     submitLogin,
     submitRegister,
     loginWithPasskey,

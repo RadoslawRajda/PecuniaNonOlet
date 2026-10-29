@@ -11,6 +11,7 @@ import {useAppController} from './src/controllers/useAppController';
 import {HomeScreen} from './src/views/screens/HomeScreen';
 import {LoginScreen} from './src/views/screens/LoginScreen';
 import {RegisterScreen} from './src/views/screens/RegisterScreen';
+import {Dashboard} from './src/views/screens/Dashboard';
 
 import {COLORS} from './src/views/theme';
 
@@ -49,6 +50,13 @@ function App() {
             onBack={controller.goHome}
             onLogin={controller.goLogin}
             onSubmit={controller.submitRegister}
+          />
+        )}
+
+        {controller.screen === 'dashboard' && (
+          <Dashboard
+            onBack={controller.goHome}
+            username={controller.username}
           />
         )}
 
