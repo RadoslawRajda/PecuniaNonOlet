@@ -11,6 +11,8 @@ import {
   validateRegister,
 } from '../models/auth';
 
+const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
+
 export function useAppController() {
   const [screen, setScreen] = useState<ScreenName>('home');
   const [username, setUsername] = useState<String>('test user');
@@ -29,7 +31,7 @@ export function useAppController() {
     }
 
     try {
-      const response = await fetch(API_URL + "/api/login", {
+      const response = await fetch(`${apiBaseUrl}/api/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -56,16 +58,10 @@ export function useAppController() {
       );
 
     } catch (e: any) {
-      Alert.alert('Błąd sieci', 
-        e?.message + " \nAddress: " + API_URL + "\n" + JSON.stringify(data) || 'Nie udało się połączyć z serwerem.' + " \nAddress: " + API_URL + "\n" + JSON.stringify(data),
-        [
-          {
-            text: 'OK',
-            onPress: () =>{
-                goDashboard();
-              }
-          }
-        ]);
+      Alert.alert(
+        'Błąd sieci',
+        `${e?.message || 'Nie udało się połączyć z serwerem.'}\nAdres: ${apiBaseUrl}/api/login`,
+      );
     }
   }
 
@@ -78,12 +74,12 @@ export function useAppController() {
     }
 
     try {
-      const response = await fetch(API_URL + "/api/register", {
+      const response = await fetch(`${apiBaseUrl}/api/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify({email: data.email.trim(), password: data.password}),
       });
 
       const responseData = await response.json().catch(() => null);
@@ -93,7 +89,10 @@ export function useAppController() {
         JSON.stringify(responseData || { status: response.status, ok: response.ok }, null, 2)
       );
     } catch (e: any) {
-      Alert.alert('Błąd sieci', e?.message || 'Nie udało się połączyć z serwerem.');
+      Alert.alert(
+        'Błąd sieci',
+        `${e?.message || 'Nie udało się połączyć z serwerem.'}\nAdres: ${apiBaseUrl}/api/register`,
+      );
     }
 
   }
