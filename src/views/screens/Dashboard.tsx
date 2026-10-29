@@ -12,33 +12,36 @@ import {COLORS} from '../theme';
 
 type Props = {
   onBack: () => void;
-  username: String;
+  onLogout: () => void;
+  username: string;    
 };
 
-export function Dashboard({onBack, username}: Props) {
+export function Dashboard({onBack, onLogout, username}: Props) {
   return (
     <ScrollView contentContainerStyle={styles.container}>
-        <Pressable
-            accessibilityRole="button"
-            onPress={onBack}
-            style={styles.backButton}>
-            <Text style={styles.backText}>← Wróć</Text>
-        </Pressable>
-    <View style={styles.content}>
-        <BrandLogo />
+        <View style={styles.content}>
+            <BrandLogo />
 
-        <Text style={styles.title}>
-        Dashboard
-        </Text>
+            <Text style={styles.title}>
+            Dashboard
+            </Text>
 
-        <Text style={styles.subtitle}>
-        Tu będą guziki.
-        </Text>
+            <Text style={styles.subtitle}>
+            Panel użytkownika
+            </Text>
 
-        <Text style={styles.description}>
-        Jesteś Zalogowany jako {username} :D
-        </Text>
-    </View>
+            <Text style={styles.description}>
+            Jesteś Zalogowany jako {username} :D
+            </Text>
+
+            {/* Kontener na przyciski */}
+            <View style={styles.buttons}>
+              <AppButton 
+                title="Wyloguj się" 
+                onPress={onLogout} 
+              />
+            </View>
+        </View>
     </ScrollView>
   );
 }
@@ -54,7 +57,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 55,
+    paddingVertical: 35,
   },
   title: {
     color: COLORS.yellow,

@@ -1,4 +1,4 @@
-export type ScreenName = 'home' | 'login' | 'register' | 'dashboard';
+export type ScreenName = 'loading' | 'home' | 'login' | 'register' | 'dashboard';
 
 export type LoginData = {
   email: string;
