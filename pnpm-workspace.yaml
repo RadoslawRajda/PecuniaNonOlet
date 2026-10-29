@@ -1,0 +1,14 @@
+packages:
+  - "."
+
+minimumReleaseAge: 10080
+
+blockExoticSubdeps: true
+
+trustPolicy: no-downgrade
+trustPolicyExclude:
+  - "semver@6.3.1"
+
+nodeLinker: hoisted
+
+allowBuilds: {}
