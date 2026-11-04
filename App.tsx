@@ -12,6 +12,7 @@ import {LoginScreen} from './src/views/screens/LoginScreen';
 import {RegisterScreen} from './src/views/screens/RegisterScreen';
 import {Dashboard} from './src/views/screens/Dashboard';
 import {ExchangeRatesScreen} from './src/views/screens/ExchangeRatesScreen';
+import {ProfileScreen} from './src/views/screens/ProfileScreen';
 import {Loading} from './src/views/screens/Loading';
 
 import {COLORS} from './src/views/theme';
@@ -61,11 +62,19 @@ function App() {
             onLogout={controller.logout}
             username={controller.username}
             onExchangeRates={controller.goExchangeRates}
+            onProfile={controller.goProfile}
           />
         )}
 
         {controller.screen === 'exchangeRates' && (
           <ExchangeRatesScreen onBack={controller.goDashboard} />
+        )}
+
+        {controller.screen === 'profile' && (
+          <ProfileScreen
+            onChangeProfile={() => {}}
+            onBack={controller.goDashboard}
+          />
         )}
 
       </SafeAreaView>

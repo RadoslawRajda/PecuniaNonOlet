@@ -13,12 +13,14 @@ type Props = {
   onLogout: () => void;
   username: string;    
   onExchangeRates: () => void;
+  onProfile: () => void;
 };
 
 export function Dashboard({
   onLogout,
   username,
   onExchangeRates,
+  onProfile,
 }: Props) {
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -42,6 +44,12 @@ export function Dashboard({
               <AppButton
                 title="Kurs wymiany walut"
                 onPress={onExchangeRates}
+              />
+
+              <AppButton
+                title="Profil"
+                onPress={onProfile}
+                secondary
               />
 
               <AppButton 
