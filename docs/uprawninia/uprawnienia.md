@@ -88,9 +88,9 @@ W aplikacji planujemy wykorzystać trzy zasoby urządzenia:
 **iOS:**
 - NSCameraUsageDescription
 
-**Moment prośby:** Po kliknięciu przycisku "Skanuj kod QR".
+**Moment prośby:** Po wejściu w widok skanera QR.
 
-**Obsługa odmowy:** Aplikacja wyświetla możliwość ręcznego wpisania danych przelewu lub kodu. Przy trwałej odmowie może wyświetlić instrukcję włączenia uprawnienia w ustawieniach systemu.
+**Obsługa odmowy:** Widok pozostaje dostępny, ale skanowanie nie jest aktywne. Przy trwałej odmowie aplikacja może wyświetlić instrukcję włączenia uprawnienia w ustawieniach systemu.
 
 **Minimalizacja danych:** Przetwarzamy wyłącznie dane odczytane z kodu QR. Nie zapisujemy obrazu kamery.
 
@@ -143,5 +143,4 @@ W aplikacji planujemy wykorzystać trzy zasoby urządzenia:
 | Wybrany kraj | Pamięć aplikacji | Wewnętrzne | Lokalny zapis ustawień |
 | Zdjęcie profilowe | Tymczasowo na urządzeniu; docelowo backend | Dane osobowe | Dostęp ograniczony do aplikacji, bez zbędnych kopii |
 | Dane zeskanowanego QR | Pamięć operacyjna podczas przetwarzania | Potencjalnie poufne | Walidacja danych |
-
 

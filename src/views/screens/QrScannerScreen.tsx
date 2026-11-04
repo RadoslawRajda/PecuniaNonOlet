@@ -1,19 +1,41 @@
-import React from 'react';
+import React, {useEffect, useState} from 'react';
 import {
   ScrollView,
   StyleSheet,
   Text,
   View,
+  Platform,
 } from 'react-native';
 
 import {AppButton, BrandLogo} from '../components/Ui';
 import {COLORS} from '../theme';
+import {
+  PERMISSIONS,
+  request,
+  RESULTS,
+} from 'react-native-permissions';
 
 type Props = {
   onBack: () => void;
 };
 
 export function QrScannerScreen({onBack}: Props) {
+  const [cameraPermission, setCameraPermission] = useState<string>('pending');
+
+  useEffect(() => {
+    const permission =
+      Platform.OS === 'ios'
+        ? PERMISSIONS.IOS.CAMERA
+        : PERMISSIONS.ANDROID.CAMERA;
+
+    request(permission)
+      .then(status => setCameraPermission(status))
+      .catch(error => {
+        console.error('Nie udało się poprosić o dostęp do kamery:', error);
+        setCameraPermission(RESULTS.UNAVAILABLE);
+      });
+  }, []);
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.content}>
@@ -22,6 +44,13 @@ export function QrScannerScreen({onBack}: Props) {
         <Text style={styles.title}>Skaner QR</Text>
         <Text style={styles.description}>
           Umieść kod QR w ramce, aby go zeskanować.
+        </Text>
+        <Text style={styles.permissionStatus}>
+          {cameraPermission === RESULTS.GRANTED
+            ? 'Dostęp do kamery przyznany'
+            : cameraPermission === 'pending'
+              ? 'Prośba o dostęp do kamery...'
+              : 'Brak dostępu do kamery'}
         </Text>
 
         <View style={styles.scannerFrame}>
@@ -67,6 +96,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     textAlign: 'center',
     marginTop: 12,
+  },
+  permissionStatus: {
+    color: COLORS.muted,
+    fontSize: 14,
+    marginTop: 8,
   },
   scannerFrame: {
     width: 240,
