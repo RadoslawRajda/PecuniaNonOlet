@@ -72,6 +72,7 @@ export function useAppController() {
   const goLogin = () => setScreen('login');
   const goRegister = () => setScreen('register');
   const goDashboard = () => setScreen('dashboard');
+  const goExchangeRates = () => setScreen('exchangeRates');
 
   async function submitLogin(data: LoginData) {
     const error = validateLogin(data);
@@ -269,6 +270,7 @@ export function useAppController() {
     goLogin,
     goRegister,
     goDashboard,
+    goExchangeRates,
     submitLogin,
     submitRegister,
     loginWithPasskey,
