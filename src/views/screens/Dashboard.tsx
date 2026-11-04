@@ -14,6 +14,7 @@ type Props = {
   username: string;    
   onExchangeRates: () => void;
   onProfile: () => void;
+  onQrScanner: () => void;
 };
 
 export function Dashboard({
@@ -21,6 +22,7 @@ export function Dashboard({
   username,
   onExchangeRates,
   onProfile,
+  onQrScanner,
 }: Props) {
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -49,6 +51,12 @@ export function Dashboard({
               <AppButton
                 title="Profil"
                 onPress={onProfile}
+                secondary
+              />
+
+              <AppButton
+                title="Skaner QR"
+                onPress={onQrScanner}
                 secondary
               />
 

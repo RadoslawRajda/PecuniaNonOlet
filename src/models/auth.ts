@@ -5,7 +5,8 @@ export type ScreenName =
   | 'register'
   | 'dashboard'
   | 'exchangeRates'
-  | 'profile';
+  | 'profile'
+  | 'qrScanner';
 
 export type LoginData = {
   email: string;

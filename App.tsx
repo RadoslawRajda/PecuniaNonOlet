@@ -13,6 +13,7 @@ import {RegisterScreen} from './src/views/screens/RegisterScreen';
 import {Dashboard} from './src/views/screens/Dashboard';
 import {ExchangeRatesScreen} from './src/views/screens/ExchangeRatesScreen';
 import {ProfileScreen} from './src/views/screens/ProfileScreen';
+import {QrScannerScreen} from './src/views/screens/QrScannerScreen';
 import {Loading} from './src/views/screens/Loading';
 
 import {COLORS} from './src/views/theme';
@@ -63,6 +64,7 @@ function App() {
             username={controller.username}
             onExchangeRates={controller.goExchangeRates}
             onProfile={controller.goProfile}
+            onQrScanner={controller.goQrScanner}
           />
         )}
 
@@ -74,6 +76,10 @@ function App() {
           <ProfileScreen
             onBack={controller.goDashboard}
           />
+        )}
+
+        {controller.screen === 'qrScanner' && (
+          <QrScannerScreen onBack={controller.goDashboard} />
         )}
 
       </SafeAreaView>
