@@ -1,0 +1,1 @@
+"""PecuniaNonOlet backend."""

@@ -1,6 +1,5 @@
 import React from 'react';
-import {StatusBar, StyleSheet} from 'react-native';
-
+import {StatusBar, StyleSheet,Text} from 'react-native';
 import {
   SafeAreaProvider,
   SafeAreaView,
@@ -11,6 +10,8 @@ import {useAppController} from './src/controllers/useAppController';
 import {HomeScreen} from './src/views/screens/HomeScreen';
 import {LoginScreen} from './src/views/screens/LoginScreen';
 import {RegisterScreen} from './src/views/screens/RegisterScreen';
+import {Dashboard} from './src/views/screens/Dashboard';
+import {Loading} from './src/views/screens/Loading';
 
 import {COLORS} from './src/views/theme';
 
@@ -27,6 +28,8 @@ function App() {
       <SafeAreaView
         style={styles.container}
         edges={['top', 'bottom']}>
+
+        {controller.screen === 'loading' && <Loading/>}
 
         {controller.screen === 'home' && (
           <HomeScreen
@@ -49,6 +52,14 @@ function App() {
             onBack={controller.goHome}
             onLogin={controller.goLogin}
             onSubmit={controller.submitRegister}
+          />
+        )}
+
+        {controller.screen === 'dashboard' && (
+          <Dashboard
+            onBack={controller.goHome}
+            onLogout={controller.logout}
+            username={controller.username}
           />
         )}
 
