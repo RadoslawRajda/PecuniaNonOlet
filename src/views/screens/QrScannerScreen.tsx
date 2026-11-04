@@ -14,6 +14,7 @@ import {
   request,
   RESULTS,
 } from 'react-native-permissions';
+import {Camera, useCameraDevice} from 'react-native-vision-camera';
 
 type Props = {
   onBack: () => void;
@@ -21,6 +22,7 @@ type Props = {
 
 export function QrScannerScreen({onBack}: Props) {
   const [cameraPermission, setCameraPermission] = useState<string>('pending');
+  const cameraDevice = useCameraDevice('back');
 
   useEffect(() => {
     const permission =
@@ -54,6 +56,13 @@ export function QrScannerScreen({onBack}: Props) {
         </Text>
 
         <View style={styles.scannerFrame}>
+          {cameraPermission === RESULTS.GRANTED && cameraDevice ? (
+            <Camera
+              style={styles.camera}
+              device={cameraDevice}
+              isActive
+            />
+          ) : null}
           <View style={[styles.corner, styles.topLeft]} />
           <View style={[styles.corner, styles.topRight]} />
           <View style={[styles.corner, styles.bottomLeft]} />
@@ -107,6 +116,10 @@ const styles = StyleSheet.create({
     height: 240,
     marginTop: 36,
     position: 'relative',
+    overflow: 'hidden',
+  },
+  camera: {
+    ...StyleSheet.absoluteFill,
   },
   corner: {
     width: 42,
