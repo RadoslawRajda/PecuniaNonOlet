@@ -35,6 +35,8 @@
 	</dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Aplikacja potrzebuje lokacji, aby automatycznie ustawić walutę</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Aplikacja potrzebuje dostępu do galerii, aby ustawić zdjęcie profilowe</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

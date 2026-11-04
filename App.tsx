@@ -72,7 +72,6 @@ function App() {
 
         {controller.screen === 'profile' && (
           <ProfileScreen
-            onChangeProfile={() => {}}
             onBack={controller.goDashboard}
           />
         )}

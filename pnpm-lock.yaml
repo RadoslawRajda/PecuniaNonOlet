@@ -23,6 +23,9 @@ importers:
       react-native-geolocation-service:
         specifier: ^5.3.1
         version: 5.3.1
+      react-native-image-picker:
+        specifier: ^8.3.0
+        version: 8.3.0(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@react-native-community/cli@20.1.0(supports-color@8.1.1)(typescript@5.9.3))(@react-native/jest-preset@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(@react-native/metro-config@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
       react-native-safe-area-context:
         specifier: ^5.5.2
         version: 5.10.1(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@react-native-community/cli@20.1.0(supports-color@8.1.1)(typescript@5.9.3))(@react-native/jest-preset@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(@react-native/metro-config@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
@@ -2955,6 +2958,12 @@ packages:
 
   react-native-geolocation-service@5.3.1:
     resolution: {integrity: sha512-LTXPtPNmrdhx+yeWG47sAaCgQc3nG1z+HLLHlhK/5YfOgfLcAb9HAkhREPjQKPZOUx8pKZMIpdGFUGfJYtimXQ==}
+
+  react-native-image-picker@8.3.0:
+    resolution: {integrity: sha512-f45QERBBWAFS8BEIKeQ9bcuBQFr3myWaNlkTnG4bY8BtsYJa/ChM0jzN6V9xBKzNPjMo9uFyUuNKjQWddNKZ9w==}
+    peerDependencies:
+      react: '*'
+      react-native: '*'
 
   react-native-safe-area-context@5.10.1:
     resolution: {integrity: sha512-ax0T3cAHQIhuAjDQpJ9C1Le96aRiM9PF+Kmgg7Y8+mD7QJMEIx04cG0eG3EGUTdvymgOkCrkakgZFwuOIuNQGw==}
@@ -7349,6 +7358,11 @@ snapshots:
       dotenv: 18.0.9
 
   react-native-geolocation-service@5.3.1: {}
+
+  react-native-image-picker@8.3.0(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@react-native-community/cli@20.1.0(supports-color@8.1.1)(typescript@5.9.3))(@react-native/jest-preset@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(@react-native/metro-config@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3):
+    dependencies:
+      react: 19.2.3
+      react-native: 0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@react-native-community/cli@20.1.0(supports-color@8.1.1)(typescript@5.9.3))(@react-native/jest-preset@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(@react-native/metro-config@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.2.3)(supports-color@8.1.1)
 
   react-native-safe-area-context@5.10.1(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@react-native-community/cli@20.1.0(supports-color@8.1.1)(typescript@5.9.3))(@react-native/jest-preset@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(@react-native/metro-config@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3):
     dependencies:
