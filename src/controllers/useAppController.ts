@@ -126,6 +126,10 @@ export function useAppController() {
         }
         goDashboard();
       }
+      else
+      {
+        Alert.alert("Błąd", JSON.stringify(responseData.detail || { status: response.status, ok: response.ok }, null, 2));
+      }
 
     } catch (e: any) {
       Alert.alert(
@@ -184,7 +188,11 @@ export function useAppController() {
             setUsername(responseData.user.email);
           }
           goDashboard();
-      };
+      }
+      else
+      {
+        Alert.alert("Błąd", JSON.stringify(responseData.detail || { status: response.status, ok: response.ok }, null, 2));
+      }
     } catch (e: any) {
       Alert.alert(
         'Błąd sieci',
