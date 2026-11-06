@@ -3,7 +3,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  Pressable,
   View,
 } from 'react-native';
 
@@ -11,12 +10,20 @@ import {AppButton, BrandLogo} from '../components/Ui';
 import {COLORS} from '../theme';
 
 type Props = {
-  onBack: () => void;
   onLogout: () => void;
   username: string;    
+  onExchangeRates: () => void;
+  onProfile: () => void;
+  onQrScanner: () => void;
 };
 
-export function Dashboard({onBack, onLogout, username}: Props) {
+export function Dashboard({
+  onLogout,
+  username,
+  onExchangeRates,
+  onProfile,
+  onQrScanner,
+}: Props) {
   return (
     <ScrollView contentContainerStyle={styles.container}>
         <View style={styles.content}>
@@ -36,9 +43,27 @@ export function Dashboard({onBack, onLogout, username}: Props) {
 
             {/* Kontener na przyciski */}
             <View style={styles.buttons}>
+              <AppButton
+                title="Kurs wymiany walut"
+                onPress={onExchangeRates}
+              />
+
+              <AppButton
+                title="Profil"
+                onPress={onProfile}
+                secondary
+              />
+
+              <AppButton
+                title="Skaner QR"
+                onPress={onQrScanner}
+                secondary
+              />
+
               <AppButton 
                 title="Wyloguj się" 
                 onPress={onLogout} 
+                secondary
               />
             </View>
         </View>

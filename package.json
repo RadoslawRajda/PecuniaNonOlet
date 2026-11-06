@@ -14,7 +14,11 @@
     "@react-native/new-app-screen": "0.86.3",
     "react": "19.2.3",
     "react-native": "0.86.3",
-    "react-native-safe-area-context": "^5.5.2"
+    "react-native-geolocation-service": "^5.3.1",
+    "react-native-image-picker": "^8.3.0",
+    "react-native-permissions": "^5.6.3",
+    "react-native-safe-area-context": "^5.5.2",
+    "react-native-vision-camera": "^4.7.2"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

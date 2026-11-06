@@ -72,6 +72,9 @@ export function useAppController() {
   const goLogin = () => setScreen('login');
   const goRegister = () => setScreen('register');
   const goDashboard = () => setScreen('dashboard');
+  const goExchangeRates = () => setScreen('exchangeRates');
+  const goProfile = () => setScreen('profile');
+  const goQrScanner = () => setScreen('qrScanner');
 
   async function submitLogin(data: LoginData) {
     const error = validateLogin(data);
@@ -122,6 +125,10 @@ export function useAppController() {
           setUsername(responseData.user.email);
         }
         goDashboard();
+      }
+      else
+      {
+        Alert.alert("Błąd", JSON.stringify(responseData.detail || { status: response.status, ok: response.ok }, null, 2));
       }
 
     } catch (e: any) {
@@ -181,7 +188,11 @@ export function useAppController() {
             setUsername(responseData.user.email);
           }
           goDashboard();
-      };
+      }
+      else
+      {
+        Alert.alert("Błąd", JSON.stringify(responseData.detail || { status: response.status, ok: response.ok }, null, 2));
+      }
     } catch (e: any) {
       Alert.alert(
         'Błąd sieci',
@@ -269,6 +280,9 @@ export function useAppController() {
     goLogin,
     goRegister,
     goDashboard,
+    goExchangeRates,
+    goProfile,
+    goQrScanner,
     submitLogin,
     submitRegister,
     loginWithPasskey,
