@@ -16,7 +16,7 @@ def test_migrates_empty_database(database_path):
     migrate_database()
     with sqlite3.connect(database_path) as db:
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert {"users", "sessions", "currencies", "accounts", "transactions", "ledger_entries", "exchange_rate_snapshots", "exchange_quotes", "alembic_version"} <= tables
+        assert {"users", "sessions", "currencies", "accounts", "transactions", "ledger_entries", "exchange_rate_snapshots", "exchange_quotes", "profile_photos", "alembic_version"} <= tables
         assert db.execute("SELECT code FROM currencies ORDER BY code").fetchall() == [
             ("CZK",), ("EUR",), ("GBP",), ("PLN",), ("USD",)
         ]
@@ -51,7 +51,7 @@ def test_migrates_existing_users_and_active_sessions_without_loss(database_path)
         assert db.execute("SELECT token_hash, user_id, expires_at FROM sessions").fetchall() == [
             ("saved-token-hash", 41, 9876543210)
         ]
-        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0004_exchange_quotes",)
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0005_profile_photos",)
         assert "consumed_transaction_id" in {row[1] for row in db.execute("PRAGMA table_info(exchange_quotes)")}
         assert db.execute("SELECT role_name FROM user_roles WHERE user_id = 41").fetchone() == ("user",)
         assert db.execute(

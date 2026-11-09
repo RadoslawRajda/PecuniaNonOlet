@@ -18,6 +18,12 @@ from app.authorization import current_session, token_hash
 from app.database import connect_db, migrate_database
 from app.routes.exchange import router as exchange_router
 from app.routes.finance import router as finance_router
+from app.routes.profile_photos import (
+    ProfilePhotoBodyLimitMiddleware,
+)
+from app.routes.profile_photos import (
+    router as profile_photos_router,
+)
 from app.routes.transfers import router as transfers_router
 from app.schemas import (
     AuthResponse,
@@ -52,6 +58,8 @@ app = FastAPI(title="PecuniaNonOlet API", lifespan=lifespan)
 app.include_router(finance_router)
 app.include_router(transfers_router)
 app.include_router(exchange_router)
+app.include_router(profile_photos_router)
+app.add_middleware(ProfilePhotoBodyLimitMiddleware)
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)

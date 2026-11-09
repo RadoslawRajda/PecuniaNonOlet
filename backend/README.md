@@ -51,6 +51,9 @@ Na Windows użyj `.venv\Scripts\alembic.exe -c alembic.ini upgrade head`.
 | `GET` | `/api/exchange-rates` | Aktualne kursy walut z tabeli A NBP |
 | `POST` | `/api/exchange/quote` | Wycena wymiany ważna przez 120 sekund |
 | `POST` | `/api/exchange` | Atomowa wymiana między rachunkami użytkownika |
+| `PUT` | `/api/profile/photo` | Ustawienie zdjęcia profilowego użytkownika |
+| `GET` | `/api/profile/photo` | Pobranie własnego zdjęcia profilowego |
+| `DELETE` | `/api/profile/photo` | Usunięcie własnego zdjęcia profilowego |
 | `POST` | `/api/logout` | Unieważnienie tokenu |
 | `POST` | `/api/change-password` | Zmiana hasła i unieważnienie wszystkich sesji użytkownika |
 
@@ -73,6 +76,8 @@ Lista historii przyjmuje `limit` (1–100, domyślnie 20) i `offset` (domyślnie
 Przelew wymaga nagłówków `Authorization: Bearer <token>` i `Idempotency-Key` oraz JSON zawierającego `recipient_email`, `source_account_id`, `currency_code` i dodatnie `amount_minor`. Kwota jest pobierana i księgowana w tej samej walucie; brak środków na wybranym rachunku nie powoduje użycia innego rachunku. Ponowienie tego samego żądania z tym samym kluczem zwraca poprzedni przelew bez ponownego księgowania; użycie klucza dla innej operacji kończy się konfliktem.
 
 Kursy są pobierane z API NBP przez HTTPS. Endpoint wyceny przyjmuje `source_account_id`, `destination_account_id` i `source_amount_minor`; zwraca kwotę docelową, kurs, datę tabeli NBP oraz identyfikator i termin ważności wyceny. NBP podaje kursy względem PLN, a kursy między pozostałymi walutami są wyliczane jako kursy krzyżowe. Realizacja przyjmuje `quote_id` i nagłówek `Idempotency-Key`; kursu podanego przez klienta backend nie przyjmuje. Kwoty są zaokrąglane do najmniejszej jednostki waluty regułą `ROUND_HALF_UP`. Brak dostępnych lub niekompletnych kursów zwraca błąd usługi, bez kursu zastępczego.
+
+Zdjęcie przesyłaj jako `multipart/form-data` w polu `file` na `PUT /api/profile/photo`. Backend dopuszcza JPEG, PNG i WebP do 2 MiB, sprawdza format na podstawie zawartości, odrzuca animacje i obrazy o nadmiernych wymiarach, a zapisuje przetworzony JPEG bez metadanych EXIF. Pliki przechowywane są poza katalogiem publicznym, pod losową nazwą; pobranie i usunięcie wymagają aktywnej sesji właściciela. Katalog można zmienić zmienną `PROFILE_PHOTO_DIR`; domyślnie znajduje się obok pliku bazy danych.
 
 ## Testy
 
