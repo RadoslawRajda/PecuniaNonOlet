@@ -53,6 +53,7 @@ class RateTable:
     provider: str
     effective_date: str
     pln_per_unit: dict[str, Decimal]
+    table_id: str | None = None
 
 
 class RateProvider(Protocol):
@@ -71,6 +72,9 @@ class NBPRateProvider:
             table = payload[0]
             if table.get("table") != "A" or not isinstance(table.get("effectiveDate"), str):
                 raise ValueError("Unexpected table metadata")
+            table_id = table.get("no")
+            if table_id is not None and (not isinstance(table_id, str) or len(table_id) > 64):
+                raise ValueError("Invalid table identifier")
             datetime.strptime(table["effectiveDate"], "%Y-%m-%d")
             raw_rates = table.get("rates")
             if not isinstance(raw_rates, list):
@@ -88,7 +92,7 @@ class NBPRateProvider:
                 rates[item["code"]] = rate
             if set(rates) != set(SUPPORTED_CURRENCIES):
                 raise ValueError("The rate table does not cover all supported currencies")
-            return RateTable("NBP Table A", table["effectiveDate"], rates)
+            return RateTable("NBP Table A", table["effectiveDate"], rates, table_id)
         except (httpx.HTTPError, ValueError, TypeError, KeyError, InvalidOperation) as exc:
             raise RateProviderUnavailable from exc
 
@@ -101,6 +105,7 @@ def provider_response(table: RateTable) -> ExchangeRatesResponse:
     return ExchangeRatesResponse(
         provider=table.provider,
         effective_date=table.effective_date,
+        table_id=table.table_id,
         rates=[
             ExchangeRate(currency_code=code, pln_per_unit=format(table.pln_per_unit[code], "f"))
             for code in SUPPORTED_CURRENCIES
@@ -176,7 +181,10 @@ def quote_response(row: sqlite3.Row) -> ExchangeQuoteResponse:
         destination_amount_minor=row["destination_amount_minor"],
         destination_amount=format_minor_units(row["destination_amount_minor"], row["destination_minor_unit"]),
         exchange_rate=row["exchange_rate"],
+        source_pln_rate=row["source_pln_rate"],
+        destination_pln_rate=row["destination_pln_rate"],
         provider=row["provider"],
+        table_id=row["rate_table_id"],
         effective_date=row["effective_date"],
         expires_at=timestamp(row["expires_at"]),
     )
@@ -255,12 +263,16 @@ def create_exchange_quote(
                 id, user_id, source_account_id, destination_account_id,
                 source_currency_code, destination_currency_code,
                 source_amount_minor, destination_amount_minor, exchange_rate,
-                provider, effective_date, created_at, expires_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                source_pln_rate, destination_pln_rate, provider, rate_table_id,
+                effective_date, created_at, expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 quote_id, user.id, source["id"], destination["id"], source_code,
                 destination_code, payload.source_amount_minor, destination_minor,
-                format(cross_rate, "f"), table.provider, table.effective_date,
+                format(cross_rate, "f"),
+                format(table.pln_per_unit[source_code], "f"),
+                format(table.pln_per_unit[destination_code], "f"),
+                table.provider, table.table_id, table.effective_date,
                 now, now + QUOTE_TTL_SECONDS,
             ),
         )

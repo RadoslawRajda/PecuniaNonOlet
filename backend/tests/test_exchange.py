@@ -25,6 +25,7 @@ class FixedRateProvider:
                 "GBP": Decimal(5),
                 "CZK": Decimal("0.2"),
             },
+            "2026/320/A",
         )
 
 
@@ -59,7 +60,7 @@ def test_nbp_provider_uses_https_and_parses_decimal_rates(monkeypatch):
 
     class FakeResponse:
         text = (
-            '[{"table":"A","effectiveDate":"2026-11-09","rates":['
+            '[{"table":"A","no":"2026/217/A","effectiveDate":"2026-11-09","rates":['
             '{"code":"EUR","mid":4.1234},{"code":"USD","mid":3.5},'
             '{"code":"GBP","mid":4.8},{"code":"CZK","mid":0.17}]}]'
         )
@@ -86,6 +87,7 @@ def test_nbp_provider_uses_https_and_parses_decimal_rates(monkeypatch):
     assert calls[0][0].startswith("https://")
     assert table.pln_per_unit["EUR"] == Decimal("4.1234")
     assert table.pln_per_unit["PLN"] == Decimal(1)
+    assert table.table_id == "2026/217/A"
 
 
 @pytest.mark.parametrize("bad_payload", [
@@ -146,6 +148,7 @@ def test_rate_endpoint_returns_all_supported_currencies_and_requires_user(client
     assert response.json() == {
         "provider": "Test NBP Table A",
         "effective_date": date.today().isoformat(),
+        "table_id": "2026/320/A",
         "base_currency_code": "PLN",
         "rates": [
             {"currency_code": "PLN", "pln_per_unit": "1"},
@@ -303,7 +306,7 @@ def test_exchange_rounding_floors_positive_payouts(client):
 
 
 @pytest.mark.parametrize(("eur_rate", "pln_source_minor"), [("4.24", 424), ("3.00", 300)])
-def test_exact_cross_rate_conversion_preserves_whole_eurocents(client, eur_rate, pln_source_minor):
+def test_exact_cross_rate_conversion_preserves_whole_eurocents(client, tmp_path, eur_rate, pln_source_minor):
     class ExactRateProvider:
         def current_rates(self):
             return RateTable(
@@ -332,6 +335,19 @@ def test_exact_cross_rate_conversion_preserves_whole_eurocents(client, eur_rate,
     )
     assert quote.status_code == 201, quote.text
     assert quote.json()["destination_amount_minor"] == 100
+    assert quote.json()["source_pln_rate"] == "1"
+    assert quote.json()["destination_pln_rate"] == eur_rate
+    assert quote.json()["table_id"] is None
+    with sqlite3.connect(tmp_path / "exchange.db") as db:
+        saved = db.execute(
+            """SELECT source_amount_minor, destination_amount_minor,
+                      source_pln_rate, destination_pln_rate, rate_table_id
+               FROM exchange_quotes WHERE id = ?""",
+            (quote.json()["quote_id"],),
+        ).fetchone()
+    assert saved == (pln_source_minor, 100, "1", eur_rate, None)
+    exact_euro_minor = Fraction(saved[0]) * Fraction(Decimal(saved[2])) / Fraction(Decimal(saved[3]))
+    assert exact_euro_minor.numerator // exact_euro_minor.denominator == saved[1]
 
     exchange_response = client.post(
         "/api/exchange",

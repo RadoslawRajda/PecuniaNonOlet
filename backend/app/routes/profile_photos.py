@@ -197,7 +197,32 @@ def store_photo(user_id: int, photo_bytes: bytes) -> None:
             temporary_path.unlink(missing_ok=True)
 
 
-@router.put("", status_code=204, response_class=Response)
+@router.put(
+    "",
+    status_code=204,
+    response_class=Response,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["file"],
+                        "properties": {"file": {"type": "string", "format": "binary"}},
+                    }
+                }
+            },
+        }
+    },
+    responses={
+        401: {"description": "Brak aktywnej sesji."},
+        403: {"description": "Operacja dostępna tylko dla zwykłego użytkownika."},
+        413: {"description": "Zdjęcie przekracza limit rozmiaru."},
+        415: {"description": "Nieobsługiwany lub niepoprawny format obrazu."},
+        422: {"description": "Wymagane jest jedno pole pliku o nazwie `file`."},
+    },
+)
 async def upload_profile_photo(request: Request, user: AuthenticatedUser) -> Response:
     async with request.form(
         max_files=1,

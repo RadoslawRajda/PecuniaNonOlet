@@ -53,8 +53,11 @@ def test_migrates_existing_users_and_active_sessions_without_loss(database_path)
         assert db.execute("SELECT token_hash, user_id, expires_at FROM sessions").fetchall() == [
             ("saved-token-hash", 41, 9876543210)
         ]
-        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0006_audit_events",)
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0007_exact_quote_rates",)
         assert "consumed_transaction_id" in {row[1] for row in db.execute("PRAGMA table_info(exchange_quotes)")}
+        assert {"source_pln_rate", "destination_pln_rate", "rate_table_id"} <= {
+            row[1] for row in db.execute("PRAGMA table_info(exchange_quotes)")
+        }
         assert db.execute("SELECT role_name FROM user_roles WHERE user_id = 41").fetchone() == ("user",)
         assert db.execute(
             "SELECT currency_code, balance_minor FROM accounts WHERE user_id = 41 ORDER BY currency_code"
@@ -108,7 +111,7 @@ def test_failed_migration_rolls_back_ddl_and_can_be_retried(database_path):
 
     migrate_database()
     with sqlite3.connect(database_path) as db:
-        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0006_audit_events",)
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0007_exact_quote_rates",)
         assert db.execute("SELECT count(*) FROM currencies").fetchone()[0] == 5
 
 
@@ -129,7 +132,7 @@ def test_migration_resumes_legacy_partial_currency_setup(database_path):
         assert db.execute("SELECT code FROM currencies ORDER BY code").fetchall() == [
             ("CZK",), ("EUR",), ("GBP",), ("PLN",), ("USD",)
         ]
-        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0006_audit_events",)
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0007_exact_quote_rates",)
 
 
 def test_constraints_reject_duplicate_accounts_negative_balance_and_unknown_currency(database_path):

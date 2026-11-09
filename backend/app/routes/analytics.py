@@ -94,6 +94,7 @@ def timestamp(value: int) -> str:
 @router.get("/overview", response_model=Overview)
 def overview(_: Analyst) -> Overview:
     with closing(connect_db()) as db:
+        db.execute("BEGIN")
         users_total = db.execute("SELECT count(*) FROM users").fetchone()[0]
         users_by_role = {
             row["role_name"]: row["total"]
@@ -133,6 +134,7 @@ def list_users(
     where = "WHERE ur.role_name = ?" if role else ""
     params = (role,) if role else ()
     with closing(connect_db()) as db:
+        db.execute("BEGIN")
         total = db.execute(
             f"SELECT count(*) FROM users AS u JOIN user_roles AS ur ON ur.user_id = u.id {where}",
             params,
@@ -197,6 +199,7 @@ def list_transactions(
         params.append(to_timestamp)
     where = "WHERE " + " AND ".join(filters) if filters else ""
     with closing(connect_db()) as db:
+        db.execute("BEGIN")
         total = db.execute(f"SELECT count(*) FROM transactions AS t {where}", params).fetchone()[0]
         rows = db.execute(
             f"""
@@ -256,6 +259,7 @@ def list_audit_events(
             params.append(value)
     where = "WHERE " + " AND ".join(filters) if filters else ""
     with closing(connect_db()) as db:
+        db.execute("BEGIN")
         total = db.execute(f"SELECT count(*) FROM audit_events {where}", params).fetchone()[0]
         rows = db.execute(
             f"""SELECT id, actor_user_id, actor_role, action, entity_type, entity_id,

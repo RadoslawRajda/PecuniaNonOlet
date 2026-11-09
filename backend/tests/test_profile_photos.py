@@ -39,6 +39,16 @@ def image_bytes(*, image_format="PNG", size=(64, 48), metadata=None):
     return output.getvalue()
 
 
+def test_profile_photo_upload_openapi_documents_multipart_contract():
+    operation = app.openapi()["paths"]["/api/profile/photo"]["put"]
+    body = operation["requestBody"]
+    assert body["required"] is True
+    file_schema = body["content"]["multipart/form-data"]["schema"]
+    assert file_schema["required"] == ["file"]
+    assert file_schema["properties"]["file"] == {"type": "string", "format": "binary"}
+    assert {"204", "401", "403", "413", "415", "422"} <= set(operation["responses"])
+
+
 def test_profile_photo_upload_is_authenticated_normalized_and_private(client, tmp_path):
     user = create_user(client, "photo-owner@example.com")
     other = create_user(client, "photo-other@example.com")

@@ -119,6 +119,7 @@ class ExchangeRate(BaseModel):
 class ExchangeRatesResponse(BaseModel):
     provider: str
     effective_date: str
+    table_id: str | None = None
     base_currency_code: Literal["PLN"] = "PLN"
     rates: list[ExchangeRate]
 
@@ -142,7 +143,11 @@ class ExchangeQuoteResponse(BaseModel):
     destination_amount_minor: int
     destination_amount: str
     exchange_rate: str
+    # Quotes created before migration 0007 do not have the exact input rates.
+    source_pln_rate: str | None
+    destination_pln_rate: str | None
     provider: str
+    table_id: str | None
     effective_date: str
     expires_at: str
 
