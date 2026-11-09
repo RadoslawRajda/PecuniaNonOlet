@@ -288,8 +288,8 @@ def test_exchange_is_atomic_records_rate_and_replays_idempotently(client, tmp_pa
         ).fetchone() == ("PLN", "EUR", "0.25", "Test NBP Table A")
 
 
-def test_exchange_rounding_is_decimal_half_up(client):
-    assert exchange.amount_in_minor_units(1, Decimal("0.5"), 2) == 1
+def test_exchange_rounding_floors_positive_payouts(client):
+    assert exchange.amount_in_minor_units(3, Decimal("0.5"), 2) == 1
     user = create_user(client, "rounding@example.com")
     ids = account_ids(client, user["token"])
     quote = client.post(
@@ -298,6 +298,104 @@ def test_exchange_rounding_is_decimal_half_up(client):
     )
     assert quote.status_code == 201
     assert quote.json()["destination_amount_minor"] == 5
+
+
+def test_two_way_exchange_cycles_never_increase_source_balance(client, tmp_path):
+    user = create_user(client, "round-trip@example.com")
+    ids = account_ids(client, user["token"])
+    amounts = (1, 2, 3, 4, 5, 9, 10, 25, 100, 101, 1_000)
+
+    for source_code, source_id in ids.items():
+        for destination_code, destination_id in ids.items():
+            if source_code == destination_code:
+                continue
+            for amount in amounts:
+                with sqlite3.connect(tmp_path / "exchange.db") as db:
+                    db.execute("UPDATE accounts SET balance_minor = 0")
+                    db.execute(
+                        "UPDATE accounts SET balance_minor = ? WHERE id = ?",
+                        (amount, source_id),
+                    )
+
+                forward = client.post(
+                    "/api/exchange/quote",
+                    headers=auth(user["token"]),
+                    json={
+                        "source_account_id": source_id,
+                        "destination_account_id": destination_id,
+                        "source_amount_minor": amount,
+                    },
+                )
+                if forward.status_code == 422:
+                    continue  # A payout below one minor unit is rejected.
+                assert forward.status_code == 201, forward.text
+                key = f"cycle-{source_code}-{destination_code}-{amount}"
+                executed = client.post(
+                    "/api/exchange",
+                    headers={**auth(user["token"]), "Idempotency-Key": key + "-out"},
+                    json={"quote_id": forward.json()["quote_id"]},
+                )
+                assert executed.status_code == 201, executed.text
+
+                backward = client.post(
+                    "/api/exchange/quote",
+                    headers=auth(user["token"]),
+                    json={
+                        "source_account_id": destination_id,
+                        "destination_account_id": source_id,
+                        "source_amount_minor": executed.json()["destination_amount_minor"],
+                    },
+                )
+                if backward.status_code == 422:
+                    continue
+                assert backward.status_code == 201, backward.text
+                returned = client.post(
+                    "/api/exchange",
+                    headers={**auth(user["token"]), "Idempotency-Key": key + "-back"},
+                    json={"quote_id": backward.json()["quote_id"]},
+                )
+                assert returned.status_code == 201, returned.text
+                with sqlite3.connect(tmp_path / "exchange.db") as db:
+                    final_source_balance = db.execute(
+                        "SELECT balance_minor FROM accounts WHERE id = ?", (source_id,)
+                    ).fetchone()[0]
+                assert final_source_balance <= amount, (source_code, destination_code, amount)
+
+
+def test_opening_balance_idempotency_key_conflicts_cleanly(client):
+    user = create_user(client, "opening-replay@example.com")
+    response = client.post(
+        "/api/exchange",
+        headers={**auth(user["token"]), "Idempotency-Key": "opening-balance-pln-v1"},
+        json={"quote_id": "00000000-0000-0000-0000-000000000000"},
+    )
+    assert response.status_code == 409
+
+
+def test_sqlite_overflowing_ids_and_offsets_are_rejected_at_api_boundary(client):
+    user = create_user(client, "numeric-boundary@example.com")
+    headers = auth(user["token"])
+    too_large = 9_223_372_036_854_775_808
+    assert client.get(f"/api/transactions?offset={too_large}", headers=headers).status_code == 422
+    assert client.post(
+        "/api/transfers",
+        headers={**headers, "Idempotency-Key": "bad-account-id"},
+        json={
+            "recipient_email": "someone@example.com",
+            "source_account_id": too_large,
+            "currency_code": "PLN",
+            "amount_minor": 1,
+        },
+    ).status_code == 422
+    assert client.post(
+        "/api/exchange/quote",
+        headers=headers,
+        json={
+            "source_account_id": too_large,
+            "destination_account_id": 1,
+            "source_amount_minor": 1,
+        },
+    ).status_code == 422
 
 
 def test_one_quote_cannot_be_executed_concurrently_twice(client):

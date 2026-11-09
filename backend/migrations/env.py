@@ -37,13 +37,24 @@ def run_migrations_online() -> None:
 
     @event.listens_for(connectable, "connect")
     def enable_foreign_keys(dbapi_connection, _connection_record) -> None:
+        # Disable sqlite3's legacy implicit transaction handling so Alembic's
+        # transaction includes DDL as well as data changes.
+        dbapi_connection.isolation_level = None
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA busy_timeout=5000")
         cursor.close()
 
+    @event.listens_for(connectable, "begin")
+    def begin_immediate(connection) -> None:
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+
     with connectable.connect() as connection:
-        context.configure(connection=connection, render_as_batch=True)
+        context.configure(
+            connection=connection,
+            render_as_batch=True,
+            transactional_ddl=True,
+        )
         with context.begin_transaction():
             context.run_migrations()
     connectable.dispose()

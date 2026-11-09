@@ -1,5 +1,6 @@
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import pytest
 from fastapi import HTTPException
@@ -164,6 +165,77 @@ def test_change_password_revokes_all_sessions_and_requires_reauthentication(clie
         "/api/login", json={"email": "password@example.com", "password": "new-password"}
     )
     assert new_login.status_code == 200
+
+
+def test_login_racing_password_change_does_not_issue_a_stale_session(client, monkeypatch):
+    from app import main
+
+    credentials = {"email": "racing-password@example.com", "password": "old-password"}
+    registered = client.post("/api/register", json=credentials).json()
+    original_hasher = main.password_hasher
+    login_verified_old_hash = Event()
+    resume_login = Event()
+
+    class PausingHasher:
+        def hash(self, value):
+            return original_hasher.hash(value)
+
+        def verify(self, password, password_hash):
+            result = original_hasher.verify(password, password_hash)
+            if password == credentials["password"] and not login_verified_old_hash.is_set():
+                login_verified_old_hash.set()
+                assert resume_login.wait(timeout=10)
+            return result
+
+    monkeypatch.setattr(main, "password_hasher", PausingHasher())
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending_login = executor.submit(client.post, "/api/login", json=credentials)
+        assert login_verified_old_hash.wait(timeout=10)
+        changed = client.post(
+            "/api/change-password",
+            headers=auth(registered["token"]),
+            json={"current_password": "old-password", "new_password": "new-password"},
+        )
+        assert changed.status_code == 200
+        resume_login.set()
+        login_response = pending_login.result(timeout=10)
+
+    assert login_response.status_code == 401
+    assert client.post(
+        "/api/login",
+        json={"email": credentials["email"], "password": "new-password"},
+    ).status_code == 200
+
+
+def test_database_write_contention_returns_retryable_503(client, tmp_path, monkeypatch):
+    from app import database
+
+    sender = client.post(
+        "/api/register", json={"email": "busy-sender@example.com", "password": "password-123"}
+    ).json()
+    client.post(
+        "/api/register", json={"email": "busy-recipient@example.com", "password": "password-123"}
+    )
+    monkeypatch.setattr(database, "SQLITE_BUSY_TIMEOUT_MS", 20)
+    lock = sqlite3.connect(tmp_path / "test.db", timeout=1)
+    try:
+        lock.execute("BEGIN IMMEDIATE")
+        lock.execute("UPDATE accounts SET balance_minor = balance_minor WHERE id = 1")
+        response = client.post(
+            "/api/transfers",
+            headers={**auth(sender["token"]), "Idempotency-Key": "db-busy-test"},
+            json={
+                "recipient_email": "busy-recipient@example.com",
+                "source_account_id": 1,
+                "currency_code": "PLN",
+                "amount_minor": 1,
+            },
+        )
+    finally:
+        lock.rollback()
+        lock.close()
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "1"
 
 
 def test_change_password_requires_session_and_current_password(client):

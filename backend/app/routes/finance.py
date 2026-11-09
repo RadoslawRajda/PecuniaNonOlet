@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -77,7 +77,7 @@ def transaction_view(row: sqlite3.Row, user_id: int) -> FinancialTransaction:
         ),
         exchange_rate=row["exchange_rate"],
         counterparty_email=counterparty_email,
-        created_at=datetime.fromtimestamp(row["created_at"], tz=UTC)
+        created_at=datetime.fromtimestamp(row["created_at"], tz=timezone.utc)
         .isoformat()
         .replace("+00:00", "Z"),
     )
@@ -125,7 +125,7 @@ def list_accounts(user: AuthenticatedUser) -> AccountListResponse:
 def list_transactions(
     user: AuthenticatedUser,
     limit: int = Query(default=20, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
+    offset: int = Query(default=0, ge=0, le=1_000_000),
 ) -> TransactionPage:
     predicate = "(t.sender_user_id = ? OR t.recipient_user_id = ?)"
     with closing(connect_db()) as db:

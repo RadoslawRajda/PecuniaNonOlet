@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -16,6 +16,7 @@ from app.schemas import User
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 Analyst = Annotated[User, Depends(require_roles("analyst"))]
+MAX_SQLITE_INTEGER = 9_223_372_036_854_775_807
 
 
 class Overview(BaseModel):
@@ -87,7 +88,7 @@ class AuditEventPage(BaseModel):
 
 
 def timestamp(value: int) -> str:
-    return datetime.fromtimestamp(value, tz=UTC).isoformat().replace("+00:00", "Z")
+    return datetime.fromtimestamp(value, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 @router.get("/overview", response_model=Overview)
@@ -173,9 +174,9 @@ def list_transactions(
     offset: int = Query(default=0, ge=0, le=1_000_000),
     kind: Literal["opening", "transfer", "exchange"] | None = None,
     status: Literal["completed", "reversed"] | None = None,
-    user_id: int | None = Query(default=None, gt=0),
-    from_timestamp: int | None = Query(default=None, ge=0, alias="from"),
-    to_timestamp: int | None = Query(default=None, ge=0, alias="to"),
+    user_id: int | None = Query(default=None, gt=0, le=MAX_SQLITE_INTEGER),
+    from_timestamp: int | None = Query(default=None, ge=0, le=MAX_SQLITE_INTEGER, alias="from"),
+    to_timestamp: int | None = Query(default=None, ge=0, le=MAX_SQLITE_INTEGER, alias="to"),
 ) -> TransactionPage:
     filters: list[str] = []
     params: list[int | str] = []
@@ -232,9 +233,9 @@ def list_audit_events(
     offset: int = Query(default=0, ge=0, le=1_000_000),
     action: str | None = Query(default=None, min_length=1, max_length=64),
     entity_type: str | None = Query(default=None, min_length=1, max_length=32),
-    actor_user_id: int | None = Query(default=None, gt=0),
-    from_timestamp: int | None = Query(default=None, ge=0, alias="from"),
-    to_timestamp: int | None = Query(default=None, ge=0, alias="to"),
+    actor_user_id: int | None = Query(default=None, gt=0, le=MAX_SQLITE_INTEGER),
+    from_timestamp: int | None = Query(default=None, ge=0, le=MAX_SQLITE_INTEGER, alias="from"),
+    to_timestamp: int | None = Query(default=None, ge=0, le=MAX_SQLITE_INTEGER, alias="to"),
 ) -> AuditEventPage:
     if from_timestamp is not None and to_timestamp is not None and from_timestamp > to_timestamp:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Nieprawidłowy zakres czasu.")

@@ -10,7 +10,7 @@ import time
 from contextlib import asynccontextmanager, closing
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pwdlib import PasswordHash
 
 from app.accounts import initialize_user_accounts
@@ -62,6 +62,18 @@ app.include_router(exchange_router)
 app.include_router(profile_photos_router)
 app.include_router(analytics_router)
 app.add_middleware(ProfilePhotoBodyLimitMiddleware)
+
+
+@app.exception_handler(sqlite3.OperationalError)
+async def handle_sqlite_operational_error(request: Request, exc: sqlite3.OperationalError):
+    message = str(exc).lower()
+    if "database" in message and ("locked" in message or "busy" in message):
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"detail": "Baza jest chwilowo zajęta. Ponów żądanie."},
+            headers={"Retry-After": "1"},
+        )
+    raise exc
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -126,8 +138,8 @@ def register(payload: RegisterCredentials) -> AuthResponse:
 
 @app.post("/api/login", response_model=AuthResponse)
 def login(payload: LoginCredentials) -> AuthResponse:
-    with closing(connect_db()) as db:
-        row = db.execute(
+    with closing(connect_db()) as read_db:
+        row = read_db.execute(
             """
             SELECT u.id, u.email, u.password_hash, r.role_name
             FROM users AS u JOIN user_roles AS r ON r.user_id = u.id
@@ -139,10 +151,21 @@ def login(payload: LoginCredentials) -> AuthResponse:
         valid_password = password_hasher.verify(payload.password, stored_hash)
         if row is None or not valid_password:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Błędny e-mail lub hasło.")
-        with db:
-            token = issue_token(db, row["id"])
+    with closing(connect_db()) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        current = db.execute(
+            "SELECT id, email, password_hash FROM users WHERE id = ?", (row["id"],)
+        ).fetchone()
+        if current is None or current["password_hash"] != stored_hash:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Błędny e-mail lub hasło.")
+        current_role = db.execute(
+            "SELECT role_name FROM user_roles WHERE user_id = ?", (row["id"],)
+        ).fetchone()
+        if current_role is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Błędny e-mail lub hasło.")
+        token = issue_token(db, row["id"])
     return AuthResponse(
-        user=User(id=row["id"], email=row["email"], role=row["role_name"]), token=token
+        user=User(id=current["id"], email=current["email"], role=current_role["role_name"]), token=token
     )
 
 
@@ -152,6 +175,16 @@ def change_password(
     session: tuple[str, User] = Depends(current_session),
 ) -> ChangePasswordResponse:
     session_token, user = session
+    with closing(connect_db()) as read_db:
+        row = read_db.execute(
+            "SELECT password_hash FROM users WHERE id = ?", (user.id,)
+        ).fetchone()
+    if row is None or not password_hasher.verify(payload.current_password, row["password_hash"]):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Obecne hasło jest nieprawidłowe.")
+    if password_hasher.verify(payload.new_password, row["password_hash"]):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nowe hasło musi różnić się od obecnego.")
+    expected_hash = row["password_hash"]
+    new_hash = password_hasher.hash(payload.new_password)
     with closing(connect_db()) as db, db:
         db.execute("BEGIN IMMEDIATE")
         active_session = db.execute(
@@ -160,12 +193,9 @@ def change_password(
         ).fetchone()
         if active_session is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesja jest nieważna lub wygasła.")
-        row = db.execute("SELECT password_hash FROM users WHERE id = ?", (user.id,)).fetchone()
-        if row is None or not password_hasher.verify(payload.current_password, row["password_hash"]):
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Obecne hasło jest nieprawidłowe.")
-        if password_hasher.verify(payload.new_password, row["password_hash"]):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nowe hasło musi różnić się od obecnego.")
-        new_hash = password_hasher.hash(payload.new_password)
+        current = db.execute("SELECT password_hash FROM users WHERE id = ?", (user.id,)).fetchone()
+        if current is None or current["password_hash"] != expected_hash:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Hasło zostało już zmienione. Zaloguj się ponownie.")
         db.execute("DELETE FROM sessions WHERE user_id = ?", (user.id,))
         db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user.id))
     return ChangePasswordResponse(

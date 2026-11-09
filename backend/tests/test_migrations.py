@@ -1,6 +1,8 @@
 import sqlite3
 
 import pytest
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 from app.database import migrate_database
 
@@ -77,6 +79,57 @@ def test_migration_is_repeatable_and_preserves_financial_data(database_path):
     migrate_database()
     with sqlite3.connect(database_path) as db:
         assert db.execute("SELECT balance_minor FROM accounts WHERE user_id = ?", (user_id,)).fetchone() == (100000,)
+
+
+def test_failed_migration_rolls_back_ddl_and_can_be_retried(database_path):
+    interrupted = False
+
+    def fail_after_currency_table(connection, cursor, statement, parameters, context, executemany):
+        nonlocal interrupted
+        if not interrupted and "CREATE TABLE currencies" in statement:
+            interrupted = True
+            raise RuntimeError("simulated migration interruption")
+
+    event.listen(Engine, "after_cursor_execute", fail_after_currency_table)
+    try:
+        with pytest.raises(RuntimeError, match="simulated migration interruption"):
+            migrate_database()
+    finally:
+        event.remove(Engine, "after_cursor_execute", fail_after_currency_table)
+
+    assert interrupted
+    with sqlite3.connect(database_path) as db:
+        assert db.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'currencies'"
+        ).fetchone() is None
+        assert db.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'alembic_version'"
+        ).fetchone() is None
+
+    migrate_database()
+    with sqlite3.connect(database_path) as db:
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0006_audit_events",)
+        assert db.execute("SELECT count(*) FROM currencies").fetchone()[0] == 5
+
+
+def test_migration_resumes_legacy_partial_currency_setup(database_path):
+    with sqlite3.connect(database_path) as db:
+        db.execute(
+            """CREATE TABLE currencies (
+                   code VARCHAR(3) PRIMARY KEY,
+                   minor_unit INTEGER NOT NULL,
+                   CONSTRAINT ck_currencies_code_length CHECK (length(code) = 3),
+                   CONSTRAINT ck_currencies_minor_unit CHECK (minor_unit BETWEEN 0 AND 3)
+               )"""
+        )
+
+    migrate_database()
+
+    with sqlite3.connect(database_path) as db:
+        assert db.execute("SELECT code FROM currencies ORDER BY code").fetchall() == [
+            ("CZK",), ("EUR",), ("GBP",), ("PLN",), ("USD",)
+        ]
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0006_audit_events",)
 
 
 def test_constraints_reject_duplicate_accounts_negative_balance_and_unknown_currency(database_path):

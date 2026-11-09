@@ -8,10 +8,10 @@ import time
 import uuid
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from decimal import (
+    ROUND_DOWN,
     ROUND_HALF_EVEN,
-    ROUND_HALF_UP,
     Decimal,
     InvalidOperation,
     localcontext,
@@ -126,7 +126,7 @@ def amount_in_minor_units(source_minor: int, rate: Decimal, minor_unit: int) -> 
         context.prec = 50
         quantum = Decimal(1).scaleb(-minor_unit)
         target_major = (Decimal(source_minor) / (10**2) * rate).quantize(
-            quantum, rounding=ROUND_HALF_UP
+            quantum, rounding=ROUND_DOWN
         )
     result = int(target_major * (10**minor_unit))
     if result < 1 or result > MAX_BALANCE_MINOR:
@@ -135,7 +135,7 @@ def amount_in_minor_units(source_minor: int, rate: Decimal, minor_unit: int) -> 
 
 
 def timestamp(value: int) -> str:
-    return datetime.fromtimestamp(value, tz=UTC).isoformat().replace("+00:00", "Z")
+    return datetime.fromtimestamp(value, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def quote_response(row: sqlite3.Row) -> ExchangeQuoteResponse:
@@ -274,7 +274,7 @@ def execute_exchange(
                       dc.minor_unit AS destination_minor_unit
                FROM transactions t
                LEFT JOIN exchange_quotes q ON q.consumed_transaction_id = t.id
-               JOIN currencies sc ON sc.code = t.source_currency_code
+               LEFT JOIN currencies sc ON sc.code = t.source_currency_code
                JOIN currencies dc ON dc.code = t.destination_currency_code
                WHERE t.sender_user_id = ? AND t.idempotency_key = ?""",
             (user.id, key),

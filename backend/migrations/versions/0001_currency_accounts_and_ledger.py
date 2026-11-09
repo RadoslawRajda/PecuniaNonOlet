@@ -33,22 +33,19 @@ def upgrade() -> None:
     op.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)")
     op.execute("CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)")
 
-    op.create_table(
-        "currencies",
-        sa.Column("code", sa.String(3), primary_key=True),
-        sa.Column("minor_unit", sa.Integer(), nullable=False),
-        sa.CheckConstraint("length(code) = 3", name="ck_currencies_code_length"),
-        sa.CheckConstraint("minor_unit BETWEEN 0 AND 3", name="ck_currencies_minor_unit"),
-    )
-    op.bulk_insert(
-        sa.table("currencies", sa.column("code", sa.String), sa.column("minor_unit", sa.Integer)),
-        [
-            {"code": "PLN", "minor_unit": 2},
-            {"code": "EUR", "minor_unit": 2},
-            {"code": "USD", "minor_unit": 2},
-            {"code": "GBP", "minor_unit": 2},
-            {"code": "CZK", "minor_unit": 2},
-        ],
+    if "currencies" not in existing:
+        op.create_table(
+            "currencies",
+            sa.Column("code", sa.String(3), primary_key=True),
+            sa.Column("minor_unit", sa.Integer(), nullable=False),
+            sa.CheckConstraint("length(code) = 3", name="ck_currencies_code_length"),
+            sa.CheckConstraint("minor_unit BETWEEN 0 AND 3", name="ck_currencies_minor_unit"),
+        )
+    # Idempotent to recover a database left with just this table by an older,
+    # non-transactional SQLite migration attempt.
+    op.get_bind().exec_driver_sql(
+        """INSERT OR IGNORE INTO currencies(code, minor_unit) VALUES
+           ('PLN', 2), ('EUR', 2), ('USD', 2), ('GBP', 2), ('CZK', 2)"""
     )
     op.create_table(
         "accounts",

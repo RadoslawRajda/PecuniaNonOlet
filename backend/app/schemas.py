@@ -2,6 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
+MAX_SQLITE_INTEGER = 9_223_372_036_854_775_807
 
 class LoginCredentials(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -87,7 +88,7 @@ class TransferRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     recipient_email: EmailStr
-    source_account_id: int = Field(gt=0, strict=True)
+    source_account_id: int = Field(gt=0, le=MAX_SQLITE_INTEGER, strict=True)
     currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
     amount_minor: int = Field(gt=0, le=9_000_000_000_000_000, strict=True)
 
@@ -125,8 +126,8 @@ class ExchangeRatesResponse(BaseModel):
 class ExchangeQuoteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source_account_id: int = Field(gt=0, strict=True)
-    destination_account_id: int = Field(gt=0, strict=True)
+    source_account_id: int = Field(gt=0, le=MAX_SQLITE_INTEGER, strict=True)
+    destination_account_id: int = Field(gt=0, le=MAX_SQLITE_INTEGER, strict=True)
     source_amount_minor: int = Field(gt=0, le=9_000_000_000_000_000, strict=True)
 
 

@@ -6,7 +6,7 @@ import sqlite3
 import time
 import uuid
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -38,7 +38,7 @@ def response_from_row(
         source_account_id=row["source_account_id"],
         destination_account_id=row["destination_account_id"],
         recipient_email=recipient_email,
-        created_at=datetime.fromtimestamp(row["created_at"], tz=UTC)
+        created_at=datetime.fromtimestamp(row["created_at"], tz=timezone.utc)
         .isoformat()
         .replace("+00:00", "Z"),
         idempotent_replay=idempotent_replay,

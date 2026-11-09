@@ -94,3 +94,7 @@ def test_analytics_pagination_is_bounded(client):
     assert client.get("/api/analytics/users?limit=101", headers=headers).status_code == 422
     assert client.get("/api/analytics/transactions?offset=-1", headers=headers).status_code == 422
     assert client.get("/api/analytics/users?offset=1000001", headers=headers).status_code == 422
+    too_large = 9_223_372_036_854_775_808
+    assert client.get(f"/api/analytics/transactions?user_id={too_large}", headers=headers).status_code == 422
+    assert client.get(f"/api/analytics/audit-events?actor_user_id={too_large}", headers=headers).status_code == 422
+    assert client.get(f"/api/analytics/audit-events?from={too_large}", headers=headers).status_code == 422

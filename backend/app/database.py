@@ -9,6 +9,8 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 
+SQLITE_BUSY_TIMEOUT_MS = 5000
+
 
 def database_path() -> Path:
     return Path(os.getenv("DATABASE_PATH", "data/pecunia.db"))
@@ -20,7 +22,7 @@ def connect_db() -> sqlite3.Connection:
     db = sqlite3.connect(path, timeout=10)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = ON")
-    db.execute("PRAGMA busy_timeout = 5000")
+    db.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
     return db
 
 
