@@ -15,7 +15,14 @@ from pwdlib import PasswordHash
 
 from app.authorization import current_session, token_hash
 from app.database import connect_db, migrate_database
-from app.schemas import AuthResponse, LoginCredentials, RegisterCredentials, User
+from app.schemas import (
+    AuthResponse,
+    ChangePasswordRequest,
+    ChangePasswordResponse,
+    LoginCredentials,
+    RegisterCredentials,
+    User,
+)
 
 SESSION_LIFETIME_SECONDS = 7 * 24 * 60 * 60
 password_hasher = PasswordHash.recommended()
@@ -114,6 +121,34 @@ def login(payload: LoginCredentials) -> AuthResponse:
             token = issue_token(db, row["id"])
     return AuthResponse(
         user=User(id=row["id"], email=row["email"], role=row["role_name"]), token=token
+    )
+
+
+@app.post("/api/change-password", response_model=ChangePasswordResponse)
+def change_password(
+    payload: ChangePasswordRequest,
+    session: tuple[str, User] = Depends(current_session),
+) -> ChangePasswordResponse:
+    session_token, user = session
+    with closing(connect_db()) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        active_session = db.execute(
+            "SELECT 1 FROM sessions WHERE token_hash = ? AND user_id = ? AND expires_at > ?",
+            (token_hash(session_token), user.id, int(time.time())),
+        ).fetchone()
+        if active_session is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesja jest nieważna lub wygasła.")
+        row = db.execute("SELECT password_hash FROM users WHERE id = ?", (user.id,)).fetchone()
+        if row is None or not password_hasher.verify(payload.current_password, row["password_hash"]):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Obecne hasło jest nieprawidłowe.")
+        if password_hasher.verify(payload.new_password, row["password_hash"]):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nowe hasło musi różnić się od obecnego.")
+        new_hash = password_hasher.hash(payload.new_password)
+        db.execute("DELETE FROM sessions WHERE user_id = ?", (user.id,))
+        db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user.id))
+    return ChangePasswordResponse(
+        message="Hasło zostało zmienione. Zaloguj się ponownie.",
+        reauthentication_required=True,
     )
 
 

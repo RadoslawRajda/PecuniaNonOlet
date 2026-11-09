@@ -45,6 +45,7 @@ Na Windows użyj `.venv\Scripts\alembic.exe -c alembic.ini upgrade head`.
 | `POST` | `/api/login` | Logowanie i wydanie tokenu |
 | `GET` | `/api/me` | Dane zalogowanego użytkownika |
 | `POST` | `/api/logout` | Unieważnienie tokenu |
+| `POST` | `/api/change-password` | Zmiana hasła i unieważnienie wszystkich sesji użytkownika |
 
 Rejestracja i logowanie przyjmują JSON: `{"email":"test@example.com","password":"haslo1234"}`. Hasło przy rejestracji musi mieć od 8 do 128 znaków. Odpowiedź zawiera `user`, `token`, `token_type` i `expires_in`. Dla `/api/me` i `/api/logout` wyślij nagłówek `Authorization: Bearer <token>`. Token wygasa po 7 dniach, a wylogowanie unieważnia go od razu.
 
@@ -55,6 +56,8 @@ Nowe konta otrzymują rolę `user`, której nie można wybrać w żądaniu rejes
 ```
 
 Hasło jest wpisywane interaktywnie i nie trafia do argumentów procesu. Pole `user.role` jest zwracane przez logowanie, rejestrację i `/api/me`.
+
+Zmiana hasła wymaga nagłówka `Authorization: Bearer <token>` oraz JSON `{"current_password":"stare","new_password":"nowe-haslo"}`. Sukces zwraca `reauthentication_required: true`; użytkownik musi zalogować się ponownie.
 
 ## Testy
 

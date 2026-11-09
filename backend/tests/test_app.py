@@ -134,3 +134,88 @@ def test_analyst_creation_rejects_invalid_password_and_duplicate_email(client):
     create_analyst("existing@example.com", "password-123")
     with pytest.raises(ValueError, match="już istnieje"):
         create_analyst("existing@example.com", "password-123")
+
+
+def test_change_password_revokes_all_sessions_and_requires_reauthentication(client):
+    payload = {"email": "password@example.com", "password": "old-password"}
+    first = client.post("/api/register", json=payload).json()
+    second = client.post("/api/login", json=payload).json()
+    other = client.post(
+        "/api/register", json={"email": "other@example.com", "password": "other-password"}
+    ).json()
+
+    response = client.post(
+        "/api/change-password",
+        headers=auth(first["token"]),
+        json={"current_password": "old-password", "new_password": "new-password"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "message": "Hasło zostało zmienione. Zaloguj się ponownie.",
+        "reauthentication_required": True,
+    }
+    assert client.get("/api/me", headers=auth(first["token"])).status_code == 401
+    assert client.get("/api/me", headers=auth(second["token"])).status_code == 401
+    assert client.get("/api/me", headers=auth(other["token"])).status_code == 200
+    assert client.post("/api/login", json=payload).status_code == 401
+    new_login = client.post(
+        "/api/login", json={"email": "password@example.com", "password": "new-password"}
+    )
+    assert new_login.status_code == 200
+
+
+def test_change_password_requires_session_and_current_password(client):
+    assert client.post(
+        "/api/change-password",
+        json={"current_password": "old-password", "new_password": "new-password"},
+    ).status_code == 401
+    credentials = {"email": "wrong-current@example.com", "password": "old-password"}
+    token = client.post("/api/register", json=credentials).json()["token"]
+    response = client.post(
+        "/api/change-password",
+        headers=auth(token),
+        json={"current_password": "wrong-password", "new_password": "new-password"},
+    )
+    assert response.status_code == 401
+    assert client.get("/api/me", headers=auth(token)).status_code == 200
+    assert client.post("/api/login", json=credentials).status_code == 200
+
+
+def test_change_password_validates_new_password_and_rejects_reuse(client):
+    credentials = {"email": "validation@example.com", "password": "old-password"}
+    token = client.post("/api/register", json=credentials).json()["token"]
+    headers = auth(token)
+    for password in ("short", "x" * 129):
+        response = client.post(
+            "/api/change-password",
+            headers=headers,
+            json={"current_password": "old-password", "new_password": password},
+        )
+        assert response.status_code == 422
+    same_password = client.post(
+        "/api/change-password",
+        headers=headers,
+        json={"current_password": "old-password", "new_password": "old-password"},
+    )
+    assert same_password.status_code == 400
+    assert client.get("/api/me", headers=headers).status_code == 200
+
+
+def test_change_password_rolls_back_session_revocation_if_password_update_fails(client, tmp_path):
+    credentials = {"email": "atomic@example.com", "password": "old-password"}
+    token = client.post("/api/register", json=credentials).json()["token"]
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        db.execute(
+            """
+            CREATE TRIGGER reject_password_update BEFORE UPDATE OF password_hash ON users
+            BEGIN SELECT RAISE(ABORT, 'update rejected'); END
+            """
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        client.post(
+            "/api/change-password",
+            headers=auth(token),
+            json={"current_password": "old-password", "new_password": "new-password"},
+        )
+    assert client.get("/api/me", headers=auth(token)).status_code == 200
+    assert client.post("/api/login", json=credentials).status_code == 200

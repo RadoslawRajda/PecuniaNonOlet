@@ -30,3 +30,15 @@ class AuthResponse(BaseModel):
     token: str
     token_type: str = "bearer"
     expires_in: int = 7 * 24 * 60 * 60
+
+
+class ChangePasswordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class ChangePasswordResponse(BaseModel):
+    message: str
+    reauthentication_required: bool = True
