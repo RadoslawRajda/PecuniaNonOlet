@@ -6,3 +6,4 @@ zeroconf==0.151.5
 psutil==7.0.0
 SQLAlchemy>=2.0,<3
 alembic>=1.13,<2
+httpx>=0.27,<1

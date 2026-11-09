@@ -16,6 +16,7 @@ from pwdlib import PasswordHash
 from app.accounts import initialize_user_accounts
 from app.authorization import current_session, token_hash
 from app.database import connect_db, migrate_database
+from app.routes.exchange import router as exchange_router
 from app.routes.finance import router as finance_router
 from app.routes.transfers import router as transfers_router
 from app.schemas import (
@@ -50,6 +51,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="PecuniaNonOlet API", lifespan=lifespan)
 app.include_router(finance_router)
 app.include_router(transfers_router)
+app.include_router(exchange_router)
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)

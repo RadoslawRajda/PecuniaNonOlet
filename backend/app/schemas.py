@@ -108,3 +108,60 @@ class TransferResponse(BaseModel):
     recipient_email: EmailStr
     created_at: str
     idempotent_replay: bool
+
+
+class ExchangeRate(BaseModel):
+    currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    pln_per_unit: str
+
+
+class ExchangeRatesResponse(BaseModel):
+    provider: str
+    effective_date: str
+    base_currency_code: Literal["PLN"] = "PLN"
+    rates: list[ExchangeRate]
+
+
+class ExchangeQuoteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_account_id: int = Field(gt=0, strict=True)
+    destination_account_id: int = Field(gt=0, strict=True)
+    source_amount_minor: int = Field(gt=0, le=9_000_000_000_000_000, strict=True)
+
+
+class ExchangeQuoteResponse(BaseModel):
+    quote_id: str
+    source_account_id: int
+    destination_account_id: int
+    source_currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    destination_currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    source_amount_minor: int
+    source_amount: str
+    destination_amount_minor: int
+    destination_amount: str
+    exchange_rate: str
+    provider: str
+    effective_date: str
+    expires_at: str
+
+
+class ExchangeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    quote_id: str = Field(min_length=36, max_length=36)
+
+
+class ExchangeResponse(BaseModel):
+    transaction_id: str
+    quote_id: str
+    status: Literal["completed"]
+    source_amount_minor: int
+    source_amount: str
+    destination_amount_minor: int
+    destination_amount: str
+    source_currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    destination_currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    exchange_rate: str
+    created_at: str
+    idempotent_replay: bool

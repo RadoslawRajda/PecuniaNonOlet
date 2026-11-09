@@ -48,6 +48,9 @@ Na Windows użyj `.venv\Scripts\alembic.exe -c alembic.ini upgrade head`.
 | `GET` | `/api/transactions` | Stronicowana historia operacji użytkownika |
 | `GET` | `/api/transactions/{transaction_id}` | Szczegóły transakcji widocznej dla użytkownika |
 | `POST` | `/api/transfers` | Przelew do użytkownika wskazanego adresem e-mail |
+| `GET` | `/api/exchange-rates` | Aktualne kursy walut z tabeli A NBP |
+| `POST` | `/api/exchange/quote` | Wycena wymiany ważna przez 120 sekund |
+| `POST` | `/api/exchange` | Atomowa wymiana między rachunkami użytkownika |
 | `POST` | `/api/logout` | Unieważnienie tokenu |
 | `POST` | `/api/change-password` | Zmiana hasła i unieważnienie wszystkich sesji użytkownika |
 
@@ -68,6 +71,8 @@ Rejestracja tworzy osobne rachunki PLN, EUR, USD, GBP i CZK. Rachunek PLN otrzym
 Lista historii przyjmuje `limit` (1–100, domyślnie 20) i `offset` (domyślnie 0), sortuje wpisy deterministycznie od najnowszych. Kwoty są zwracane jako całkowita liczba najmniejszych jednostek oraz tekst dziesiętny; wymiany zawierają obie kwoty i utrwalony kurs. Dostęp do historii jest ograniczony do nadawcy lub odbiorcy danej operacji.
 
 Przelew wymaga nagłówków `Authorization: Bearer <token>` i `Idempotency-Key` oraz JSON zawierającego `recipient_email`, `source_account_id`, `currency_code` i dodatnie `amount_minor`. Kwota jest pobierana i księgowana w tej samej walucie; brak środków na wybranym rachunku nie powoduje użycia innego rachunku. Ponowienie tego samego żądania z tym samym kluczem zwraca poprzedni przelew bez ponownego księgowania; użycie klucza dla innej operacji kończy się konfliktem.
+
+Kursy są pobierane z API NBP przez HTTPS. Endpoint wyceny przyjmuje `source_account_id`, `destination_account_id` i `source_amount_minor`; zwraca kwotę docelową, kurs, datę tabeli NBP oraz identyfikator i termin ważności wyceny. NBP podaje kursy względem PLN, a kursy między pozostałymi walutami są wyliczane jako kursy krzyżowe. Realizacja przyjmuje `quote_id` i nagłówek `Idempotency-Key`; kursu podanego przez klienta backend nie przyjmuje. Kwoty są zaokrąglane do najmniejszej jednostki waluty regułą `ROUND_HALF_UP`. Brak dostępnych lub niekompletnych kursów zwraca błąd usługi, bez kursu zastępczego.
 
 ## Testy
 
