@@ -21,6 +21,7 @@ from typing import Annotated, Protocol
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 
+from app.audit import write_audit_event
 from app.authorization import current_session, require_roles, token_hash
 from app.database import connect_db
 from app.routes.finance import format_minor_units
@@ -354,6 +355,24 @@ def execute_exchange(
         )
         if db.execute("SELECT changes()").fetchone()[0] != 1:
             raise HTTPException(status.HTTP_409_CONFLICT, "Wycena wygasła lub została już wykorzystana.")
+        write_audit_event(
+            db,
+            actor_user_id=user.id,
+            actor_role=user.role,
+            action="financial.transaction_completed",
+            entity_type="transaction",
+            entity_id=transaction_id,
+            details={
+                "kind": "exchange",
+                "status": "completed",
+                "source_currency_code": quote["source_currency_code"],
+                "source_amount_minor": quote["source_amount_minor"],
+                "destination_currency_code": quote["destination_currency_code"],
+                "destination_amount_minor": quote["destination_amount_minor"],
+                "exchange_rate": quote["exchange_rate"],
+            },
+            created_at=now,
+        )
         row = db.execute(
             """SELECT t.*, q.id AS quote_id, sc.minor_unit AS source_minor_unit,
                       dc.minor_unit AS destination_minor_unit

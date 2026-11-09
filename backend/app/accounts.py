@@ -5,6 +5,8 @@ from __future__ import annotations
 import sqlite3
 import uuid
 
+from app.audit import write_audit_event
+
 SUPPORTED_CURRENCIES = ("PLN", "EUR", "USD", "GBP", "CZK")
 INITIAL_PLN_MINOR = 100_000
 INITIAL_BALANCE_IDEMPOTENCY_KEY = "opening-balance-pln-v1"
@@ -66,4 +68,19 @@ def initialize_user_accounts(db: sqlite3.Connection, user_id: int, created_at: i
         ) VALUES (?, ?, ?, ?, ?)
         """,
         (transaction_id, account["id"], user_id, INITIAL_PLN_MINOR, created_at),
+    )
+    write_audit_event(
+        db,
+        actor_user_id=user_id,
+        actor_role="user",
+        action="financial.transaction_completed",
+        entity_type="transaction",
+        entity_id=transaction_id,
+        details={
+            "kind": "opening",
+            "status": "completed",
+            "currency_code": "PLN",
+            "amount_minor": INITIAL_PLN_MINOR,
+        },
+        created_at=created_at,
     )

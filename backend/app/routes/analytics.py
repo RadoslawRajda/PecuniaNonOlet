@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from contextlib import closing
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 
 from app.authorization import require_roles
@@ -62,6 +63,24 @@ class AnalystTransaction(BaseModel):
 
 class TransactionPage(BaseModel):
     transactions: list[AnalystTransaction]
+    limit: int
+    offset: int
+    total: int
+
+
+class AuditEvent(BaseModel):
+    id: int
+    actor_user_id: int | None
+    actor_role: str
+    action: str
+    entity_type: str
+    entity_id: str
+    details: dict[str, object]
+    created_at: str
+
+
+class AuditEventPage(BaseModel):
+    events: list[AuditEvent]
     limit: int
     offset: int
     total: int
@@ -197,6 +216,63 @@ def list_transactions(
         transactions=[
             AnalystTransaction(
                 **{**dict(row), "created_at": timestamp(row["created_at"])}
+            )
+            for row in rows
+        ],
+        limit=limit,
+        offset=offset,
+        total=total,
+    )
+
+
+@router.get("/audit-events", response_model=AuditEventPage)
+def list_audit_events(
+    _: Analyst,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=1_000_000),
+    action: str | None = Query(default=None, min_length=1, max_length=64),
+    entity_type: str | None = Query(default=None, min_length=1, max_length=32),
+    actor_user_id: int | None = Query(default=None, gt=0),
+    from_timestamp: int | None = Query(default=None, ge=0, alias="from"),
+    to_timestamp: int | None = Query(default=None, ge=0, alias="to"),
+) -> AuditEventPage:
+    if from_timestamp is not None and to_timestamp is not None and from_timestamp > to_timestamp:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Nieprawidłowy zakres czasu.")
+    filters: list[str] = []
+    params: list[int | str] = []
+    for field, value in (
+        ("action", action),
+        ("entity_type", entity_type),
+        ("actor_user_id", actor_user_id),
+        ("created_at >=", from_timestamp),
+        ("created_at <=", to_timestamp),
+    ):
+        if value is not None:
+            if field in ("action", "entity_type", "actor_user_id"):
+                filters.append(f"{field} = ?")
+            else:
+                filters.append(field + " ?")
+            params.append(value)
+    where = "WHERE " + " AND ".join(filters) if filters else ""
+    with closing(connect_db()) as db:
+        total = db.execute(f"SELECT count(*) FROM audit_events {where}", params).fetchone()[0]
+        rows = db.execute(
+            f"""SELECT id, actor_user_id, actor_role, action, entity_type, entity_id,
+                       details_json, created_at
+                FROM audit_events {where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?""",
+            (*params, limit, offset),
+        ).fetchall()
+    return AuditEventPage(
+        events=[
+            AuditEvent(
+                id=row["id"],
+                actor_user_id=row["actor_user_id"],
+                actor_role=row["actor_role"],
+                action=row["action"],
+                entity_type=row["entity_type"],
+                entity_id=row["entity_id"],
+                details=json.loads(row["details_json"]),
+                created_at=timestamp(row["created_at"]),
             )
             for row in rows
         ],

@@ -11,6 +11,7 @@ from contextlib import closing
 from pwdlib import PasswordHash
 from pydantic import ValidationError
 
+from app.audit import write_audit_event
 from app.database import connect_db, migrate_database
 from app.schemas import RegisterCredentials
 
@@ -30,6 +31,16 @@ def create_analyst(email: str, password: str) -> int:
                 db.execute(
                     "INSERT INTO user_roles(user_id, role_name) VALUES (?, 'analyst')",
                     (user_id,),
+                )
+                write_audit_event(
+                    db,
+                    actor_user_id=None,
+                    actor_role="local_admin",
+                    action="administration.analyst_created",
+                    entity_type="user",
+                    entity_id=str(user_id),
+                    details={"assigned_role": "analyst", "email": credentials.email},
+                    created_at=int(time.time()),
                 )
         except sqlite3.IntegrityError as exc:
             raise ValueError("Konto o podanym adresie e-mail już istnieje.") from exc

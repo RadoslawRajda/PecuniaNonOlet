@@ -11,6 +11,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 
+from app.audit import write_audit_event
 from app.authorization import current_session, require_roles, token_hash
 from app.database import connect_db
 from app.routes.finance import format_minor_units
@@ -166,6 +167,24 @@ def create_transfer(
         db.execute(
             "INSERT INTO ledger_entries(transaction_id, account_id, account_user_id, amount_minor, created_at) VALUES (?, ?, ?, ?, ?)",
             (transaction_id, destination["id"], recipient["id"], payload.amount_minor, created_at),
+        )
+        write_audit_event(
+            db,
+            actor_user_id=user.id,
+            actor_role=user.role,
+            action="financial.transaction_completed",
+            entity_type="transaction",
+            entity_id=transaction_id,
+            details={
+                "kind": "transfer",
+                "status": "completed",
+                "source_currency_code": payload.currency_code,
+                "source_amount_minor": payload.amount_minor,
+                "destination_currency_code": payload.currency_code,
+                "destination_amount_minor": payload.amount_minor,
+                "recipient_user_id": recipient["id"],
+            },
+            created_at=created_at,
         )
         row = db.execute("SELECT * FROM transactions WHERE id = ?", (transaction_id,)).fetchone()
     return response_from_row(row, recipient["email"], idempotent_replay=False)
