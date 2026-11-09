@@ -9,13 +9,14 @@ import secrets
 import sqlite3
 import time
 from contextlib import asynccontextmanager, closing
-from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from pwdlib import PasswordHash
+
+from app.database import connect_db, migrate_database
 
 
 SESSION_LIFETIME_SECONDS = 7 * 24 * 60 * 60
@@ -50,43 +51,6 @@ class AuthResponse(BaseModel):
     token: str
     token_type: str = "bearer"
     expires_in: int = SESSION_LIFETIME_SECONDS
-
-
-def database_path() -> Path:
-    return Path(os.getenv("DATABASE_PATH", "data/pecunia.db"))
-
-
-def connect_db() -> sqlite3.Connection:
-    path = database_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(path, timeout=10)
-    db.row_factory = sqlite3.Row
-    db.execute("PRAGMA foreign_keys = ON")
-    db.execute("PRAGMA busy_timeout = 5000")
-    return db
-
-
-def initialize_database() -> None:
-    with closing(connect_db()) as db:
-        db.execute("PRAGMA journal_mode = WAL")
-        db.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                email TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                created_at INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS sessions (
-                token_hash TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                expires_at INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-            CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
-            """
-        )
-        db.commit()
 
 
 def token_hash(token: str) -> str:
@@ -127,7 +91,7 @@ def current_session(
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    initialize_database()
+    migrate_database()
     yield
 
 

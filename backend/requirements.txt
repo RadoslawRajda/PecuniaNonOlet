@@ -4,3 +4,5 @@ pwdlib[argon2]==0.2.1
 email-validator==2.2.0
 zeroconf==0.151.5
 psutil==7.0.0
+SQLAlchemy>=2.0,<3
+alembic>=1.13,<2

@@ -1,6 +1,6 @@
 # Backend PecuniaNonOlet
 
-Prosty backend FastAPI z rejestracją, logowaniem i wylogowaniem. Konta oraz sesje są przechowywane w SQLite. Skrypt uruchamia API i ogłasza je w sieci lokalnej przez mDNS.
+Backend FastAPI z rejestracją, logowaniem i wylogowaniem. Konta oraz sesje są przechowywane w SQLite, a schemat bazy jest zarządzany przez Alembic. Skrypt uruchamia API i ogłasza je w sieci lokalnej przez mDNS.
 
 ## Wymagania
 
@@ -19,7 +19,7 @@ W katalogu `backend/`:
 ./start-unix.sh
 ```
 
-Skrypt tworzy środowisko `.venv`, instaluje biblioteki, wybiera adres IP i uruchamia FastAPI na porcie 8000. Jeśli komputer ma kilka adresów, poprosi o wybór. Adres można podać ręcznie:
+Skrypt tworzy środowisko `.venv`, instaluje biblioteki, wybiera adres IP i uruchamia FastAPI na porcie 8000. Przy starcie backend automatycznie wykonuje oczekujące migracje Alembic. Jeśli komputer ma kilka adresów, poprosi o wybór. Adres można podać ręcznie:
 
 ```sh
 ./start-unix.sh --ip 192.168.1.45
@@ -29,7 +29,13 @@ Na Windows: `start-windows.bat --ip 192.168.1.45`.
 
 Po starcie otwórz adres podany w terminalu, np. `http://192.168.1.45:8000/`. Strona `/` pokazuje proste informacje diagnostyczne. Dokumentacja API jest pod `/docs`, a kontrola stanu pod `/health`. Usługa mDNS ma typ `_pecunianonolet._tcp.local.`; nazwa `pecunianonolet.local` działa tylko na urządzeniach obsługujących mDNS.
 
-Naciśnij `Ctrl+C`, aby zatrzymać API i mDNS. Zamknięcie okna skryptu kończy proces serwera. Baza pozostaje w `data/pecunia.db`.
+Naciśnij `Ctrl+C`, aby zatrzymać API i mDNS. Zamknięcie okna skryptu kończy proces serwera. Baza pozostaje w `data/pecunia.db`. Migracje można też uruchomić ręcznie z katalogu `backend/`:
+
+```sh
+DATABASE_PATH=data/pecunia.db .venv/bin/alembic -c alembic.ini upgrade head
+```
+
+Na Windows użyj `.venv\Scripts\alembic.exe -c alembic.ini upgrade head`.
 
 ## Endpointy
 
