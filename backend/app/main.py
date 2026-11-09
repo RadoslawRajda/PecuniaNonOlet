@@ -76,6 +76,16 @@ async def handle_sqlite_operational_error(request: Request, exc: sqlite3.Operati
     raise exc
 
 
+@app.middleware("http")
+async def prevent_api_response_caching(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        if "no-store" not in response.headers.get("Cache-Control", "").lower():
+            response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
+
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def diagnostics(request: Request) -> HTMLResponse:
     ip = os.getenv("LAN_IP", "")

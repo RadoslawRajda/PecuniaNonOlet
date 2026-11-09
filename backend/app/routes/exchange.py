@@ -8,9 +8,8 @@ import time
 import uuid
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import (
-    ROUND_DOWN,
     ROUND_HALF_EVEN,
     Decimal,
     InvalidOperation,
@@ -40,6 +39,7 @@ AuthenticatedUser = Annotated[User, Depends(require_roles("user"))]
 ActiveSession = Annotated[tuple[str, User], Depends(current_session)]
 MAX_BALANCE_MINOR = 9_000_000_000_000_000
 QUOTE_TTL_SECONDS = 120
+MAX_RATE_AGE_DAYS = 7
 SUPPORTED_CURRENCIES = ("PLN", "EUR", "USD", "GBP", "CZK")
 NBP_URL = "https://api.nbp.pl/api/exchangerates/tables/A/"
 
@@ -116,19 +116,45 @@ def require_rate_table(provider: RateProvider) -> RateTable:
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "Kursy walut są chwilowo niedostępne.",
         ) from exc
+    try:
+        effective_date = date.fromisoformat(table.effective_date)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Kursy walut są chwilowo niedostępne.") from exc
+    age_days = (date.today() - effective_date).days
+    if age_days < 0 or age_days > MAX_RATE_AGE_DAYS:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Kursy walut są zbyt stare.")
     if set(table.pln_per_unit) != set(SUPPORTED_CURRENCIES):
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Kursy walut są chwilowo niedostępne.")
+    if any(
+        not isinstance(rate, Decimal) or not rate.is_finite() or rate <= 0
+        for rate in table.pln_per_unit.values()
+    ):
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Kursy walut są chwilowo niedostępne.")
     return table
 
 
-def amount_in_minor_units(source_minor: int, rate: Decimal, minor_unit: int) -> int:
-    with localcontext() as context:
-        context.prec = 50
-        quantum = Decimal(1).scaleb(-minor_unit)
-        target_major = (Decimal(source_minor) / (10**2) * rate).quantize(
-            quantum, rounding=ROUND_DOWN
-        )
-    result = int(target_major * (10**minor_unit))
+def amount_in_minor_units(
+    source_minor: int,
+    source_pln_rate: Decimal,
+    destination_pln_rate: Decimal,
+    source_minor_unit: int = 2,
+    destination_minor_unit: int = 2,
+) -> int:
+    """Convert with exact decimal ratios, flooring only the final minor-unit result."""
+    source_numerator, source_denominator = source_pln_rate.as_integer_ratio()
+    destination_numerator, destination_denominator = destination_pln_rate.as_integer_ratio()
+    numerator = (
+        source_minor
+        * source_numerator
+        * destination_denominator
+        * 10**destination_minor_unit
+    )
+    denominator = (
+        source_denominator
+        * destination_numerator
+        * 10**source_minor_unit
+    )
+    result = numerator // denominator
     if result < 1 or result > MAX_BALANCE_MINOR:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Kwota po przewalutowaniu jest poza zakresem.")
     return result
@@ -215,7 +241,13 @@ def create_exchange_quote(
         minor_units = {row["code"]: row["minor_unit"] for row in units}
         if minor_units.get(source_code) != 2 or minor_units.get(destination_code) != 2:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Nieobsługiwana precyzja waluty.")
-        destination_minor = amount_in_minor_units(payload.source_amount_minor, cross_rate, 2)
+        destination_minor = amount_in_minor_units(
+            payload.source_amount_minor,
+            table.pln_per_unit[source_code],
+            table.pln_per_unit[destination_code],
+            minor_units[source_code],
+            minor_units[destination_code],
+        )
         now = int(time.time())
         quote_id = str(uuid.uuid4())
         db.execute(

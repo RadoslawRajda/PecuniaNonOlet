@@ -39,12 +39,14 @@ def test_register_login_logout_and_persistence(client, tmp_path):
     payload = {"email": "TEST@example.com", "password": "test12345"}
     registered = client.post("/api/register", json=payload)
     assert registered.status_code == 201
+    assert registered.headers["Cache-Control"] == "no-store"
     body = registered.json()
     assert body["user"]["email"] == "test@example.com"
     assert body["token_type"] == "bearer"
     assert body["expires_in"] == 7 * 24 * 60 * 60
     token = body["token"]
     assert client.get("/api/me", headers=auth(token)).json() == body["user"]
+    assert client.get("/api/me", headers=auth(token)).headers["Cache-Control"] == "no-store"
 
     with sqlite3.connect(tmp_path / "test.db") as db:
         user = db.execute("SELECT password_hash FROM users").fetchone()[0]

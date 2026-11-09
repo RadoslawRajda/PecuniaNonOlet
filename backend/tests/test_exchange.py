@@ -1,6 +1,8 @@
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date, timedelta
 from decimal import Decimal
+from fractions import Fraction
 
 import httpx
 import pytest
@@ -15,7 +17,7 @@ class FixedRateProvider:
     def current_rates(self):
         return RateTable(
             "Test NBP Table A",
-            "2026-11-09",
+            date.today().isoformat(),
             {
                 "PLN": Decimal(1),
                 "EUR": Decimal(4),
@@ -143,7 +145,7 @@ def test_rate_endpoint_returns_all_supported_currencies_and_requires_user(client
     assert response.status_code == 200
     assert response.json() == {
         "provider": "Test NBP Table A",
-        "effective_date": "2026-11-09",
+        "effective_date": date.today().isoformat(),
         "base_currency_code": "PLN",
         "rates": [
             {"currency_code": "PLN", "pln_per_unit": "1"},
@@ -289,7 +291,7 @@ def test_exchange_is_atomic_records_rate_and_replays_idempotently(client, tmp_pa
 
 
 def test_exchange_rounding_floors_positive_payouts(client):
-    assert exchange.amount_in_minor_units(3, Decimal("0.5"), 2) == 1
+    assert exchange.amount_in_minor_units(3, Decimal("0.5"), Decimal(1)) == 1
     user = create_user(client, "rounding@example.com")
     ids = account_ids(client, user["token"])
     quote = client.post(
@@ -298,6 +300,123 @@ def test_exchange_rounding_floors_positive_payouts(client):
     )
     assert quote.status_code == 201
     assert quote.json()["destination_amount_minor"] == 5
+
+
+@pytest.mark.parametrize(("eur_rate", "pln_source_minor"), [("4.24", 424), ("3.00", 300)])
+def test_exact_cross_rate_conversion_preserves_whole_eurocents(client, eur_rate, pln_source_minor):
+    class ExactRateProvider:
+        def current_rates(self):
+            return RateTable(
+                "Exact arithmetic test rates",
+                date.today().isoformat(),
+                {
+                    "PLN": Decimal(1),
+                    "EUR": Decimal(eur_rate),
+                    "USD": Decimal("3.70"),
+                    "GBP": Decimal("5.10"),
+                    "CZK": Decimal("0.16"),
+                },
+            )
+
+    app.dependency_overrides[exchange.get_rate_provider] = ExactRateProvider
+    user = create_user(client, f"exact-{eur_rate.replace('.', '-')}@example.com")
+    ids = account_ids(client, user["token"])
+    quote = client.post(
+        "/api/exchange/quote",
+        headers=auth(user["token"]),
+        json={
+            "source_account_id": ids["PLN"],
+            "destination_account_id": ids["EUR"],
+            "source_amount_minor": pln_source_minor,
+        },
+    )
+    assert quote.status_code == 201, quote.text
+    assert quote.json()["destination_amount_minor"] == 100
+
+    exchange_response = client.post(
+        "/api/exchange",
+        headers={**auth(user["token"]), "Idempotency-Key": f"exact-{eur_rate}"},
+        json={"quote_id": quote.json()["quote_id"]},
+    )
+    assert exchange_response.status_code == 201
+    assert exchange_response.json()["destination_amount_minor"] == 100
+    balances = client.get("/api/accounts", headers=auth(user["token"])).json()["accounts"]
+    assert next(item["balance_minor"] for item in balances if item["currency_code"] == "EUR") == 100
+
+
+def test_exchange_quotes_match_exact_fraction_results_for_supported_currency_pairs(client):
+    rates = {
+        "PLN": Decimal(1),
+        "EUR": Decimal("4.24"),
+        "USD": Decimal("3.70"),
+        "GBP": Decimal("5.10"),
+        "CZK": Decimal("0.16"),
+    }
+
+    class ExactRateProvider:
+        def current_rates(self):
+            return RateTable("Exact arithmetic test rates", date.today().isoformat(), rates)
+
+    app.dependency_overrides[exchange.get_rate_provider] = ExactRateProvider
+    user = create_user(client, "fraction-pairs@example.com")
+    ids = account_ids(client, user["token"])
+    for source_code, source_id in ids.items():
+        for destination_code, destination_id in ids.items():
+            if source_code == destination_code:
+                continue
+            for source_minor in (1, 3, 25, 100, 300, 424, 10_001):
+                exact_minor = (
+                    Fraction(source_minor)
+                    * Fraction(rates[source_code])
+                    / Fraction(rates[destination_code])
+                )
+                expected = exact_minor.numerator // exact_minor.denominator
+                response = client.post(
+                    "/api/exchange/quote",
+                    headers=auth(user["token"]),
+                    json={
+                        "source_account_id": source_id,
+                        "destination_account_id": destination_id,
+                        "source_amount_minor": source_minor,
+                    },
+                )
+                if expected < 1:
+                    assert response.status_code == 422
+                else:
+                    assert response.status_code == 201, response.text
+                    assert response.json()["destination_amount_minor"] == expected
+
+
+@pytest.mark.parametrize(
+    ("effective_date", "expected_status"),
+    [
+        (date.today().isoformat(), 200),
+        ((date.today() - timedelta(days=7)).isoformat(), 200),
+        ((date.today() - timedelta(days=8)).isoformat(), 503),
+        ((date.today() + timedelta(days=1)).isoformat(), 503),
+        ("2000-01-01", 503),
+        ("not-a-date", 503),
+    ],
+)
+def test_rate_table_freshness_policy(client, effective_date, expected_status):
+    class DatedRateProvider:
+        def current_rates(self):
+            return RateTable(
+                "Dated test rates",
+                effective_date,
+                {
+                    "PLN": Decimal(1),
+                    "EUR": Decimal(4),
+                    "USD": Decimal(2),
+                    "GBP": Decimal(5),
+                    "CZK": Decimal("0.2"),
+                },
+            )
+
+    app.dependency_overrides[exchange.get_rate_provider] = DatedRateProvider
+    user = create_user(client, f"freshness-{expected_status}-{effective_date}@example.com")
+    response = client.get("/api/exchange-rates", headers=auth(user["token"]))
+    assert response.status_code == expected_status
 
 
 def test_two_way_exchange_cycles_never_increase_source_balance(client, tmp_path):
