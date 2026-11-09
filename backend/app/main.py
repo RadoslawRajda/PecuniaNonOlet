@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import html
 import os
 import secrets
@@ -12,51 +11,15 @@ from contextlib import asynccontextmanager, closing
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from pwdlib import PasswordHash
 
+from app.authorization import current_session, token_hash
 from app.database import connect_db, migrate_database
-
+from app.schemas import AuthResponse, LoginCredentials, RegisterCredentials, User
 
 SESSION_LIFETIME_SECONDS = 7 * 24 * 60 * 60
 password_hasher = PasswordHash.recommended()
 DUMMY_PASSWORD_HASH = password_hasher.hash("invalid-account-password")
-bearer = HTTPBearer(auto_error=False)
-
-
-class LoginCredentials(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    email: EmailStr
-    password: str = Field(min_length=1, max_length=128)
-
-    @field_validator("email", mode="before")
-    @classmethod
-    def normalize_email(cls, value: object) -> object:
-        return value.strip().lower() if isinstance(value, str) else value
-
-
-class RegisterCredentials(LoginCredentials):
-    password: str = Field(min_length=8, max_length=128)
-
-
-class User(BaseModel):
-    id: int
-    email: EmailStr
-
-
-class AuthResponse(BaseModel):
-    user: User
-    token: str
-    token_type: str = "bearer"
-    expires_in: int = SESSION_LIFETIME_SECONDS
-
-
-def token_hash(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
 def issue_token(db: sqlite3.Connection, user_id: int) -> str:
     token = secrets.token_urlsafe(32)
     now = int(time.time())
@@ -66,27 +29,6 @@ def issue_token(db: sqlite3.Connection, user_id: int) -> str:
         (token_hash(token), user_id, now + SESSION_LIFETIME_SECONDS),
     )
     return token
-
-
-def current_session(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
-) -> tuple[str, User]:
-    if credentials is None or credentials.scheme.lower() != "bearer":
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Brak tokenu dostępu.")
-
-    token = credentials.credentials
-    with closing(connect_db()) as db:
-        row = db.execute(
-            """
-            SELECT u.id, u.email FROM sessions AS s
-            JOIN users AS u ON u.id = s.user_id
-            WHERE s.token_hash = ? AND s.expires_at > ?
-            """,
-            (token_hash(token), int(time.time())),
-        ).fetchone()
-    if row is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesja jest nieważna lub wygasła.")
-    return token, User(id=row["id"], email=row["email"])
 
 
 @asynccontextmanager
@@ -146,17 +88,23 @@ def register(payload: RegisterCredentials) -> AuthResponse:
                     (payload.email, password_hash, int(time.time())),
                 )
                 user_id = int(cursor.lastrowid)
+                db.execute("INSERT INTO user_roles(user_id, role_name) VALUES (?, 'user')", (user_id,))
                 token = issue_token(db, user_id)
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, "Ten adres e-mail jest już zajęty.") from exc
-    return AuthResponse(user=User(id=user_id, email=payload.email), token=token)
+    return AuthResponse(user=User(id=user_id, email=payload.email, role="user"), token=token)
 
 
 @app.post("/api/login", response_model=AuthResponse)
 def login(payload: LoginCredentials) -> AuthResponse:
     with closing(connect_db()) as db:
         row = db.execute(
-            "SELECT id, email, password_hash FROM users WHERE email = ?", (payload.email,)
+            """
+            SELECT u.id, u.email, u.password_hash, r.role_name
+            FROM users AS u JOIN user_roles AS r ON r.user_id = u.id
+            WHERE u.email = ?
+            """,
+            (payload.email,),
         ).fetchone()
         stored_hash = row["password_hash"] if row is not None else DUMMY_PASSWORD_HASH
         valid_password = password_hasher.verify(payload.password, stored_hash)
@@ -164,7 +112,9 @@ def login(payload: LoginCredentials) -> AuthResponse:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Błędny e-mail lub hasło.")
         with db:
             token = issue_token(db, row["id"])
-    return AuthResponse(user=User(id=row["id"], email=row["email"]), token=token)
+    return AuthResponse(
+        user=User(id=row["id"], email=row["email"], role=row["role_name"]), token=token
+    )
 
 
 @app.get("/api/me", response_model=User)
@@ -174,7 +124,6 @@ def me(session: tuple[str, User] = Depends(current_session)) -> User:
 
 @app.post("/api/logout", status_code=204, response_class=Response)
 def logout(session: tuple[str, User] = Depends(current_session)) -> Response:
-    with closing(connect_db()) as db:
-        with db:
-            db.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash(session[0]),))
+    with closing(connect_db()) as db, db:
+        db.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash(session[0]),))
     return Response(status_code=204)

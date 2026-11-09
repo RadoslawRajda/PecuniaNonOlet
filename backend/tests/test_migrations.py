@@ -51,7 +51,8 @@ def test_migrates_existing_users_and_active_sessions_without_loss(database_path)
         assert db.execute("SELECT token_hash, user_id, expires_at FROM sessions").fetchall() == [
             ("saved-token-hash", 41, 9876543210)
         ]
-        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0001_currency_accounts",)
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0002_user_roles",)
+        assert db.execute("SELECT role_name FROM user_roles WHERE user_id = 41").fetchone() == ("user",)
 
 
 def test_migration_is_repeatable_and_preserves_financial_data(database_path):

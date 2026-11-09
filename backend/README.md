@@ -48,6 +48,14 @@ Na Windows użyj `.venv\Scripts\alembic.exe -c alembic.ini upgrade head`.
 
 Rejestracja i logowanie przyjmują JSON: `{"email":"test@example.com","password":"haslo1234"}`. Hasło przy rejestracji musi mieć od 8 do 128 znaków. Odpowiedź zawiera `user`, `token`, `token_type` i `expires_in`. Dla `/api/me` i `/api/logout` wyślij nagłówek `Authorization: Bearer <token>`. Token wygasa po 7 dniach, a wylogowanie unieważnia go od razu.
 
+Nowe konta otrzymują rolę `user`, której nie można wybrać w żądaniu rejestracji. Konto `analyst` może utworzyć zaufany lokalny administrator po migracji bazy:
+
+```sh
+.venv/bin/python -m app.admin create-analyst analityk@example.com
+```
+
+Hasło jest wpisywane interaktywnie i nie trafia do argumentów procesu. Pole `user.role` jest zwracane przez logowanie, rejestrację i `/api/me`.
+
 ## Testy
 
 ```sh
