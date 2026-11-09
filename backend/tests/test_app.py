@@ -286,3 +286,182 @@ def test_registration_rolls_back_user_accounts_and_grant_on_ledger_failure(clien
         assert db.execute("SELECT count(*) FROM users WHERE email = 'rollback@example.com'").fetchone() == (0,)
         assert db.execute("SELECT count(*) FROM accounts").fetchone() == (0,)
         assert db.execute("SELECT count(*) FROM transactions").fetchone() == (0,)
+
+
+def add_financial_transaction(
+    db, *, transaction_id, sender_id, recipient_id, source_account, source_owner,
+    destination_account, destination_owner, kind, source_currency, destination_currency,
+    source_minor, destination_minor, exchange_rate, idempotency_key, created_at,
+):
+    db.execute(
+        """
+        INSERT INTO transactions(
+            id, kind, status, sender_user_id, recipient_user_id,
+            source_account_id, source_account_user_id,
+            destination_account_id, destination_account_user_id,
+            source_currency_code, destination_currency_code,
+            source_amount_minor, destination_amount_minor, exchange_rate,
+            idempotency_key, created_at
+        ) VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            transaction_id, kind, sender_id, recipient_id, source_account, source_owner,
+            destination_account, destination_owner, source_currency, destination_currency,
+            source_minor, destination_minor, exchange_rate, idempotency_key, created_at,
+        ),
+    )
+    if source_account is not None:
+        db.execute(
+            "INSERT INTO ledger_entries(transaction_id, account_id, account_user_id, amount_minor, created_at) VALUES (?, ?, ?, ?, ?)",
+            (transaction_id, source_account, source_owner, -source_minor, created_at),
+        )
+    db.execute(
+        "INSERT INTO ledger_entries(transaction_id, account_id, account_user_id, amount_minor, created_at) VALUES (?, ?, ?, ?, ?)",
+        (transaction_id, destination_account, destination_owner, destination_minor, created_at),
+    )
+
+
+def test_accounts_endpoint_returns_each_currency_for_the_authenticated_owner(client):
+    first = client.post(
+        "/api/register", json={"email": "first-account@example.com", "password": "test12345"}
+    ).json()
+    second = client.post(
+        "/api/register", json={"email": "second-account@example.com", "password": "test12345"}
+    ).json()
+    first_response = client.get("/api/accounts", headers=auth(first["token"]))
+    assert first_response.status_code == 200
+    accounts = first_response.json()["accounts"]
+    assert {row["currency_code"]: row["balance"] for row in accounts} == {
+        "PLN": "1000.00", "EUR": "0.00", "USD": "0.00", "GBP": "0.00", "CZK": "0.00"
+    }
+    assert all(isinstance(row["balance_minor"], int) for row in accounts)
+    second_account_ids = {
+        row["id"] for row in client.get("/api/accounts", headers=auth(second["token"])).json()["accounts"]
+    }
+    assert not ({row["id"] for row in accounts} & second_account_ids)
+    assert client.get("/api/accounts").status_code == 401
+    analyst_id = create_analyst("read-only-analyst@example.com", "analyst-password")
+    assert analyst_id > 0
+    analyst_login = client.post(
+        "/api/login", json={"email": "read-only-analyst@example.com", "password": "analyst-password"}
+    ).json()
+    assert client.get("/api/accounts", headers=auth(analyst_login["token"])).status_code == 403
+
+
+def test_transaction_history_is_paginated_sorted_and_shows_both_transfer_sides(client, tmp_path):
+    sender = client.post(
+        "/api/register", json={"email": "sender@example.com", "password": "test12345"}
+    ).json()
+    recipient = client.post(
+        "/api/register", json={"email": "recipient@example.com", "password": "test12345"}
+    ).json()
+    sender_id = sender["user"]["id"]
+    recipient_id = recipient["user"]["id"]
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        sender_pln = db.execute(
+            "SELECT id FROM accounts WHERE user_id = ? AND currency_code = 'PLN'", (sender_id,)
+        ).fetchone()[0]
+        recipient_pln = db.execute(
+            "SELECT id FROM accounts WHERE user_id = ? AND currency_code = 'PLN'", (recipient_id,)
+        ).fetchone()[0]
+        sender_eur = db.execute(
+            "SELECT id FROM accounts WHERE user_id = ? AND currency_code = 'EUR'", (sender_id,)
+        ).fetchone()[0]
+        created_at = 2_000_000_000
+        add_financial_transaction(
+            db, transaction_id="transfer-a", sender_id=sender_id, recipient_id=recipient_id,
+            source_account=sender_pln, source_owner=sender_id, destination_account=recipient_pln,
+            destination_owner=recipient_id, kind="transfer", source_currency="PLN",
+            destination_currency="PLN", source_minor=1_000, destination_minor=1_000,
+            exchange_rate=None, idempotency_key="transfer-a", created_at=created_at,
+        )
+        add_financial_transaction(
+            db, transaction_id="transfer-z", sender_id=sender_id, recipient_id=recipient_id,
+            source_account=sender_pln, source_owner=sender_id, destination_account=recipient_pln,
+            destination_owner=recipient_id, kind="transfer", source_currency="PLN",
+            destination_currency="PLN", source_minor=500, destination_minor=500,
+            exchange_rate=None, idempotency_key="transfer-z", created_at=created_at,
+        )
+        add_financial_transaction(
+            db, transaction_id="exchange-1", sender_id=sender_id, recipient_id=None,
+            source_account=sender_pln, source_owner=sender_id, destination_account=sender_eur,
+            destination_owner=sender_id, kind="exchange", source_currency="PLN",
+            destination_currency="EUR", source_minor=2_500, destination_minor=610,
+            exchange_rate="0.2440000000000000001", idempotency_key="exchange-1",
+            created_at=created_at + 1,
+        )
+
+    first_page = client.get(
+        "/api/transactions?limit=2&offset=0", headers=auth(sender["token"])
+    ).json()
+    assert first_page["total"] == 4
+    assert [item["id"] for item in first_page["transactions"]] == ["exchange-1", "transfer-z"]
+    exchange = first_page["transactions"][0]
+    assert exchange["direction"] == "internal"
+    assert exchange["currency_code"] == "PLN"
+    assert exchange["amount"] == "25.00"
+    assert exchange["source_amount"] == "25.00"
+    assert exchange["destination_amount"] == "6.10"
+    assert exchange["exchange_rate"] == "0.2440000000000000001"
+    transfer = first_page["transactions"][1]
+    assert transfer["direction"] == "outgoing"
+    assert transfer["amount"] == "5.00"
+    assert transfer["counterparty_email"] == "recipient@example.com"
+    assert transfer["source_account_id"] == sender_pln
+    assert transfer["destination_account_id"] == recipient_pln
+    assert transfer["created_at"].endswith("Z")
+
+    second_page = client.get(
+        "/api/transactions?limit=2&offset=2", headers=auth(sender["token"])
+    ).json()
+    assert second_page["transactions"][0]["id"] == "transfer-a"
+    assert second_page["transactions"][1]["type"] == "opening"
+    incoming = client.get(
+        "/api/transactions", headers=auth(recipient["token"])
+    ).json()
+    transfer_records = [item for item in incoming["transactions"] if item["type"] == "transfer"]
+    assert len(transfer_records) == 2
+    assert all(item["direction"] == "incoming" for item in transfer_records)
+    assert all(item["counterparty_email"] == "sender@example.com" for item in transfer_records)
+    assert client.get(
+        f"/api/transactions/{incoming['transactions'][-1]['id']}", headers=auth(sender["token"])
+    ).status_code == 404
+
+
+def test_transaction_details_are_owner_scoped_and_pagination_is_validated(client, tmp_path):
+    sender = client.post(
+        "/api/register", json={"email": "detail-sender@example.com", "password": "test12345"}
+    ).json()
+    recipient = client.post(
+        "/api/register", json={"email": "detail-recipient@example.com", "password": "test12345"}
+    ).json()
+    sender_id, recipient_id = sender["user"]["id"], recipient["user"]["id"]
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        sender_account = db.execute(
+            "SELECT id FROM accounts WHERE user_id = ? AND currency_code = 'EUR'", (sender_id,)
+        ).fetchone()[0]
+        recipient_account = db.execute(
+            "SELECT id FROM accounts WHERE user_id = ? AND currency_code = 'EUR'", (recipient_id,)
+        ).fetchone()[0]
+        add_financial_transaction(
+            db, transaction_id="visible-transfer", sender_id=sender_id,
+            recipient_id=recipient_id, source_account=sender_account, source_owner=sender_id,
+            destination_account=recipient_account, destination_owner=recipient_id,
+            kind="transfer", source_currency="EUR", destination_currency="EUR",
+            source_minor=2_000, destination_minor=2_000, exchange_rate=None,
+            idempotency_key="visible-transfer", created_at=123,
+        )
+    detail = client.get(
+        "/api/transactions/visible-transfer", headers=auth(recipient["token"])
+    )
+    assert detail.status_code == 200
+    assert detail.json()["direction"] == "incoming"
+    assert detail.json()["amount"] == "20.00"
+    assert client.get(
+        "/api/transactions/visible-transfer", headers=auth(sender["token"])
+    ).status_code == 200
+    assert client.get(
+        f"/api/transactions/{sender['user']['id']}", headers=auth(recipient["token"])
+    ).status_code == 404
+    assert client.get("/api/transactions", headers=auth(sender["token"]), params={"limit": 101}).status_code == 422
+    assert client.get("/api/transactions?offset=-1", headers=auth(sender["token"])).status_code == 422

@@ -42,3 +42,42 @@ class ChangePasswordRequest(BaseModel):
 class ChangePasswordResponse(BaseModel):
     message: str
     reauthentication_required: bool = True
+
+
+class AccountBalance(BaseModel):
+    id: int
+    currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    balance_minor: int
+    balance: str
+
+
+class AccountListResponse(BaseModel):
+    accounts: list[AccountBalance]
+
+
+class FinancialTransaction(BaseModel):
+    id: str
+    type: Literal["opening", "transfer", "exchange"]
+    status: Literal["completed", "reversed"]
+    direction: Literal["incoming", "outgoing", "internal"]
+    currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    amount_minor: int
+    amount: str
+    source_account_id: int | None
+    destination_account_id: int | None
+    source_currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"] | None
+    destination_currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    source_amount_minor: int | None
+    source_amount: str | None
+    destination_amount_minor: int
+    destination_amount: str
+    exchange_rate: str | None
+    counterparty_email: EmailStr | None
+    created_at: str
+
+
+class TransactionPage(BaseModel):
+    transactions: list[FinancialTransaction]
+    limit: int
+    offset: int
+    total: int
