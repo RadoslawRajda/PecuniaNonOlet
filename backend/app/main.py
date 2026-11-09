@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse
 from pwdlib import PasswordHash
 
+from app.accounts import initialize_user_accounts
 from app.authorization import current_session, token_hash
 from app.database import connect_db, migrate_database
 from app.schemas import (
@@ -96,9 +97,14 @@ def register(payload: RegisterCredentials) -> AuthResponse:
                 )
                 user_id = int(cursor.lastrowid)
                 db.execute("INSERT INTO user_roles(user_id, role_name) VALUES (?, 'user')", (user_id,))
+                initialize_user_accounts(db, user_id, int(time.time()))
                 token = issue_token(db, user_id)
         except sqlite3.IntegrityError as exc:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Ten adres e-mail jest już zajęty.") from exc
+            if "users.email" in str(exc):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "Ten adres e-mail jest już zajęty."
+                ) from exc
+            raise
     return AuthResponse(user=User(id=user_id, email=payload.email, role="user"), token=token)
 
 

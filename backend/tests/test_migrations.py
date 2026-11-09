@@ -51,8 +51,17 @@ def test_migrates_existing_users_and_active_sessions_without_loss(database_path)
         assert db.execute("SELECT token_hash, user_id, expires_at FROM sessions").fetchall() == [
             ("saved-token-hash", 41, 9876543210)
         ]
-        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0002_user_roles",)
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0003_initial_balances",)
         assert db.execute("SELECT role_name FROM user_roles WHERE user_id = 41").fetchone() == ("user",)
+        assert db.execute(
+            "SELECT currency_code, balance_minor FROM accounts WHERE user_id = 41 ORDER BY currency_code"
+        ).fetchall() == [("CZK", 0), ("EUR", 0), ("GBP", 0), ("PLN", 100_000), ("USD", 0)]
+        assert db.execute(
+            "SELECT kind, idempotency_key, destination_amount_minor FROM transactions WHERE sender_user_id = 41"
+        ).fetchall() == [("opening", "opening-balance-pln-v1", 100_000)]
+        assert db.execute(
+            "SELECT amount_minor FROM ledger_entries WHERE transaction_id = 'init-pln-41'"
+        ).fetchall() == [(100_000,)]
 
 
 def test_migration_is_repeatable_and_preserves_financial_data(database_path):

@@ -4,6 +4,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from app.accounts import initialize_user_accounts
 from app.admin import create_analyst
 from app.authorization import require_roles
 from app.main import app
@@ -219,3 +220,69 @@ def test_change_password_rolls_back_session_revocation_if_password_update_fails(
         )
     assert client.get("/api/me", headers=auth(token)).status_code == 200
     assert client.post("/api/login", json=credentials).status_code == 200
+
+
+def test_registration_creates_independent_currency_accounts_and_initial_ledger(client, tmp_path):
+    response = client.post(
+        "/api/register", json={"email": "accounts@example.com", "password": "test12345"}
+    )
+    assert response.status_code == 201
+    user_id = response.json()["user"]["id"]
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        balances = dict(
+            db.execute(
+                "SELECT currency_code, balance_minor FROM accounts WHERE user_id = ?", (user_id,)
+            ).fetchall()
+        )
+        assert balances == {"PLN": 100_000, "EUR": 0, "USD": 0, "GBP": 0, "CZK": 0}
+        assert db.execute(
+            "SELECT kind, destination_amount_minor, destination_currency_code FROM transactions WHERE sender_user_id = ?",
+            (user_id,),
+        ).fetchall() == [("opening", 100_000, "PLN")]
+        assert db.execute(
+            "SELECT amount_minor FROM ledger_entries WHERE transaction_id IN (SELECT id FROM transactions WHERE sender_user_id = ?)",
+            (user_id,),
+        ).fetchall() == [(100_000,)]
+
+
+def test_initial_account_provisioning_is_idempotent(client, tmp_path):
+    response = client.post(
+        "/api/register", json={"email": "idempotent@example.com", "password": "test12345"}
+    )
+    user_id = response.json()["user"]["id"]
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        db.row_factory = sqlite3.Row
+        db.execute(
+            "UPDATE accounts SET balance_minor = 250 WHERE user_id = ? AND currency_code = 'EUR'",
+            (user_id,),
+        )
+        initialize_user_accounts(db, user_id, 123)
+        balances = db.execute(
+            "SELECT currency_code, balance_minor FROM accounts WHERE user_id = ? ORDER BY currency_code",
+            (user_id,),
+        ).fetchall()
+        assert {row["currency_code"]: row["balance_minor"] for row in balances} == {
+            "CZK": 0, "EUR": 250, "GBP": 0, "PLN": 100_000, "USD": 0
+        }
+        assert db.execute(
+            "SELECT count(*) FROM transactions WHERE sender_user_id = ? AND idempotency_key = ?",
+            (user_id, "opening-balance-pln-v1"),
+        ).fetchone()[0] == 1
+
+
+def test_registration_rolls_back_user_accounts_and_grant_on_ledger_failure(client, tmp_path):
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        db.execute(
+            """
+            CREATE TRIGGER reject_opening_entry BEFORE INSERT ON ledger_entries
+            BEGIN SELECT RAISE(ABORT, 'entry rejected'); END
+            """
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        client.post(
+            "/api/register", json={"email": "rollback@example.com", "password": "test12345"}
+        )
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        assert db.execute("SELECT count(*) FROM users WHERE email = 'rollback@example.com'").fetchone() == (0,)
+        assert db.execute("SELECT count(*) FROM accounts").fetchone() == (0,)
+        assert db.execute("SELECT count(*) FROM transactions").fetchone() == (0,)
