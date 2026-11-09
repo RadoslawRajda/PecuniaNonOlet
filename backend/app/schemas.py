@@ -81,3 +81,30 @@ class TransactionPage(BaseModel):
     limit: int
     offset: int
     total: int
+
+
+class TransferRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    recipient_email: EmailStr
+    source_account_id: int = Field(gt=0, strict=True)
+    currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    amount_minor: int = Field(gt=0, le=9_000_000_000_000_000, strict=True)
+
+    @field_validator("recipient_email", mode="before")
+    @classmethod
+    def normalize_recipient_email(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
+
+class TransferResponse(BaseModel):
+    transaction_id: str
+    status: Literal["completed", "reversed"]
+    currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    amount_minor: int
+    amount: str
+    source_account_id: int
+    destination_account_id: int
+    recipient_email: EmailStr
+    created_at: str
+    idempotent_replay: bool

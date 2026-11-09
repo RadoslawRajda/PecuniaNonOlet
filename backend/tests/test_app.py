@@ -1,4 +1,5 @@
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi import HTTPException
@@ -465,3 +466,237 @@ def test_transaction_details_are_owner_scoped_and_pagination_is_validated(client
     ).status_code == 404
     assert client.get("/api/transactions", headers=auth(sender["token"]), params={"limit": 101}).status_code == 422
     assert client.get("/api/transactions?offset=-1", headers=auth(sender["token"])).status_code == 422
+
+
+def test_transfer_moves_same_currency_atomically_and_replays_idempotently(client, tmp_path):
+    sender = client.post(
+        "/api/register", json={"email": "transfer-sender@example.com", "password": "test12345"}
+    ).json()
+    recipient = client.post(
+        "/api/register", json={"email": "transfer-recipient@example.com", "password": "test12345"}
+    ).json()
+    source_id = next(
+        account["id"]
+        for account in client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
+        if account["currency_code"] == "PLN"
+    )
+    payload = {
+        "recipient_email": "TRANSFER-RECIPIENT@example.com",
+        "source_account_id": source_id,
+        "currency_code": "PLN",
+        "amount_minor": 2_000,
+    }
+    headers = {**auth(sender["token"]), "Idempotency-Key": "transfer-request-001"}
+    response = client.post("/api/transfers", headers=headers, json=payload)
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["amount"] == "20.00"
+    assert body["amount_minor"] == 2_000
+    assert body["recipient_email"] == "transfer-recipient@example.com"
+    assert body["idempotent_replay"] is False
+
+    sender_accounts = client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
+    recipient_accounts = client.get("/api/accounts", headers=auth(recipient["token"])).json()["accounts"]
+    assert next(a["balance_minor"] for a in sender_accounts if a["currency_code"] == "PLN") == 98_000
+    assert next(a["balance_minor"] for a in recipient_accounts if a["currency_code"] == "PLN") == 102_000
+
+    replay = client.post("/api/transfers", headers=headers, json=payload)
+    assert replay.status_code == 201
+    assert replay.json()["transaction_id"] == body["transaction_id"]
+    assert replay.json()["idempotent_replay"] is True
+    changed_request = client.post(
+        "/api/transfers", headers=headers, json={**payload, "amount_minor": 2_001}
+    )
+    assert changed_request.status_code == 409
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        assert db.execute(
+            "SELECT count(*) FROM ledger_entries WHERE transaction_id = ?",
+            (body["transaction_id"],),
+        ).fetchone() == (2,)
+        entries = db.execute(
+            "SELECT amount_minor FROM ledger_entries WHERE transaction_id = ? ORDER BY amount_minor",
+            (body["transaction_id"],),
+        ).fetchall()
+        assert entries == [(-2_000,), (2_000,)]
+        assert sum(row[0] for row in entries) == 0
+
+    sender_history = client.get("/api/transactions", headers=auth(sender["token"])).json()
+    recipient_history = client.get("/api/transactions", headers=auth(recipient["token"])).json()
+    sent = next(item for item in sender_history["transactions"] if item["id"] == body["transaction_id"])
+    received = next(item for item in recipient_history["transactions"] if item["id"] == body["transaction_id"])
+    assert sent["direction"] == "outgoing"
+    assert received["direction"] == "incoming"
+
+
+def test_transfer_rejects_invalid_targets_currency_and_insufficient_funds(client):
+    sender = client.post(
+        "/api/register", json={"email": "validation-sender@example.com", "password": "test12345"}
+    ).json()
+    recipient = client.post(
+        "/api/register", json={"email": "validation-recipient@example.com", "password": "test12345"}
+    ).json()
+    sender_accounts = client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
+    recipient_accounts = client.get("/api/accounts", headers=auth(recipient["token"])).json()["accounts"]
+    pln_id = next(a["id"] for a in sender_accounts if a["currency_code"] == "PLN")
+    eur_id = next(a["id"] for a in sender_accounts if a["currency_code"] == "EUR")
+    recipient_pln_id = next(a["id"] for a in recipient_accounts if a["currency_code"] == "PLN")
+    headers = auth(sender["token"])
+    valid = {
+        "recipient_email": "validation-recipient@example.com",
+        "source_account_id": pln_id,
+        "currency_code": "PLN",
+        "amount_minor": 100,
+    }
+    assert client.post("/api/transfers", headers=headers, json=valid).status_code == 422
+    assert client.post(
+        "/api/transfers", headers={**headers, "Idempotency-Key": "self"},
+        json={**valid, "recipient_email": "validation-sender@example.com"},
+    ).status_code == 400
+    assert client.post(
+        "/api/transfers", headers={**headers, "Idempotency-Key": "missing"},
+        json={**valid, "recipient_email": "nobody@example.com"},
+    ).status_code == 404
+    assert client.post(
+        "/api/transfers", headers={**headers, "Idempotency-Key": "foreign-account"},
+        json={**valid, "source_account_id": recipient_pln_id},
+    ).status_code == 404
+    assert client.post(
+        "/api/transfers", headers={**headers, "Idempotency-Key": "currency-mismatch"},
+        json={**valid, "currency_code": "EUR"},
+    ).status_code == 422
+    assert client.post(
+        "/api/transfers", headers={**headers, "Idempotency-Key": "invalid-currency"},
+        json={**valid, "currency_code": "CAD"},
+    ).status_code == 422
+    assert client.post(
+        "/api/transfers", headers={**headers, "Idempotency-Key": "negative"},
+        json={**valid, "amount_minor": -1},
+    ).status_code == 422
+    no_eur_fallback = client.post(
+        "/api/transfers", headers={**headers, "Idempotency-Key": "no-fallback"},
+        json={**valid, "source_account_id": eur_id, "currency_code": "EUR", "amount_minor": 1},
+    )
+    assert no_eur_fallback.status_code == 409
+    after = client.get("/api/accounts", headers=headers).json()["accounts"]
+    assert next(a["balance_minor"] for a in after if a["currency_code"] == "PLN") == 100_000
+    analyst_id = create_analyst("transfer-analyst@example.com", "analyst-password")
+    assert analyst_id > 0
+    analyst = client.post(
+        "/api/login", json={"email": "transfer-analyst@example.com", "password": "analyst-password"}
+    ).json()
+    assert client.post(
+        "/api/transfers", headers={**auth(analyst["token"]), "Idempotency-Key": "analyst"},
+        json=valid,
+    ).status_code == 403
+
+
+def test_transfer_rejects_recipient_balance_overflow(client, tmp_path):
+    sender = client.post(
+        "/api/register", json={"email": "overflow-sender@example.com", "password": "test12345"}
+    ).json()
+    recipient = client.post(
+        "/api/register", json={"email": "overflow-recipient@example.com", "password": "test12345"}
+    ).json()
+    source_id = next(
+        a["id"] for a in client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
+        if a["currency_code"] == "PLN"
+    )
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        db.execute(
+            "UPDATE accounts SET balance_minor = 9000000000000000 WHERE user_id = ? AND currency_code = 'PLN'",
+            (recipient["user"]["id"],),
+        )
+    response = client.post(
+        "/api/transfers",
+        headers={**auth(sender["token"]), "Idempotency-Key": "overflow"},
+        json={
+            "recipient_email": recipient["user"]["email"],
+            "source_account_id": source_id,
+            "currency_code": "PLN",
+            "amount_minor": 1,
+        },
+    )
+    assert response.status_code == 409
+    sender_after = client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
+    assert next(a["balance_minor"] for a in sender_after if a["currency_code"] == "PLN") == 100_000
+
+
+def test_concurrent_transfers_cannot_overdraw_source_account(client):
+    sender = client.post(
+        "/api/register", json={"email": "race-sender@example.com", "password": "test12345"}
+    ).json()
+    recipients = [
+        client.post(
+            "/api/register", json={"email": f"race-{index}@example.com", "password": "test12345"}
+        ).json()
+        for index in range(2)
+    ]
+    pln_id = next(
+        a["id"] for a in client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
+        if a["currency_code"] == "PLN"
+    )
+
+    def send(index):
+        return client.post(
+            "/api/transfers",
+            headers={**auth(sender["token"]), "Idempotency-Key": f"race-{index}"},
+            json={
+                "recipient_email": recipients[index]["user"]["email"],
+                "source_account_id": pln_id,
+                "currency_code": "PLN",
+                "amount_minor": 70_000,
+            },
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(send, range(2)))
+    assert sorted(response.status_code for response in results) == [201, 409]
+    sender_accounts = client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
+    assert next(a["balance_minor"] for a in sender_accounts if a["currency_code"] == "PLN") == 30_000
+    received_totals = [
+        next(
+            a["balance_minor"]
+            for a in client.get("/api/accounts", headers=auth(recipient["token"])).json()["accounts"]
+            if a["currency_code"] == "PLN"
+        )
+        - 100_000
+        for recipient in recipients
+    ]
+    assert sorted(received_totals) == [0, 70_000]
+
+
+def test_transfer_failure_after_balance_updates_rolls_back_everything(client, tmp_path):
+    sender = client.post(
+        "/api/register", json={"email": "rollback-sender@example.com", "password": "test12345"}
+    ).json()
+    recipient = client.post(
+        "/api/register", json={"email": "rollback-recipient@example.com", "password": "test12345"}
+    ).json()
+    pln_id = next(
+        a["id"] for a in client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
+        if a["currency_code"] == "PLN"
+    )
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        db.execute(
+            """
+            CREATE TRIGGER reject_transfer_debit BEFORE INSERT ON ledger_entries
+            WHEN NEW.amount_minor < 0
+            BEGIN SELECT RAISE(ABORT, 'debit rejected'); END
+            """
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        client.post(
+            "/api/transfers", headers={**auth(sender["token"]), "Idempotency-Key": "rollback"},
+            json={
+                "recipient_email": recipient["user"]["email"],
+                "source_account_id": pln_id,
+                "currency_code": "PLN",
+                "amount_minor": 1_000,
+            },
+        )
+    sender_after = client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
+    recipient_after = client.get("/api/accounts", headers=auth(recipient["token"])).json()["accounts"]
+    assert next(a["balance_minor"] for a in sender_after if a["currency_code"] == "PLN") == 100_000
+    assert next(a["balance_minor"] for a in recipient_after if a["currency_code"] == "PLN") == 100_000
+    assert client.get("/api/transactions", headers=auth(sender["token"])).json()["total"] == 1

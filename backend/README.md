@@ -47,6 +47,7 @@ Na Windows użyj `.venv\Scripts\alembic.exe -c alembic.ini upgrade head`.
 | `GET` | `/api/accounts` | Rachunki i osobne salda zalogowanego użytkownika |
 | `GET` | `/api/transactions` | Stronicowana historia operacji użytkownika |
 | `GET` | `/api/transactions/{transaction_id}` | Szczegóły transakcji widocznej dla użytkownika |
+| `POST` | `/api/transfers` | Przelew do użytkownika wskazanego adresem e-mail |
 | `POST` | `/api/logout` | Unieważnienie tokenu |
 | `POST` | `/api/change-password` | Zmiana hasła i unieważnienie wszystkich sesji użytkownika |
 
@@ -65,6 +66,8 @@ Zmiana hasła wymaga nagłówka `Authorization: Bearer <token>` oraz JSON `{"cur
 Rejestracja tworzy osobne rachunki PLN, EUR, USD, GBP i CZK. Rachunek PLN otrzymuje jednorazowe saldo początkowe 1000,00 PLN, zapisane jako transakcja otwarcia i wpis księgowy; pozostałe rachunki rozpoczynają z saldem 0,00. Migracja Alembic uzupełnia rachunki istniejących użytkowników bez resetowania sald.
 
 Lista historii przyjmuje `limit` (1–100, domyślnie 20) i `offset` (domyślnie 0), sortuje wpisy deterministycznie od najnowszych. Kwoty są zwracane jako całkowita liczba najmniejszych jednostek oraz tekst dziesiętny; wymiany zawierają obie kwoty i utrwalony kurs. Dostęp do historii jest ograniczony do nadawcy lub odbiorcy danej operacji.
+
+Przelew wymaga nagłówków `Authorization: Bearer <token>` i `Idempotency-Key` oraz JSON zawierającego `recipient_email`, `source_account_id`, `currency_code` i dodatnie `amount_minor`. Kwota jest pobierana i księgowana w tej samej walucie; brak środków na wybranym rachunku nie powoduje użycia innego rachunku. Ponowienie tego samego żądania z tym samym kluczem zwraca poprzedni przelew bez ponownego księgowania; użycie klucza dla innej operacji kończy się konfliktem.
 
 ## Testy
 
