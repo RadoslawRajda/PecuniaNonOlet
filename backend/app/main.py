@@ -16,6 +16,7 @@ from pwdlib import PasswordHash
 from app.accounts import initialize_user_accounts
 from app.authorization import current_session, token_hash
 from app.database import connect_db, migrate_database
+from app.routes.analytics import router as analytics_router
 from app.routes.exchange import router as exchange_router
 from app.routes.finance import router as finance_router
 from app.routes.profile_photos import (
@@ -59,6 +60,7 @@ app.include_router(finance_router)
 app.include_router(transfers_router)
 app.include_router(exchange_router)
 app.include_router(profile_photos_router)
+app.include_router(analytics_router)
 app.add_middleware(ProfilePhotoBodyLimitMiddleware)
 
 

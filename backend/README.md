@@ -54,6 +54,9 @@ Na Windows użyj `.venv\Scripts\alembic.exe -c alembic.ini upgrade head`.
 | `PUT` | `/api/profile/photo` | Ustawienie zdjęcia profilowego użytkownika |
 | `GET` | `/api/profile/photo` | Pobranie własnego zdjęcia profilowego |
 | `DELETE` | `/api/profile/photo` | Usunięcie własnego zdjęcia profilowego |
+| `GET` | `/api/analytics/overview` | Zbiorcze statystyki użytkowników i transakcji (rola `analyst`) |
+| `GET` | `/api/analytics/users` | Stronicowana lista użytkowników i liczba ich rachunków oraz operacji (rola `analyst`) |
+| `GET` | `/api/analytics/transactions` | Stronicowana lista transakcji z filtrami (rola `analyst`) |
 | `POST` | `/api/logout` | Unieważnienie tokenu |
 | `POST` | `/api/change-password` | Zmiana hasła i unieważnienie wszystkich sesji użytkownika |
 
@@ -66,6 +69,8 @@ Nowe konta otrzymują rolę `user`, której nie można wybrać w żądaniu rejes
 ```
 
 Hasło jest wpisywane interaktywnie i nie trafia do argumentów procesu. Pole `user.role` jest zwracane przez logowanie, rejestrację i `/api/me`.
+
+Endpointy analityczne wymagają tokenu konta `analyst`. Lista użytkowników przyjmuje `limit` (1–100), `offset` oraz opcjonalne `role`. Lista transakcji przyjmuje `limit`, `offset`, `kind`, `status`, `user_id` oraz zakres czasu `from` i `to` jako znaczniki czasu Unix. Odpowiedzi zawierają wyłącznie dane potrzebne do analizy; nie zwracają hashy haseł ani tokenów sesji. Podsumowanie pokazuje liczniki bez ujawniania danych uwierzytelniających.
 
 Zmiana hasła wymaga nagłówka `Authorization: Bearer <token>` oraz JSON `{"current_password":"stare","new_password":"nowe-haslo"}`. Sukces zwraca `reauthentication_required: true`; użytkownik musi zalogować się ponownie.
 
