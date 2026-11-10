@@ -1,6 +1,7 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {API_URL} from '@env';
+import {WebView} from 'react-native-webview';
 
 import {AppButton, BrandLogo, FormInput} from '../components/Ui';
 import {COLORS} from '../theme';
@@ -34,6 +35,7 @@ export function ExchangeRatesScreen({onBack, token, goHome}: ExchangeRatesProps)
   const [quote, setQuote] = useState<Quote | null>(null);
   const [transactionId, setTransactionId] = useState<string | null>(null);
   const [isExchangeMenuVisible, setExchangeMenuVisible] = useState(false);
+  const [isSourcePageVisible, setSourcePageVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isQuoting, setIsQuoting] = useState(false);
   const [isExchanging, setIsExchanging] = useState(false);
@@ -187,6 +189,9 @@ export function ExchangeRatesScreen({onBack, token, goHome}: ExchangeRatesProps)
               <Text style={styles.rateValue}>{rate.pln_per_unit} PLN</Text>
             </View>
           ))}
+          <Text style={styles.sectionTitle}>Kursy na stronie NBP</Text>
+          <Text style={styles.muted}>Oficjalna tabela źródłowa używana przez aplikację.</Text>
+          <AppButton title="Otwórz stronę NBP" onPress={() => setSourcePageVisible(true)} secondary />
           <View style={styles.backButton}>
             <AppButton title="Wymień waluty" onPress={() => setExchangeMenuVisible(true)} />
           </View>
@@ -195,6 +200,28 @@ export function ExchangeRatesScreen({onBack, token, goHome}: ExchangeRatesProps)
           </View>
         </View>
       </ScrollView>
+      <Modal
+        visible={isSourcePageVisible}
+        animationType="slide"
+        onRequestClose={() => setSourcePageVisible(false)}>
+        <View style={styles.sourcePage}>
+          <View style={styles.sourcePageHeader}>
+            <Text style={styles.sourcePageTitle}>Kursy walut NBP</Text>
+            <Pressable accessibilityRole="button" onPress={() => setSourcePageVisible(false)}>
+              <Text style={styles.sourcePageClose}>Zamknij</Text>
+            </Pressable>
+          </View>
+          <WebView
+            source={{uri: 'https://nbp.pl/statystyka-i-sprawozdawczosc/kursy/tabela-a/'} }
+            startInLoadingState
+            javaScriptEnabled
+            domStorageEnabled
+            scrollEnabled
+            nestedScrollEnabled
+            style={styles.webView}
+          />
+        </View>
+      </Modal>
       <Modal
         visible={isExchangeMenuVisible}
         transparent
@@ -279,6 +306,11 @@ const styles = StyleSheet.create({
   quoteText: {color: COLORS.white, fontSize: 15},
   error: {alignSelf: 'stretch', color: '#FCA5A5', fontSize: 14},
   backButton: {alignSelf: 'stretch', marginTop: 16},
+  sourcePage: {flex: 1, backgroundColor: COLORS.background},
+  sourcePageHeader: {backgroundColor: COLORS.surface, paddingHorizontal: 18, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'},
+  sourcePageTitle: {color: COLORS.white, fontSize: 17, fontWeight: '700'},
+  sourcePageClose: {color: COLORS.yellow, fontSize: 15, fontWeight: '700', padding: 6},
+  webView: {flex: 1, backgroundColor: '#FFFFFF'},
   modalBackdrop: {flex: 1, justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.7)', padding: 20},
   modalCard: {maxHeight: '90%', backgroundColor: COLORS.surface, borderColor: COLORS.border, borderWidth: 1, borderRadius: 18, padding: 20},
   exchangeForm: {gap: 12, paddingBottom: 4},
