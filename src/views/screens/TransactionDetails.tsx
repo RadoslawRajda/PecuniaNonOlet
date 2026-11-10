@@ -12,30 +12,10 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 
 import {AppButton} from '../components/Ui';
 import {COLORS} from '../theme';
+import type {TransactionDetailsData} from '../../types/TransactionDetailsData';
+import type {TransactionDetailsProps} from '../../types/TransactionDetailsProps';
 
-export type TransactionDetailsData = {
-  id: string;
-  type: string;
-  status: string;
-  direction: string;
-  currency_code: string;
-  amount: string;
-  source_currency_code?: string | null;
-  destination_currency_code: string;
-  source_amount?: string | null;
-  destination_amount: string;
-  exchange_rate?: string | null;
-  counterparty_email?: string | null;
-  created_at: string;
-};
-
-type Props = {
-  transactionId: string | null;
-  token: string | null;
-  onClose: () => void;
-};
-
-export function TransactionDetails({transactionId, token, onClose}: Props) {
+export function TransactionDetails({transactionId, token, onClose}: TransactionDetailsProps) {
   const [transaction, setTransaction] =
     React.useState<TransactionDetailsData | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);

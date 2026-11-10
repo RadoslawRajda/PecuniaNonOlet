@@ -13,6 +13,7 @@ import Geolocation from 'react-native-geolocation-service';
 
 import {AppButton, BrandLogo} from '../components/Ui';
 import {COLORS} from '../theme';
+import type {BackScreenProps} from '../../types/BackScreenProps';
 
 const MANUAL_COUNTRIES = [
   'Polska',
@@ -23,11 +24,7 @@ const MANUAL_COUNTRIES = [
   'Stany Zjednoczone',
 ];
 
-type Props = {
-  onBack: () => void;
-};
-
-export function ExchangeRatesScreen({onBack}: Props) {
+export function ExchangeRatesScreen({onBack}: BackScreenProps) {
   const [country, setCountry] = React.useState<string | null>(null);
   const [isCountryPickerVisible, setCountryPickerVisible] = React.useState(false);
 

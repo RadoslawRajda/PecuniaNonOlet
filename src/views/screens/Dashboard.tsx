@@ -14,32 +14,9 @@ import {AppButton, BrandLogo} from '../components/Ui';
 import {COLORS} from '../theme';
 import {TransactionDetails} from './TransactionDetails';
 import {TransactionCreation} from './TransactionCreation';
-
-type Account = {
-  id: number;
-  currency_code: string;
-  balance: string;
-};
-
-type Transaction = {
-  id: string;
-  type: string;
-  direction: string;
-  currency_code: string;
-  amount: string;
-  counterparty_email?: string | null;
-  created_at: string;
-};
-
-type Props = {
-  onLogout: () => void;
-  username: string;    
-  token: string | null;
-  onExchangeRates: () => void;
-  onProfile: () => void;
-  onQrScanner: () => void;
-  onTransactionHistory: () => void;
-};
+import type {Account} from '../../types/Account';
+import type {Transaction} from '../../types/Transaction';
+import type {DashboardProps} from '../../types/DashboardProps';
 
 export function Dashboard({
   onLogout,
@@ -49,7 +26,7 @@ export function Dashboard({
   onProfile,
   onQrScanner,
   onTransactionHistory,
-}: Props) {
+}: DashboardProps) {
   const [accounts, setAccounts] = React.useState<Account[]>([]);
   const [transactions, setTransactions] = React.useState<Transaction[]>([]);
   const [selectedCurrency, setSelectedCurrency] = React.useState<string | null>(null);

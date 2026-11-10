@@ -12,23 +12,10 @@ import {API_URL} from '@env';
 import {AppButton, BrandLogo} from '../components/Ui';
 import {COLORS} from '../theme';
 import {TransactionDetails} from './TransactionDetails';
+import type {Transaction} from '../../types/Transaction';
+import type {TransactionHistoryScreenProps} from '../../types/TransactionHistoryScreenProps';
 
-type Transaction = {
-  id: string;
-  type: string;
-  direction: string;
-  currency_code: string;
-  amount: string;
-  counterparty_email?: string | null;
-  created_at: string;
-};
-
-type Props = {
-  token: string | null;
-  onBack: () => void;
-};
-
-export function TransactionHistoryScreen({token, onBack}: Props) {
+export function TransactionHistoryScreen({token, onBack}: TransactionHistoryScreenProps) {
   const [transactions, setTransactions] = React.useState<Transaction[]>([]);
   const [selectedTransactionId, setSelectedTransactionId] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);

@@ -9,23 +9,16 @@ import {
   View,
 } from 'react-native';
 
-import type {LoginData} from '../../models/auth';
 import {AppButton, FormInput} from '../components/Ui';
 import {COLORS} from '../theme';
-
-type Props = {
-  onBack: () => void;
-  onRegister: () => void;
-  onSubmit: (data: LoginData) => void;
-  onPasskey: () => void;
-};
+import type {LoginScreenProps} from '../../types/LoginScreenProps';
 
 export function LoginScreen({
   onBack,
   onRegister,
   onSubmit,
   onPasskey,
-}: Props) {
+}: LoginScreenProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 

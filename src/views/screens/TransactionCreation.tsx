@@ -15,26 +15,8 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 
 import {AppButton, FormInput} from '../components/Ui';
 import {COLORS} from '../theme';
-
-type Account = {
-  id: number;
-  currency_code: string;
-  balance: string;
-};
-
-type Props = {
-  visible: boolean;
-  token: string | null;
-  accounts: Account[];
-  onClose: () => void;
-  onCreated: () => void;
-};
-
-type FormValues = {
-  recipientEmail: string;
-  account: Account | null;
-  amount: string;
-};
+import type {TransactionCreationProps} from '../../types/TransactionCreationProps';
+import type {TransactionCreationFormValues} from '../../types/TransactionCreationFormValues';
 
 export function TransactionCreation({
   visible,
@@ -42,10 +24,10 @@ export function TransactionCreation({
   accounts,
   onClose,
   onCreated,
-}: Props) {
+}: TransactionCreationProps) {
   const insets = useSafeAreaInsets();
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
-  const [values, setValues] = React.useState<FormValues>({
+  const [values, setValues] = React.useState<TransactionCreationFormValues>({
     recipientEmail: '',
     account: accounts[0] ?? null,
     amount: '',
