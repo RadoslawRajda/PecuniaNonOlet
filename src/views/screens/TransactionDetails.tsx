@@ -15,7 +15,7 @@ import {COLORS} from '../theme';
 import type {TransactionDetailsData} from '../../types/TransactionDetailsData';
 import type {TransactionDetailsProps} from '../../types/TransactionDetailsProps';
 
-export function TransactionDetails({transactionId, token, onClose}: TransactionDetailsProps) {
+export function TransactionDetails({transactionId, token, onClose, goHome}: TransactionDetailsProps) {
   const [transaction, setTransaction] =
     React.useState<TransactionDetailsData | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
@@ -36,6 +36,7 @@ export function TransactionDetails({transactionId, token, onClose}: TransactionD
     async function loadTransaction() {
       if (!token) {
         setError('Brak aktywnego tokenu. Zaloguj się ponownie.');
+        goHome();
         return;
       }
 

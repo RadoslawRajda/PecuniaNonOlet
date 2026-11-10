@@ -26,6 +26,7 @@ export function Dashboard({
   onProfile,
   onQrScanner,
   onTransactionHistory,
+  goHome
 }: DashboardProps) {
   const [accounts, setAccounts] = React.useState<Account[]>([]);
   const [transactions, setTransactions] = React.useState<Transaction[]>([]);
@@ -41,6 +42,7 @@ export function Dashboard({
     if (!token) {
       setError('Brak aktywnego tokenu. Zaloguj się ponownie.');
       setIsLoading(false);
+      goHome();
       return;
     }
 
@@ -255,6 +257,7 @@ export function Dashboard({
           transactionId={selectedTransactionId}
           token={token}
           onClose={() => setSelectedTransactionId(null)}
+          goHome={goHome}
         />
         <TransactionCreation
           visible={isCreationVisible}

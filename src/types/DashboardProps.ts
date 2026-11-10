@@ -6,4 +6,5 @@ export type DashboardProps = {
   onProfile: () => void;
   onQrScanner: () => void;
   onTransactionHistory: () => void;
+  goHome: () => void;
 };

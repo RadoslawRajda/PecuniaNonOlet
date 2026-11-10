@@ -68,6 +68,7 @@ function App() {
             onProfile={controller.goProfile}
             onQrScanner={controller.goQrScanner}
             onTransactionHistory={controller.goTransactionHistory}
+            goHome={controller.goHome}
           />
         )}
 
@@ -89,6 +90,7 @@ function App() {
           <TransactionHistoryScreen
             token={controller.token}
             onBack={controller.goDashboard}
+            goHome={controller.goHome}
           />
         )}
 

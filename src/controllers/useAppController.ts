@@ -242,6 +242,7 @@ export function useAppController() {
   async function getinfo() {
     if (!token) {
       Alert.alert('Błąd', 'Brak aktywnego tokenu. Zaloguj się ponownie.');
+      goHome();
       return;
     }
 

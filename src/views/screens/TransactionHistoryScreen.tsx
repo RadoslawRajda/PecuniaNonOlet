@@ -15,7 +15,7 @@ import {TransactionDetails} from './TransactionDetails';
 import type {Transaction} from '../../types/Transaction';
 import type {TransactionHistoryScreenProps} from '../../types/TransactionHistoryScreenProps';
 
-export function TransactionHistoryScreen({token, onBack}: TransactionHistoryScreenProps) {
+export function TransactionHistoryScreen({token, onBack, goHome}: TransactionHistoryScreenProps) {
   const [transactions, setTransactions] = React.useState<Transaction[]>([]);
   const [selectedTransactionId, setSelectedTransactionId] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
@@ -26,6 +26,7 @@ export function TransactionHistoryScreen({token, onBack}: TransactionHistoryScre
     if (!token) {
       setError('Brak aktywnego tokenu. Zaloguj się ponownie.');
       setIsLoading(false);
+      goHome();
       return;
     }
 
