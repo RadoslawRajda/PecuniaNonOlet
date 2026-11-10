@@ -12,6 +12,7 @@ import {API_URL} from '@env';
 
 import {AppButton, BrandLogo} from '../components/Ui';
 import {COLORS} from '../theme';
+import {TransactionDetails} from './TransactionDetails';
 
 type Account = {
   id: number;
@@ -50,6 +51,7 @@ export function Dashboard({
   const [transactions, setTransactions] = React.useState<Transaction[]>([]);
   const [selectedCurrency, setSelectedCurrency] = React.useState<string | null>(null);
   const [isCurrencyPickerVisible, setCurrencyPickerVisible] = React.useState(false);
+  const [selectedTransactionId, setSelectedTransactionId] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
@@ -176,7 +178,15 @@ export function Dashboard({
                     <Text style={styles.emptyText}>Brak transakcji.</Text>
                   ) : (
                     transactions.map(transaction => (
-                      <View key={transaction.id} style={styles.transaction}>
+                      <Pressable
+                        key={transaction.id}
+                        accessibilityRole="button"
+                        accessibilityLabel="Pokaż szczegóły transakcji"
+                        onPress={() => setSelectedTransactionId(transaction.id)}
+                        style={({pressed}) => [
+                          styles.transaction,
+                          pressed && styles.pressed,
+                        ]}>
                         <View style={styles.transactionDetails}>
                           <Text style={styles.transactionLabel}>
                             {transactionLabel(transaction)}
@@ -193,7 +203,7 @@ export function Dashboard({
                           {transaction.direction === 'outgoing' ? '-' : '+'}
                           {transaction.amount} {transaction.currency_code}
                         </Text>
-                      </View>
+                      </Pressable>
                     ))
                   )}
                 </>
@@ -252,6 +262,11 @@ export function Dashboard({
             </View>
           </Pressable>
         </Modal>
+        <TransactionDetails
+          transactionId={selectedTransactionId}
+          token={token}
+          onClose={() => setSelectedTransactionId(null)}
+        />
     </ScrollView>
   );
 }
@@ -337,6 +352,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: 10,
+  },
+  pressed: {
+    opacity: 0.75,
   },
   transactionDetails: {
     flex: 1,
