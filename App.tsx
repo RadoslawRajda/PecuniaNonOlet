@@ -1,5 +1,5 @@
 import React from 'react';
-import {Pressable, StatusBar, StyleSheet, Text, View} from 'react-native';
+import {BackHandler, Pressable, StatusBar, StyleSheet, Text, View} from 'react-native';
 import {
   SafeAreaProvider,
   SafeAreaView,
@@ -24,6 +24,10 @@ import {AppPreferencesProvider, useAppPreferences} from './src/context/AppPrefer
 
 function AppScreens({controller}: {controller: ReturnType<typeof useAppController>}) {
   const {colorScheme} = useAppPreferences();
+  React.useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => controller.goBack());
+    return () => subscription.remove();
+  }, [controller.goBack]);
   const tabs = [
     {screen: 'dashboard', label: 'Pulpit', icon: '⌂', onPress: controller.goDashboard},
     {screen: 'transactionHistory', label: 'Historia', icon: '↕', onPress: controller.goTransactionHistory},

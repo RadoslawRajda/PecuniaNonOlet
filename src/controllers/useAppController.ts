@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Alert } from 'react-native';
 import * as Keychain from 'react-native-keychain';
 
@@ -22,8 +22,32 @@ const KEYCHAIN_OPTIONS = {
 
 export function useAppController() {
   const [screen, setScreen] = useState<ScreenName>('loading');
+  const screenHistory = useRef<ScreenName[]>([]);
   const [username, setUsername] = useState<string>('test user');
   const [token, setToken] = useState<string | null>(null);
+
+  function navigate(nextScreen: ScreenName) {
+    if (nextScreen === screen) return;
+    if (screen !== 'loading') screenHistory.current.push(screen);
+    setScreen(nextScreen);
+  }
+
+  function goBack() {
+    const previousScreen = screenHistory.current.pop();
+    if (!previousScreen) return false;
+    setScreen(previousScreen);
+    return true;
+  }
+
+  function resetToHome() {
+    screenHistory.current = [];
+    setScreen('home');
+  }
+
+  function resetToDashboard() {
+    screenHistory.current = [];
+    setScreen('dashboard');
+  }
 
   // Sprawdzanie zapisanego tokena przy starcie aplikacji
   useEffect(() => {
@@ -58,7 +82,7 @@ export function useAppController() {
               if (responseData.email) {
                 setUsername(responseData.email);
               }
-              setScreen('dashboard'); 
+              resetToDashboard();
               wentToDashboard = true;
             } else {
               // Usuwanie nieprawidłowego tokena z Keychain
@@ -67,7 +91,7 @@ export function useAppController() {
             }
           } catch {
             setToken(savedToken);
-            setScreen('dashboard');
+            resetToDashboard();
             wentToDashboard = true;
           }
         }
@@ -77,23 +101,23 @@ export function useAppController() {
 
       if(wentToDashboard === false)
       {
-        setScreen('home'); 
+        resetToHome();
       }
     }
 
     loadStoredToken();
   }, []);
 
-  const goHome = () => setScreen('home');
-  const goLogin = () => setScreen('login');
-  const goRegister = () => setScreen('register');
-  const goDashboard = () => setScreen('dashboard');
-  const goExchangeRates = () => setScreen('exchangeRates');
-  const goProfile = () => setScreen('profile');
-  const goQrScanner = () => setScreen('qrScanner');
-  const goQrHub = () => setScreen('qrHub');
-  const goQrGeneration = () => setScreen('qrGeneration');
-  const goTransactionHistory = () => setScreen('transactionHistory');
+  const goHome = resetToHome;
+  const goLogin = () => navigate('login');
+  const goRegister = () => navigate('register');
+  const goDashboard = () => navigate('dashboard');
+  const goExchangeRates = () => navigate('exchangeRates');
+  const goProfile = () => navigate('profile');
+  const goQrScanner = () => navigate('qrScanner');
+  const goQrHub = () => navigate('qrHub');
+  const goQrGeneration = () => navigate('qrGeneration');
+  const goTransactionHistory = () => navigate('transactionHistory');
 
   async function submitLogin(data: LoginData) {
     const error = validateLogin(data);
@@ -130,7 +154,7 @@ export function useAppController() {
           setUsername(responseData.user.email);
         }
 
-        goDashboard();
+        resetToDashboard();
       } else {
         Alert.alert(
           'Błąd',
@@ -187,7 +211,7 @@ export function useAppController() {
           setUsername(responseData.user.email);
         }
 
-        goDashboard();
+        resetToDashboard();
       } else {
         Alert.alert(
           'Błąd',
@@ -285,6 +309,7 @@ export function useAppController() {
 
   return {
     screen,
+    goBack,
     username,
     token,
     goHome,
