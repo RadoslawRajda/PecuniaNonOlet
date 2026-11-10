@@ -15,12 +15,9 @@ import {
   RESULTS,
 } from 'react-native-permissions';
 import {Camera, useCameraDevice} from 'react-native-vision-camera';
+import type {BackScreenProps} from '../../types/BackScreenProps';
 
-type Props = {
-  onBack: () => void;
-};
-
-export function QrScannerScreen({onBack}: Props) {
+export function QrScannerScreen({onBack}: BackScreenProps) {
   const [cameraPermission, setCameraPermission] = useState<string>('pending');
   const cameraDevice = useCameraDevice('back');
 

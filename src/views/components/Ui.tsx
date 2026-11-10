@@ -5,9 +5,10 @@ import {
   Text,
   TextInput,
   View,
-  type TextInputProps,
 } from 'react-native';
 import {COLORS} from '../theme';
+import type {ButtonProps} from '../../types/ButtonProps';
+import type {FormInputProps} from '../../types/FormInputProps';
 
 export function BrandLogo() {
   return (
@@ -16,12 +17,6 @@ export function BrandLogo() {
     </View>
   );
 }
-
-type ButtonProps = {
-  title: string;
-  onPress: () => void;
-  secondary?: boolean;
-};
 
 export function AppButton({
   title,
@@ -47,10 +42,6 @@ export function AppButton({
     </Pressable>
   );
 }
-
-type FormInputProps = TextInputProps & {
-  label: string;
-};
 
 export function FormInput({
   label,

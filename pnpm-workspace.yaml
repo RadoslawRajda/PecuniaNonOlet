@@ -12,3 +12,5 @@ trustPolicyExclude:
 nodeLinker: hoisted
 
 allowBuilds: {}
+minimumReleaseAgeExclude:
+  - react-native-keychain@11.0.0

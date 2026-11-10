@@ -16,12 +16,9 @@ import {
 
 import {AppButton, BrandLogo} from '../components/Ui';
 import {COLORS} from '../theme';
+import type {BackScreenProps} from '../../types/BackScreenProps';
 
-type Props = {
-  onBack: () => void;
-};
-
-export function ProfileScreen({onBack}: Props) {
+export function ProfileScreen({onBack}: BackScreenProps) {
   const [profileImageUri, setProfileImageUri] = React.useState<string | null>(
     null,
   );

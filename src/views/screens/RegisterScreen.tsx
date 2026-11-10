@@ -9,21 +9,15 @@ import {
   View,
 } from 'react-native';
 
-import type {RegisterData} from '../../models/auth';
 import {AppButton, FormInput} from '../components/Ui';
 import {COLORS} from '../theme';
-
-type Props = {
-  onBack: () => void;
-  onLogin: () => void;
-  onSubmit: (data: RegisterData) => void;
-};
+import type {RegisterScreenProps} from '../../types/RegisterScreenProps';
 
 export function RegisterScreen({
   onBack,
   onLogin,
   onSubmit,
-}: Props) {
+}: RegisterScreenProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');

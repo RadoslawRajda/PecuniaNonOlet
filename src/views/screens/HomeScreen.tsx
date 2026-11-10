@@ -8,13 +8,9 @@ import {
 
 import {AppButton, BrandLogo} from '../components/Ui';
 import {COLORS} from '../theme';
+import type {HomeScreenProps} from '../../types/HomeScreenProps';
 
-type Props = {
-  onLogin: () => void;
-  onRegister: () => void;
-};
-
-export function HomeScreen({onLogin, onRegister}: Props) {
+export function HomeScreen({onLogin, onRegister}: HomeScreenProps) {
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.content}>

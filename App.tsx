@@ -14,6 +14,7 @@ import {Dashboard} from './src/views/screens/Dashboard';
 import {ExchangeRatesScreen} from './src/views/screens/ExchangeRatesScreen';
 import {ProfileScreen} from './src/views/screens/ProfileScreen';
 import {QrScannerScreen} from './src/views/screens/QrScannerScreen';
+import {TransactionHistoryScreen} from './src/views/screens/TransactionHistoryScreen';
 import {Loading} from './src/views/screens/Loading';
 
 import {COLORS} from './src/views/theme';
@@ -62,9 +63,12 @@ function App() {
           <Dashboard
             onLogout={controller.logout}
             username={controller.username}
+            token={controller.token}
             onExchangeRates={controller.goExchangeRates}
             onProfile={controller.goProfile}
             onQrScanner={controller.goQrScanner}
+            onTransactionHistory={controller.goTransactionHistory}
+            goHome={controller.goHome}
           />
         )}
 
@@ -80,6 +84,14 @@ function App() {
 
         {controller.screen === 'qrScanner' && (
           <QrScannerScreen onBack={controller.goDashboard} />
+        )}
+
+        {controller.screen === 'transactionHistory' && (
+          <TransactionHistoryScreen
+            token={controller.token}
+            onBack={controller.goDashboard}
+            goHome={controller.goHome}
+          />
         )}
 
       </SafeAreaView>

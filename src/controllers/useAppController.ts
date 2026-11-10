@@ -1,6 +1,6 @@
-import {useState, useEffect} from 'react';
-import {Alert} from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useState, useEffect } from 'react';
+import { Alert } from 'react-native';
+import * as Keychain from 'react-native-keychain';
 
 import { API_URL } from '@env';
 
@@ -15,6 +15,10 @@ import {
 const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
 const TOKEN_STORAGE_KEY = '@app_auth_token';
 
+const KEYCHAIN_OPTIONS = {
+  service: TOKEN_STORAGE_KEY,
+};
+
 export function useAppController() {
   const [screen, setScreen] = useState<ScreenName>('loading');
   const [username, setUsername] = useState<string>('test user');
@@ -24,11 +28,20 @@ export function useAppController() {
   useEffect(() => {
     async function loadStoredToken() {
       let wentToDashboard = false;
+
       try {
-        const savedToken = await AsyncStorage.getItem(TOKEN_STORAGE_KEY);
+        // Pobieranie tokena z Keychain
+        const credentials = await Keychain.getGenericPassword(
+          KEYCHAIN_OPTIONS
+        );
+
+        const savedToken = credentials
+          ? credentials.password
+          : null;
+
         if (savedToken) {
           setToken(savedToken);
-          
+
           try {
             const response = await fetch(`${apiBaseUrl}/api/me`, {
               method: 'GET',
@@ -37,8 +50,9 @@ export function useAppController() {
                 'Content-Type': 'application/json',
               },
             });
+
             const responseData = await response.json().catch(() => null);
-            
+
             if (response.ok && responseData) {
               if (responseData.email) {
                 setUsername(responseData.email);
@@ -46,7 +60,8 @@ export function useAppController() {
               setScreen('dashboard'); 
               wentToDashboard = true;
             } else {
-              await AsyncStorage.removeItem(TOKEN_STORAGE_KEY);
+              // Usuwanie nieprawidłowego tokena z Keychain
+              await Keychain.resetGenericPassword(KEYCHAIN_OPTIONS);
               setToken(null);
             }
           } catch {
@@ -75,6 +90,7 @@ export function useAppController() {
   const goExchangeRates = () => setScreen('exchangeRates');
   const goProfile = () => setScreen('profile');
   const goQrScanner = () => setScreen('qrScanner');
+  const goTransactionHistory = () => setScreen('transactionHistory');
 
   async function submitLogin(data: LoginData) {
     const error = validateLogin(data);
@@ -94,43 +110,37 @@ export function useAppController() {
       });
 
       const responseData = await response.json().catch(() => null);
-      
-      // Alert.alert(
-      //   'Odpowiedź serwera (Logowanie)',
-      //   JSON.stringify(responseData || { status: response.status, ok: response.ok }, null, 2),
-      //   [
-      //     {
-      //       text: 'OK',
-      //       onPress: async () => {
-      //         if (response.ok && responseData) {
-      //           if (responseData.token) {
-      //             setToken(responseData.token);
-      //             await AsyncStorage.setItem(TOKEN_STORAGE_KEY, responseData.token);
-      //           }
-      //           if (responseData.user && responseData.user.email) {
-      //             setUsername(responseData.user.email);
-      //           }
-      //           goDashboard();
-      //         }
-      //       }
-      //     }
-      //   ]
-      // );
+
       if (response.ok && responseData) {
         if (responseData.token) {
           setToken(responseData.token);
-          await AsyncStorage.setItem(TOKEN_STORAGE_KEY, responseData.token);
+
+          // Bezpieczne zapisanie tokena w Keychain
+          await Keychain.setGenericPassword(
+            'app-auth-token',
+            responseData.token,
+            KEYCHAIN_OPTIONS
+          );
         }
+
         if (responseData.user && responseData.user.email) {
           setUsername(responseData.user.email);
         }
-        goDashboard();
-      }
-      else
-      {
-        Alert.alert("Błąd", JSON.stringify(responseData.detail || { status: response.status, ok: response.ok }, null, 2));
-      }
 
+        goDashboard();
+      } else {
+        Alert.alert(
+          'Błąd',
+          JSON.stringify(
+            responseData?.detail || {
+              status: response.status,
+              ok: response.ok,
+            },
+            null,
+            2
+          )
+        );
+      }
     } catch (e: any) {
       Alert.alert(
         'Błąd sieci',
@@ -158,40 +168,35 @@ export function useAppController() {
 
       const responseData = await response.json().catch(() => null);
 
-      // Alert.alert(
-      //   'Odpowiedź serwera (Rejestracja)',
-      //   JSON.stringify(responseData || { status: response.status, ok: response.ok }, null, 2),
-      //   [
-      //     {
-      //       text: 'OK',
-      //       onPress: async () => {
-      //         if (response.ok && responseData) {
-      //           if (responseData.token) {
-      //             setToken(responseData.token);
-      //             await AsyncStorage.setItem(TOKEN_STORAGE_KEY, responseData.token);
-      //           }
-      //           if (responseData.user && responseData.user.email) {
-      //             setUsername(responseData.user.email);
-      //           }
-      //           goDashboard();
-      //         }
-      //       }
-      //     }
-      //   ]
-      // );
       if (response.ok && responseData) {
-          if (responseData.token) {
-            setToken(responseData.token);
-            await AsyncStorage.setItem(TOKEN_STORAGE_KEY, responseData.token);
-          }
-          if (responseData.user && responseData.user.email) {
-            setUsername(responseData.user.email);
-          }
-          goDashboard();
-      }
-      else
-      {
-        Alert.alert("Błąd", JSON.stringify(responseData.detail || { status: response.status, ok: response.ok }, null, 2));
+        if (responseData.token) {
+          setToken(responseData.token);
+
+          // Bezpieczne zapisanie tokena w Keychain
+          await Keychain.setGenericPassword(
+            'app-auth-token',
+            responseData.token,
+            KEYCHAIN_OPTIONS
+          );
+        }
+
+        if (responseData.user && responseData.user.email) {
+          setUsername(responseData.user.email);
+        }
+
+        goDashboard();
+      } else {
+        Alert.alert(
+          'Błąd',
+          JSON.stringify(
+            responseData?.detail || {
+              status: response.status,
+              ok: response.ok,
+            },
+            null,
+            2
+          )
+        );
       }
     } catch (e: any) {
       Alert.alert(
@@ -226,7 +231,9 @@ export function useAppController() {
     } catch (e) {
       console.error('Błąd podczas wylogowywania:', e);
     } finally {
-      await AsyncStorage.removeItem(TOKEN_STORAGE_KEY);
+      // Usuwanie tokena z Keychain
+      await Keychain.resetGenericPassword(KEYCHAIN_OPTIONS);
+
       setToken(null);
       setUsername('test user');
     }
@@ -235,6 +242,7 @@ export function useAppController() {
   async function getinfo() {
     if (!token) {
       Alert.alert('Błąd', 'Brak aktywnego tokenu. Zaloguj się ponownie.');
+      goHome();
       return;
     }
 
@@ -283,6 +291,7 @@ export function useAppController() {
     goExchangeRates,
     goProfile,
     goQrScanner,
+    goTransactionHistory,
     submitLogin,
     submitRegister,
     loginWithPasskey,
