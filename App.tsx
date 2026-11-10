@@ -23,11 +23,12 @@ import {COLORS, createThemedStyles} from './src/views/theme';
 import {AppPreferencesProvider, useAppPreferences} from './src/context/AppPreferences';
 
 function AppScreens({controller}: {controller: ReturnType<typeof useAppController>}) {
-  const {colorScheme} = useAppPreferences();
+  const {colorScheme, preferencesLoaded} = useAppPreferences();
   React.useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => controller.goBack());
     return () => subscription.remove();
   }, [controller.goBack]);
+  if (!preferencesLoaded) return null;
   const tabs = [
     {screen: 'dashboard', label: 'Pulpit', icon: '⌂', onPress: controller.goDashboard},
     {screen: 'transactionHistory', label: 'Historia', icon: '↕', onPress: controller.goTransactionHistory},

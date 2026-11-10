@@ -10,9 +10,11 @@ const CURRENCY_KEY = '@app_preferred_currency';
 type Preferences = {
   token: string | null;
   colorScheme: ColorScheme;
+  preferencesLoaded: boolean;
   preferredCurrency: string | null;
   profilePhotoRevision: number;
   profilePhotoDataUri: string | null;
+  profilePhotoResolved: boolean;
   setColorScheme: (scheme: ColorScheme) => void;
   setPreferredCurrency: (currency: string) => void;
   refreshProfilePhoto: () => void;
@@ -22,9 +24,11 @@ const PreferencesContext = createContext<Preferences | null>(null);
 
 export function AppPreferencesProvider({token, children}: PropsWithChildren<{token: string | null}>) {
   const [colorScheme, setColorSchemeState] = useState<ColorScheme>('dark');
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [preferredCurrency, setPreferredCurrencyState] = useState<string | null>(null);
   const [profilePhotoRevision, setProfilePhotoRevision] = useState(0);
-  const [profilePhotoDataUri, setProfilePhotoDataUri] = useState<string | null>(null);
+  const [profilePhoto, setProfilePhoto] = useState<{token: string; dataUri: string} | null>(null);
+  const [photoResolvedToken, setPhotoResolvedToken] = useState<string | null>(null);
   const previousToken = useRef(token);
 
   useEffect(() => {
@@ -35,10 +39,14 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
   }, [token]);
 
   useEffect(() => {
-    setProfilePhotoDataUri(null);
-    if (!token) return;
+    if (!token) {
+      setProfilePhoto(null);
+      setPhotoResolvedToken(null);
+      return;
+    }
 
     let active = true;
+    setPhotoResolvedToken(null);
     fetch(profilePhotoUrl(profilePhotoRevision), {
       headers: {Authorization: `Bearer ${token}`},
     })
@@ -53,8 +61,16 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
           reader.readAsDataURL(blob);
         });
       })
-      .then(uri => { if (active && uri) setProfilePhotoDataUri(uri); })
-      .catch(error => console.error('Profile photo fetch failed', error));
+      .then(uri => {
+        if (!active) return;
+        if (uri) setProfilePhoto({token, dataUri: uri});
+        setPhotoResolvedToken(token);
+      })
+      .catch(error => {
+        if (!active) return;
+        console.error('Profile photo fetch failed', error);
+        setPhotoResolvedToken(token);
+      });
 
     return () => { active = false; };
   }, [token, profilePhotoRevision]);
@@ -70,7 +86,8 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
         setColorSchemeState(nextTheme);
         setPreferredCurrencyState(savedCurrency);
       })
-      .catch(error => console.warn('Unable to load preferences', error));
+      .catch(error => console.warn('Unable to load preferences', error))
+      .finally(() => { if (active) setPreferencesLoaded(true); });
     return () => { active = false; };
   }, []);
 
@@ -89,13 +106,15 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
   const value = useMemo(() => ({
     token,
     colorScheme,
+    preferencesLoaded,
     preferredCurrency,
     profilePhotoRevision,
-    profilePhotoDataUri,
+    profilePhotoDataUri: token && profilePhoto?.token === token ? profilePhoto.dataUri : null,
+    profilePhotoResolved: !token || photoResolvedToken === token,
     setColorScheme: updateColorScheme,
     setPreferredCurrency: updatePreferredCurrency,
     refreshProfilePhoto,
-  }), [token, colorScheme, preferredCurrency, profilePhotoRevision, profilePhotoDataUri, updateColorScheme, updatePreferredCurrency, refreshProfilePhoto]);
+  }), [token, colorScheme, preferencesLoaded, preferredCurrency, profilePhotoRevision, profilePhoto, photoResolvedToken, updateColorScheme, updatePreferredCurrency, refreshProfilePhoto]);
 
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
 }

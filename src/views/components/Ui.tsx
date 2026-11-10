@@ -13,7 +13,7 @@ import type {ButtonProps} from '../../types/ButtonProps';
 import type {FormInputProps} from '../../types/FormInputProps';
 
 export function BrandLogo() {
-  const {profilePhotoRevision, profilePhotoDataUri} = useAppPreferences();
+  const {profilePhotoRevision, profilePhotoDataUri, profilePhotoResolved} = useAppPreferences();
   const [photoUnavailable, setPhotoUnavailable] = React.useState(false);
   const [photoLoaded, setPhotoLoaded] = React.useState(false);
   React.useEffect(() => {
@@ -23,7 +23,7 @@ export function BrandLogo() {
 
   return (
     <View style={styles.logo}>
-      <Text style={styles.logoText}>P</Text>
+      {profilePhotoResolved && !profilePhotoDataUri ? <Text style={styles.logoText}>P</Text> : null}
       {profilePhotoDataUri && !photoUnavailable ? (
       <Image
         accessibilityLabel="Zdjęcie profilowe"
