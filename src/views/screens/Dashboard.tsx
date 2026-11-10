@@ -13,6 +13,7 @@ import {API_URL} from '@env';
 import {AppButton, BrandLogo} from '../components/Ui';
 import {COLORS} from '../theme';
 import {TransactionDetails} from './TransactionDetails';
+import {TransactionCreation} from './TransactionCreation';
 
 type Account = {
   id: number;
@@ -52,6 +53,7 @@ export function Dashboard({
   const [selectedCurrency, setSelectedCurrency] = React.useState<string | null>(null);
   const [isCurrencyPickerVisible, setCurrencyPickerVisible] = React.useState(false);
   const [selectedTransactionId, setSelectedTransactionId] = React.useState<string | null>(null);
+  const [isCreationVisible, setCreationVisible] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
@@ -174,6 +176,10 @@ export function Dashboard({
                   </Text>
 
                   <Text style={styles.sectionTitle}>Najnowsze transakcje</Text>
+                  <AppButton
+                    title="Utwórz transakcję"
+                    onPress={() => setCreationVisible(true)}
+                  />
                   {transactions.length === 0 ? (
                     <Text style={styles.emptyText}>Brak transakcji.</Text>
                   ) : (
@@ -266,6 +272,13 @@ export function Dashboard({
           transactionId={selectedTransactionId}
           token={token}
           onClose={() => setSelectedTransactionId(null)}
+        />
+        <TransactionCreation
+          visible={isCreationVisible}
+          token={token}
+          accounts={accounts}
+          onClose={() => setCreationVisible(false)}
+          onCreated={loadDashboardData}
         />
     </ScrollView>
   );
