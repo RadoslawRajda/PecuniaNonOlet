@@ -62,6 +62,7 @@ function App() {
           <Dashboard
             onLogout={controller.logout}
             username={controller.username}
+            token={controller.token}
             onExchangeRates={controller.goExchangeRates}
             onProfile={controller.goProfile}
             onQrScanner={controller.goQrScanner}
