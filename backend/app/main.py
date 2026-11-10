@@ -2,97 +2,42 @@
 
 from __future__ import annotations
 
-import hashlib
 import html
 import os
 import secrets
 import sqlite3
 import time
 from contextlib import asynccontextmanager, closing
-from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
-from fastapi.responses import HTMLResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from fastapi.responses import HTMLResponse, JSONResponse
 from pwdlib import PasswordHash
 
+from app.accounts import initialize_user_accounts
+from app.authorization import current_session, token_hash
+from app.database import connect_db, migrate_database
+from app.routes.analytics import router as analytics_router
+from app.routes.exchange import router as exchange_router
+from app.routes.finance import router as finance_router
+from app.routes.profile_photos import (
+    ProfilePhotoBodyLimitMiddleware,
+)
+from app.routes.profile_photos import (
+    router as profile_photos_router,
+)
+from app.routes.transfers import router as transfers_router
+from app.schemas import (
+    AuthResponse,
+    ChangePasswordRequest,
+    ChangePasswordResponse,
+    LoginCredentials,
+    RegisterCredentials,
+    User,
+)
 
 SESSION_LIFETIME_SECONDS = 7 * 24 * 60 * 60
 password_hasher = PasswordHash.recommended()
 DUMMY_PASSWORD_HASH = password_hasher.hash("invalid-account-password")
-bearer = HTTPBearer(auto_error=False)
-
-
-class LoginCredentials(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    email: EmailStr
-    password: str = Field(min_length=1, max_length=128)
-
-    @field_validator("email", mode="before")
-    @classmethod
-    def normalize_email(cls, value: object) -> object:
-        return value.strip().lower() if isinstance(value, str) else value
-
-
-class RegisterCredentials(LoginCredentials):
-    password: str = Field(min_length=8, max_length=128)
-
-
-class User(BaseModel):
-    id: int
-    email: EmailStr
-
-
-class AuthResponse(BaseModel):
-    user: User
-    token: str
-    token_type: str = "bearer"
-    expires_in: int = SESSION_LIFETIME_SECONDS
-
-
-def database_path() -> Path:
-    return Path(os.getenv("DATABASE_PATH", "data/pecunia.db"))
-
-
-def connect_db() -> sqlite3.Connection:
-    path = database_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(path, timeout=10)
-    db.row_factory = sqlite3.Row
-    db.execute("PRAGMA foreign_keys = ON")
-    db.execute("PRAGMA busy_timeout = 5000")
-    return db
-
-
-def initialize_database() -> None:
-    with closing(connect_db()) as db:
-        db.execute("PRAGMA journal_mode = WAL")
-        db.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                email TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                created_at INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS sessions (
-                token_hash TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                expires_at INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-            CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
-            """
-        )
-        db.commit()
-
-
-def token_hash(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
 def issue_token(db: sqlite3.Connection, user_id: int) -> str:
     token = secrets.token_urlsafe(32)
     now = int(time.time())
@@ -104,34 +49,41 @@ def issue_token(db: sqlite3.Connection, user_id: int) -> str:
     return token
 
 
-def current_session(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
-) -> tuple[str, User]:
-    if credentials is None or credentials.scheme.lower() != "bearer":
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Brak tokenu dostępu.")
-
-    token = credentials.credentials
-    with closing(connect_db()) as db:
-        row = db.execute(
-            """
-            SELECT u.id, u.email FROM sessions AS s
-            JOIN users AS u ON u.id = s.user_id
-            WHERE s.token_hash = ? AND s.expires_at > ?
-            """,
-            (token_hash(token), int(time.time())),
-        ).fetchone()
-    if row is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesja jest nieważna lub wygasła.")
-    return token, User(id=row["id"], email=row["email"])
-
-
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    initialize_database()
+    migrate_database()
     yield
 
 
 app = FastAPI(title="PecuniaNonOlet API", lifespan=lifespan)
+app.include_router(finance_router)
+app.include_router(transfers_router)
+app.include_router(exchange_router)
+app.include_router(profile_photos_router)
+app.include_router(analytics_router)
+app.add_middleware(ProfilePhotoBodyLimitMiddleware)
+
+
+@app.exception_handler(sqlite3.OperationalError)
+async def handle_sqlite_operational_error(request: Request, exc: sqlite3.OperationalError):
+    message = str(exc).lower()
+    if "database" in message and ("locked" in message or "busy" in message):
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"detail": "Baza jest chwilowo zajęta. Ponów żądanie."},
+            headers={"Retry-After": "1"},
+        )
+    raise exc
+
+
+@app.middleware("http")
+async def prevent_api_response_caching(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        if "no-store" not in response.headers.get("Cache-Control", "").lower():
+            response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -182,25 +134,84 @@ def register(payload: RegisterCredentials) -> AuthResponse:
                     (payload.email, password_hash, int(time.time())),
                 )
                 user_id = int(cursor.lastrowid)
+                db.execute("INSERT INTO user_roles(user_id, role_name) VALUES (?, 'user')", (user_id,))
+                initialize_user_accounts(db, user_id, int(time.time()))
                 token = issue_token(db, user_id)
         except sqlite3.IntegrityError as exc:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Ten adres e-mail jest już zajęty.") from exc
-    return AuthResponse(user=User(id=user_id, email=payload.email), token=token)
+            if "users.email" in str(exc):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "Ten adres e-mail jest już zajęty."
+                ) from exc
+            raise
+    return AuthResponse(user=User(id=user_id, email=payload.email, role="user"), token=token)
 
 
 @app.post("/api/login", response_model=AuthResponse)
 def login(payload: LoginCredentials) -> AuthResponse:
-    with closing(connect_db()) as db:
-        row = db.execute(
-            "SELECT id, email, password_hash FROM users WHERE email = ?", (payload.email,)
+    with closing(connect_db()) as read_db:
+        row = read_db.execute(
+            """
+            SELECT u.id, u.email, u.password_hash, r.role_name
+            FROM users AS u JOIN user_roles AS r ON r.user_id = u.id
+            WHERE u.email = ?
+            """,
+            (payload.email,),
         ).fetchone()
         stored_hash = row["password_hash"] if row is not None else DUMMY_PASSWORD_HASH
         valid_password = password_hasher.verify(payload.password, stored_hash)
         if row is None or not valid_password:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Błędny e-mail lub hasło.")
-        with db:
-            token = issue_token(db, row["id"])
-    return AuthResponse(user=User(id=row["id"], email=row["email"]), token=token)
+    with closing(connect_db()) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        current = db.execute(
+            "SELECT id, email, password_hash FROM users WHERE id = ?", (row["id"],)
+        ).fetchone()
+        if current is None or current["password_hash"] != stored_hash:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Błędny e-mail lub hasło.")
+        current_role = db.execute(
+            "SELECT role_name FROM user_roles WHERE user_id = ?", (row["id"],)
+        ).fetchone()
+        if current_role is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Błędny e-mail lub hasło.")
+        token = issue_token(db, row["id"])
+    return AuthResponse(
+        user=User(id=current["id"], email=current["email"], role=current_role["role_name"]), token=token
+    )
+
+
+@app.post("/api/change-password", response_model=ChangePasswordResponse)
+def change_password(
+    payload: ChangePasswordRequest,
+    session: tuple[str, User] = Depends(current_session),
+) -> ChangePasswordResponse:
+    session_token, user = session
+    with closing(connect_db()) as read_db:
+        row = read_db.execute(
+            "SELECT password_hash FROM users WHERE id = ?", (user.id,)
+        ).fetchone()
+    if row is None or not password_hasher.verify(payload.current_password, row["password_hash"]):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Obecne hasło jest nieprawidłowe.")
+    if password_hasher.verify(payload.new_password, row["password_hash"]):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nowe hasło musi różnić się od obecnego.")
+    expected_hash = row["password_hash"]
+    new_hash = password_hasher.hash(payload.new_password)
+    with closing(connect_db()) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        active_session = db.execute(
+            "SELECT 1 FROM sessions WHERE token_hash = ? AND user_id = ? AND expires_at > ?",
+            (token_hash(session_token), user.id, int(time.time())),
+        ).fetchone()
+        if active_session is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesja jest nieważna lub wygasła.")
+        current = db.execute("SELECT password_hash FROM users WHERE id = ?", (user.id,)).fetchone()
+        if current is None or current["password_hash"] != expected_hash:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Hasło zostało już zmienione. Zaloguj się ponownie.")
+        db.execute("DELETE FROM sessions WHERE user_id = ?", (user.id,))
+        db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user.id))
+    return ChangePasswordResponse(
+        message="Hasło zostało zmienione. Zaloguj się ponownie.",
+        reauthentication_required=True,
+    )
 
 
 @app.get("/api/me", response_model=User)
@@ -210,7 +221,6 @@ def me(session: tuple[str, User] = Depends(current_session)) -> User:
 
 @app.post("/api/logout", status_code=204, response_class=Response)
 def logout(session: tuple[str, User] = Depends(current_session)) -> Response:
-    with closing(connect_db()) as db:
-        with db:
-            db.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash(session[0]),))
+    with closing(connect_db()) as db, db:
+        db.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash(session[0]),))
     return Response(status_code=204)

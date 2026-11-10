@@ -1,0 +1,230 @@
+import sqlite3
+import time
+import uuid
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.admin import create_analyst
+from app.main import app
+from app.routes import analytics as analytics_module
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "analytics.db"))
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def register(client, email):
+    return client.post(
+        "/api/register", json={"email": email, "password": "strong-password"}
+    ).json()
+
+
+def authorization(token):
+    return {"Authorization": f"Bearer {token}"}
+
+
+def install_read_interleaving(monkeypatch, database, match_sql, write_between_queries):
+    original_connect = analytics_module.connect_db
+    injected = False
+
+    class InterleavedConnection:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def execute(self, sql, parameters=()):
+            nonlocal injected
+            result = self.connection.execute(sql, parameters)
+            normalized = " ".join(sql.lower().split())
+            if not injected and match_sql in normalized:
+                injected = True
+                write_between_queries()
+            return result
+
+        def close(self):
+            self.connection.close()
+
+    def connect():
+        return InterleavedConnection(original_connect())
+
+    monkeypatch.setattr(analytics_module, "connect_db", connect)
+    with sqlite3.connect(database) as db:
+        db.execute("PRAGMA journal_mode = WAL")
+
+
+def insert_extra_user(database):
+    with sqlite3.connect(database) as db:
+        cursor = db.execute(
+            "INSERT INTO users(email, password_hash, created_at) VALUES (?, ?, ?)",
+            ("concurrent@example.com", "test-hash", int(time.time())),
+        )
+        db.execute(
+            "INSERT INTO user_roles(user_id, role_name) VALUES (?, 'user')",
+            (cursor.lastrowid,),
+        )
+
+
+def analyst_headers(client):
+    create_analyst("analyst@example.com", "analyst-password")
+    login = client.post(
+        "/api/login", json={"email": "analyst@example.com", "password": "analyst-password"}
+    ).json()
+    return authorization(login["token"])
+
+
+def test_analytics_requires_analyst_role(client):
+    user = register(client, "user@example.com")
+    for endpoint in ("overview", "users", "transactions"):
+        response = client.get(
+            f"/api/analytics/{endpoint}", headers=authorization(user["token"])
+        )
+        assert response.status_code == 403
+    assert client.get("/api/analytics/overview").status_code == 401
+
+
+def test_analyst_can_read_aggregates_and_paginated_users_without_secrets(client, tmp_path):
+    analyst_id = create_analyst("analyst@example.com", "analyst-password")
+    analyst = client.post(
+        "/api/login", json={"email": "analyst@example.com", "password": "analyst-password"}
+    ).json()
+    register(client, "customer@example.com")
+    headers = authorization(analyst["token"])
+
+    overview = client.get("/api/analytics/overview", headers=headers)
+    assert overview.status_code == 200
+    assert overview.json()["users_total"] == 2
+    assert overview.json()["transactions_total"] == 1
+    assert overview.json()["transactions_by_kind"] == {"opening": 1}
+    assert overview.json()["active_sessions"] == 2
+
+    page = client.get("/api/analytics/users?role=user&limit=1", headers=headers)
+    assert page.status_code == 200
+    assert page.json()["total"] == 1
+    assert page.json()["users"][0]["email"] == "customer@example.com"
+    assert page.json()["users"][0]["accounts_count"] == 5
+    serialized = page.text.lower()
+    assert "password_hash" not in serialized
+    assert "token" not in serialized
+    with sqlite3.connect(tmp_path / "analytics.db") as db:
+        assert db.execute("SELECT count(*) FROM sessions WHERE user_id = ?", (analyst_id,)).fetchone()[0] == 1
+
+
+def test_analyst_transaction_listing_supports_bound_filters(client):
+    create_analyst("analyst@example.com", "analyst-password")
+    analyst = client.post(
+        "/api/login", json={"email": "analyst@example.com", "password": "analyst-password"}
+    ).json()
+    customer = register(client, "customer@example.com")
+    headers = authorization(analyst["token"])
+    response = client.get(
+        f"/api/analytics/transactions?kind=opening&user_id={customer['user']['id']}",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["transactions"][0]["sender_email"] == "customer@example.com"
+    assert body["transactions"][0]["destination_amount_minor"] == 100_000
+    assert "password" not in response.text.lower()
+    assert "token" not in response.text.lower()
+
+    assert client.get(
+        "/api/analytics/transactions?kind=opening%27%20OR%201%3D1", headers=headers
+    ).status_code == 422
+
+
+def test_analytics_pagination_is_bounded(client):
+    create_analyst("analyst@example.com", "analyst-password")
+    analyst = client.post(
+        "/api/login", json={"email": "analyst@example.com", "password": "analyst-password"}
+    ).json()
+    headers = authorization(analyst["token"])
+    assert client.get("/api/analytics/users?limit=101", headers=headers).status_code == 422
+    assert client.get("/api/analytics/transactions?offset=-1", headers=headers).status_code == 422
+    assert client.get("/api/analytics/users?offset=1000001", headers=headers).status_code == 422
+    too_large = 9_223_372_036_854_775_808
+    assert client.get(f"/api/analytics/transactions?user_id={too_large}", headers=headers).status_code == 422
+    assert client.get(f"/api/analytics/audit-events?actor_user_id={too_large}", headers=headers).status_code == 422
+    assert client.get(f"/api/analytics/audit-events?from={too_large}", headers=headers).status_code == 422
+
+
+def test_overview_reads_one_consistent_database_snapshot(client, tmp_path, monkeypatch):
+    headers = analyst_headers(client)
+    database = tmp_path / "analytics.db"
+    install_read_interleaving(
+        monkeypatch, database, "select count(*) from users", lambda: insert_extra_user(database)
+    )
+    response = client.get("/api/analytics/overview", headers=headers)
+    body = response.json()
+    assert response.status_code == 200
+    assert body["users_total"] == sum(body["users_by_role"].values())
+    with sqlite3.connect(database) as db:
+        assert db.execute("SELECT count(*) FROM users").fetchone()[0] == body["users_total"] + 1
+
+
+def test_user_page_total_and_rows_use_one_database_snapshot(client, tmp_path, monkeypatch):
+    headers = analyst_headers(client)
+    register(client, "customer@example.com")
+    database = tmp_path / "analytics.db"
+    install_read_interleaving(
+        monkeypatch, database, "select count(*) from users as u", lambda: insert_extra_user(database)
+    )
+    response = client.get("/api/analytics/users?limit=100", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["total"] == len(response.json()["users"])
+
+
+def test_transaction_page_total_and_rows_use_one_database_snapshot(client, tmp_path, monkeypatch):
+    headers = analyst_headers(client)
+    customer = register(client, "customer@example.com")
+    database = tmp_path / "analytics.db"
+
+    def insert_transaction():
+        with sqlite3.connect(database) as db:
+            account_id = db.execute(
+                "SELECT id FROM accounts WHERE user_id = ? AND currency_code = 'PLN'",
+                (customer["user"]["id"],),
+            ).fetchone()[0]
+            db.execute(
+                """INSERT INTO transactions(
+                       id, kind, status, sender_user_id, recipient_user_id,
+                       source_account_id, source_account_user_id,
+                       destination_account_id, destination_account_user_id,
+                       source_currency_code, destination_currency_code,
+                       source_amount_minor, destination_amount_minor,
+                       exchange_rate, provider, idempotency_key, created_at
+                   ) VALUES (?, 'opening', 'completed', ?, NULL, NULL, NULL, ?, ?,
+                             NULL, 'PLN', NULL, 1, NULL, NULL, NULL, ?)""",
+                (str(uuid.uuid4()), customer["user"]["id"], account_id, customer["user"]["id"], int(time.time())),
+            )
+
+    install_read_interleaving(
+        monkeypatch, database, "select count(*) from transactions as t", insert_transaction
+    )
+    response = client.get("/api/analytics/transactions?limit=100", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["total"] == len(response.json()["transactions"])
+
+
+def test_audit_page_total_and_rows_use_one_database_snapshot(client, tmp_path, monkeypatch):
+    headers = analyst_headers(client)
+    database = tmp_path / "analytics.db"
+
+    def insert_audit_event():
+        with sqlite3.connect(database) as db:
+            db.execute(
+                """INSERT INTO audit_events(
+                       actor_user_id, actor_role, action, entity_type, entity_id, details_json, created_at
+                   ) VALUES (NULL, 'system', 'test.interleaving', 'test', ?, '{}', ?)""",
+                (str(uuid.uuid4()), int(time.time())),
+            )
+
+    install_read_interleaving(
+        monkeypatch, database, "select count(*) from audit_events", insert_audit_event
+    )
+    response = client.get("/api/analytics/audit-events?limit=100", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["total"] == len(response.json()["events"])
