@@ -81,6 +81,9 @@ export function TransactionHistoryScreen({token, onBack, goHome}: TransactionHis
   }).format(new Date(date));
 
   const transactionLabel = (transaction: Transaction) => {
+    if (transaction.type === 'exchange') {
+      return 'Wymiana walut';
+    }
     if (transaction.type === 'opening') {
       return 'Saldo początkowe';
     }
@@ -137,7 +140,12 @@ export function TransactionHistoryScreen({token, onBack, goHome}: TransactionHis
                     transaction.direction === 'outgoing' && styles.outgoing,
                   ]}>
                   {transaction.direction === 'outgoing' ? '-' : '+'}
-                  {transaction.amount} {transaction.currency_code}
+                  {transaction.type === 'exchange'
+                    ? transaction.destination_amount
+                    : transaction.amount}{' '}
+                  {transaction.type === 'exchange'
+                    ? transaction.destination_currency_code
+                    : transaction.currency_code}
                 </Text>
               </Pressable>
             ))}

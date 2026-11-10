@@ -75,7 +75,11 @@ function App() {
         )}
 
         {controller.screen === 'exchangeRates' && (
-          <ExchangeRatesScreen onBack={controller.goDashboard} />
+          <ExchangeRatesScreen
+            onBack={controller.goDashboard}
+            token={controller.token}
+            goHome={controller.goHome}
+          />
         )}
 
         {controller.screen === 'profile' && (

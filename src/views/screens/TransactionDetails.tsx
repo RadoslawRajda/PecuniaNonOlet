@@ -105,7 +105,12 @@ export function TransactionDetails({transactionId, token, onClose, goHome}: Tran
             <ScrollView contentContainerStyle={styles.details}>
               <Text style={styles.amount}>
                 {transaction.direction === 'outgoing' ? '-' : '+'}
-                {transaction.amount} {transaction.currency_code}
+                {transaction.type === 'exchange'
+                  ? transaction.destination_amount
+                  : transaction.amount}{' '}
+                {transaction.type === 'exchange'
+                  ? transaction.destination_currency_code
+                  : transaction.currency_code}
               </Text>
               <DetailRow label="Typ" value={transaction.type} />
               <DetailRow label="Status" value={transaction.status} />

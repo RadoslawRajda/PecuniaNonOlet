@@ -17,6 +17,7 @@ const TOKEN_STORAGE_KEY = '@app_auth_token';
 
 const KEYCHAIN_OPTIONS = {
   service: TOKEN_STORAGE_KEY,
+  accessible: Keychain.ACCESSIBLE.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
 };
 
 export function useAppController() {
