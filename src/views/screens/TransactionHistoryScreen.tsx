@@ -15,7 +15,7 @@ import {TransactionDetails} from './TransactionDetails';
 import type {Transaction} from '../../types/Transaction';
 import type {TransactionHistoryScreenProps} from '../../types/TransactionHistoryScreenProps';
 
-export function TransactionHistoryScreen({token, onBack, goHome}: TransactionHistoryScreenProps) {
+export function TransactionHistoryScreen({token, goHome}: TransactionHistoryScreenProps) {
   const [transactions, setTransactions] = React.useState<Transaction[]>([]);
   const [selectedTransactionId, setSelectedTransactionId] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
@@ -152,7 +152,6 @@ export function TransactionHistoryScreen({token, onBack, goHome}: TransactionHis
           </View>
         )}
 
-        <AppButton title="Wróć do dashboardu" onPress={onBack} secondary />
       </ScrollView>
 
       <TransactionDetails

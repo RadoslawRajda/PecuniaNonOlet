@@ -10,7 +10,7 @@ import type {BackScreenProps} from '../../types/BackScreenProps';
 import {TransactionDetails} from './TransactionDetails';
 import {useAppPreferences} from '../../context/AppPreferences';
 
-type ExchangeRatesProps = BackScreenProps & {token: string | null; goHome: () => void};
+type ExchangeRatesProps = {token: string | null; goHome: () => void};
 type ExchangeRate = {currency_code: string; pln_per_unit: string};
 type Quote = {
   quote_id: string;
@@ -24,7 +24,7 @@ type Quote = {
   expires_at: string;
 };
 
-export function ExchangeRatesScreen({onBack, token, goHome}: ExchangeRatesProps) {
+export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
   const {preferredCurrency} = useAppPreferences();
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -201,7 +201,6 @@ export function ExchangeRatesScreen({onBack, token, goHome}: ExchangeRatesProps)
             <AppButton title="Wymień waluty" onPress={() => setExchangeMenuVisible(true)} />
           </View>
           <View style={styles.backButton}>
-            <AppButton title="Wróć do dashboardu" onPress={onBack} secondary />
           </View>
         </View>
       </ScrollView>

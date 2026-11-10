@@ -14,9 +14,8 @@ import {AppButton, BrandLogo} from '../components/Ui';
 import {COLORS, createThemedStyles} from '../theme';
 import {useAppPreferences} from '../../context/AppPreferences';
 import type {Account} from '../../types/Account';
-import type {BackScreenProps} from '../../types/BackScreenProps';
 
-export function ProfileScreen({onBack}: BackScreenProps) {
+export function ProfileScreen({onQrGeneration, onLogout}: {onQrGeneration: () => void; onLogout: () => void}) {
   const {
     token,
     colorScheme,
@@ -147,7 +146,10 @@ export function ProfileScreen({onBack}: BackScreenProps) {
         ))}
 
         <View style={styles.button}>
-          <AppButton title="Wróć do dashboardu" onPress={onBack} secondary />
+          <AppButton title="Wyloguj się" onPress={onLogout} secondary />
+        </View>
+
+        <View style={styles.button}>
         </View>
       </View>
     </ScrollView>

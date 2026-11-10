@@ -91,6 +91,7 @@ export function useAppController() {
   const goExchangeRates = () => setScreen('exchangeRates');
   const goProfile = () => setScreen('profile');
   const goQrScanner = () => setScreen('qrScanner');
+  const goQrHub = () => setScreen('qrHub');
   const goQrGeneration = () => setScreen('qrGeneration');
   const goTransactionHistory = () => setScreen('transactionHistory');
 
@@ -293,6 +294,7 @@ export function useAppController() {
     goExchangeRates,
     goProfile,
     goQrScanner,
+    goQrHub,
     goQrGeneration,
     goTransactionHistory,
     submitLogin,

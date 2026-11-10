@@ -20,14 +20,8 @@ import type {DashboardProps} from '../../types/DashboardProps';
 import {useAppPreferences} from '../../context/AppPreferences';
 
 export function Dashboard({
-  onLogout,
   username,
   token,
-  onExchangeRates,
-  onProfile,
-  onQrScanner,
-  onQrGeneration,
-  onTransactionHistory,
   goHome
 }: DashboardProps) {
   const {preferredCurrency} = useAppPreferences();
@@ -210,39 +204,6 @@ export function Dashboard({
               )}
             </View>
 
-            <View style={styles.buttons}>
-              <AppButton
-                title="Historia transakcji"
-                onPress={onTransactionHistory}
-              />
-              <AppButton
-                title="Kurs wymiany walut"
-                onPress={onExchangeRates}
-              />
-
-              <AppButton
-                title="Profil"
-                onPress={onProfile}
-                secondary
-              />
-
-              <AppButton
-                title="Skaner QR"
-                onPress={onQrScanner}
-                secondary
-              />
-              <AppButton
-                title="Wygeneruj kod do wpłaty"
-                onPress={onQrGeneration}
-                secondary
-              />
-
-              <AppButton 
-                title="Wyloguj się" 
-                onPress={onLogout} 
-                secondary
-              />
-            </View>
         </View>
 
         <Modal
@@ -321,11 +282,6 @@ const styles = createThemedStyles(() => StyleSheet.create({
     fontSize: 15,
     textAlign: 'center',
     marginTop: 12,
-  },
-  buttons: {
-    width: '100%',
-    marginTop: 48,
-    gap: 14,
   },
   dataSection: {
     width: '100%',

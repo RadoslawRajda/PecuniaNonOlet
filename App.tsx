@@ -1,5 +1,5 @@
 import React from 'react';
-import {StatusBar, StyleSheet} from 'react-native';
+import {Pressable, StatusBar, StyleSheet, Text, View} from 'react-native';
 import {
   SafeAreaProvider,
   SafeAreaView,
@@ -17,12 +17,21 @@ import {QrScannerScreen} from './src/views/screens/QrScannerScreen';
 import {QrGenerationScreen} from './src/views/screens/QrGenerationScreen';
 import {TransactionHistoryScreen} from './src/views/screens/TransactionHistoryScreen';
 import {Loading} from './src/views/screens/Loading';
+import {QrHubScreen} from './src/views/screens/QrHubScreen';
 
-import {COLORS} from './src/views/theme';
+import {COLORS, createThemedStyles} from './src/views/theme';
 import {AppPreferencesProvider, useAppPreferences} from './src/context/AppPreferences';
 
 function AppScreens({controller}: {controller: ReturnType<typeof useAppController>}) {
   const {colorScheme} = useAppPreferences();
+  const tabs = [
+    {screen: 'dashboard', label: 'Pulpit', icon: '⌂', onPress: controller.goDashboard},
+    {screen: 'transactionHistory', label: 'Historia', icon: '↕', onPress: controller.goTransactionHistory},
+    {screen: 'exchangeRates', label: 'Wymiana', icon: '⇄', onPress: controller.goExchangeRates},
+    {screen: 'qrHub', label: 'QR', icon: '▦', onPress: controller.goQrHub},
+    {screen: 'profile', label: 'Profil', icon: '●', onPress: controller.goProfile},
+  ] as const;
+  const showNavigation = ['dashboard', 'transactionHistory', 'exchangeRates', 'qrScanner', 'qrHub', 'profile', 'qrGeneration'].includes(controller.screen);
 
   return (
     <SafeAreaProvider>
@@ -34,6 +43,8 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
       <SafeAreaView
         style={[styles.container, {backgroundColor: COLORS.background}]}
         edges={['top', 'bottom']}>
+
+        <View style={styles.screenContent}>
 
         {controller.screen === 'loading' && <Loading/>}
 
@@ -63,21 +74,14 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
 
         {controller.screen === 'dashboard' && (
           <Dashboard
-            onLogout={controller.logout}
             username={controller.username}
             token={controller.token}
-            onExchangeRates={controller.goExchangeRates}
-            onProfile={controller.goProfile}
-            onQrScanner={controller.goQrScanner}
-            onQrGeneration={controller.goQrGeneration}
-            onTransactionHistory={controller.goTransactionHistory}
             goHome={controller.goHome}
           />
         )}
 
         {controller.screen === 'exchangeRates' && (
           <ExchangeRatesScreen
-            onBack={controller.goDashboard}
             token={controller.token}
             goHome={controller.goHome}
           />
@@ -85,34 +89,50 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
 
         {controller.screen === 'profile' && (
           <ProfileScreen
-            onBack={controller.goDashboard}
+            onQrGeneration={controller.goQrGeneration}
+            onLogout={controller.logout}
           />
         )}
 
         {controller.screen === 'qrScanner' && (
           <QrScannerScreen
-            onBack={controller.goDashboard}
             token={controller.token}
             goHome={controller.goHome}
           />
+        )}
+
+        {controller.screen === 'qrHub' && (
+          <QrHubScreen onScan={controller.goQrScanner} onCreate={controller.goQrGeneration} />
         )}
 
         {controller.screen === 'qrGeneration' && (
           <QrGenerationScreen
             username={controller.username}
             token={controller.token}
-            onBack={controller.goDashboard}
           />
         )}
 
         {controller.screen === 'transactionHistory' && (
           <TransactionHistoryScreen
             token={controller.token}
-            onBack={controller.goDashboard}
             goHome={controller.goHome}
           />
         )}
 
+        </View>
+        {showNavigation && controller.token ? (
+          <View style={styles.navbar}>
+            {tabs.map(tab => {
+              const active = controller.screen === tab.screen || (controller.screen === 'qrGeneration' && tab.screen === 'profile');
+              return (
+                <Pressable key={tab.screen} accessibilityRole="button" accessibilityState={{selected: active}} accessibilityLabel={tab.label} onPress={tab.onPress} style={styles.navItem}>
+                  <Text style={[styles.navIcon, active && styles.navActive]}>{tab.icon}</Text>
+                  <Text numberOfLines={1} style={[styles.navLabel, active && styles.navActive]}>{tab.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
       </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -127,11 +147,17 @@ function App() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyles(() => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
   },
-});
+  screenContent: {flex: 1},
+  navbar: {minHeight: 64, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', backgroundColor: COLORS.surface, borderTopWidth: 1, borderTopColor: COLORS.border, paddingHorizontal: 4},
+  navItem: {flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 60, gap: 3},
+  navIcon: {color: COLORS.muted, fontSize: 21, fontWeight: '700'},
+  navLabel: {color: COLORS.muted, fontSize: 10, fontWeight: '600'},
+  navActive: {color: COLORS.yellow},
+}));
 
 export default App;

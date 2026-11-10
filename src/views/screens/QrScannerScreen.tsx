@@ -18,15 +18,14 @@ import {
 import {Camera, useCameraDevice} from 'react-native-vision-camera';
 import {useCodeScanner} from 'react-native-vision-camera';
 import {API_URL} from '@env';
-import type {BackScreenProps} from '../../types/BackScreenProps';
 import type {Account} from '../../types/Account';
 import type {TransactionCreationFormValues} from '../../types/TransactionCreationFormValues';
 import {TransactionCreation} from './TransactionCreation';
 import {TransactionDetails} from './TransactionDetails';
 
-type QrScannerProps = BackScreenProps & {token: string | null; goHome: () => void};
+type QrScannerProps = {token: string | null; goHome: () => void};
 
-export function QrScannerScreen({onBack, token, goHome}: QrScannerProps) {
+export function QrScannerScreen({token, goHome}: QrScannerProps) {
   const [cameraPermission, setCameraPermission] = useState<string>('pending');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [initialValues, setInitialValues] = useState<TransactionCreationFormValues | null>(null);
@@ -151,13 +150,6 @@ export function QrScannerScreen({onBack, token, goHome}: QrScannerProps) {
         </View>
         {scanError ? <Text style={styles.scanError}>{scanError}</Text> : null}
 
-        <View style={styles.button}>
-          <AppButton
-            title="Wróć do dashboardu"
-            onPress={onBack}
-            secondary
-          />
-        </View>
       </View>
       <TransactionCreation
         visible={isCreationVisible}

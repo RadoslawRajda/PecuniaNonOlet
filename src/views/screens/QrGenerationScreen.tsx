@@ -11,10 +11,9 @@ import {useAppPreferences} from '../../context/AppPreferences';
 type QrPaymentProps = {
   username: string;
   token: string | null;
-  onBack: () => void;
 };
 
-export function QrGenerationScreen({username, token, onBack}: QrPaymentProps) {
+export function QrGenerationScreen({username, token}: QrPaymentProps) {
   const {preferredCurrency} = useAppPreferences();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedCurrency, setSelectedCurrency] = useState('');
@@ -107,9 +106,6 @@ export function QrGenerationScreen({username, token, onBack}: QrPaymentProps) {
           </View>
         ) : null}
 
-        <View style={styles.button}>
-          <AppButton title="Wróć do dashboardu" onPress={onBack} secondary />
-        </View>
       </View>
     </ScrollView>
   );
