@@ -75,6 +75,7 @@ export function useAppController() {
   const goExchangeRates = () => setScreen('exchangeRates');
   const goProfile = () => setScreen('profile');
   const goQrScanner = () => setScreen('qrScanner');
+  const goTransactionHistory = () => setScreen('transactionHistory');
 
   async function submitLogin(data: LoginData) {
     const error = validateLogin(data);
@@ -283,6 +284,7 @@ export function useAppController() {
     goExchangeRates,
     goProfile,
     goQrScanner,
+    goTransactionHistory,
     submitLogin,
     submitRegister,
     loginWithPasskey,

@@ -38,6 +38,7 @@ type Props = {
   onExchangeRates: () => void;
   onProfile: () => void;
   onQrScanner: () => void;
+  onTransactionHistory: () => void;
 };
 
 export function Dashboard({
@@ -47,6 +48,7 @@ export function Dashboard({
   onExchangeRates,
   onProfile,
   onQrScanner,
+  onTransactionHistory,
 }: Props) {
   const [accounts, setAccounts] = React.useState<Account[]>([]);
   const [transactions, setTransactions] = React.useState<Transaction[]>([]);
@@ -217,6 +219,10 @@ export function Dashboard({
             </View>
 
             <View style={styles.buttons}>
+              <AppButton
+                title="Historia transakcji"
+                onPress={onTransactionHistory}
+              />
               <AppButton
                 title="Kurs wymiany walut"
                 onPress={onExchangeRates}
