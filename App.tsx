@@ -85,7 +85,11 @@ function App() {
         )}
 
         {controller.screen === 'qrScanner' && (
-          <QrScannerScreen onBack={controller.goDashboard} />
+          <QrScannerScreen
+            onBack={controller.goDashboard}
+            token={controller.token}
+            goHome={controller.goHome}
+          />
         )}
 
         {controller.screen === 'qrGeneration' && (

@@ -22,6 +22,7 @@ export function TransactionCreation({
   visible,
   token,
   accounts,
+  initialValues,
   onClose,
   onCreated,
 }: TransactionCreationProps) {
@@ -40,14 +41,14 @@ export function TransactionCreation({
   React.useEffect(() => {
     if (visible) {
       setValues({
-        recipientEmail: '',
-        account: accounts[0] ?? null,
-        amount: '',
+        recipientEmail: initialValues?.recipientEmail ?? '',
+        account: initialValues?.account ?? accounts[0] ?? null,
+        amount: initialValues?.amount ?? '',
       });
       setIsReviewing(false);
       setError(null);
     }
-  }, [accounts, visible]);
+  }, [accounts, initialValues, visible]);
 
   const reviewTransaction = () => {
     const amount = Number(values.amount.replace(',', '.'));
@@ -99,7 +100,7 @@ export function TransactionCreation({
       if (!response.ok) {
         throw new Error(data?.detail || 'Nie udało się utworzyć transakcji.');
       }
-      onCreated();
+      onCreated(data?.transaction_id);
       onClose();
     } catch (submitError) {
       console.error('Nie udało się utworzyć transakcji:', submitError);

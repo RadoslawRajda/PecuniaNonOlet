@@ -270,7 +270,10 @@ export function Dashboard({
           token={token}
           accounts={accounts}
           onClose={() => setCreationVisible(false)}
-          onCreated={loadDashboardData}
+          onCreated={transactionId => {
+            loadDashboardData();
+            setSelectedTransactionId(transactionId ?? null);
+          }}
         />
     </ScrollView>
   );

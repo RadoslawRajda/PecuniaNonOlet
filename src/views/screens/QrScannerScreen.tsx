@@ -1,5 +1,6 @@
-import React, {useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useState} from 'react';
 import {
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,11 +16,93 @@ import {
   RESULTS,
 } from 'react-native-permissions';
 import {Camera, useCameraDevice} from 'react-native-vision-camera';
+import {useCodeScanner} from 'react-native-vision-camera';
+import {API_URL} from '@env';
 import type {BackScreenProps} from '../../types/BackScreenProps';
+import type {Account} from '../../types/Account';
+import type {TransactionCreationFormValues} from '../../types/TransactionCreationFormValues';
+import {TransactionCreation} from './TransactionCreation';
+import {TransactionDetails} from './TransactionDetails';
 
-export function QrScannerScreen({onBack}: BackScreenProps) {
+type QrScannerProps = BackScreenProps & {token: string | null; goHome: () => void};
+
+export function QrScannerScreen({onBack, token, goHome}: QrScannerProps) {
   const [cameraPermission, setCameraPermission] = useState<string>('pending');
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [initialValues, setInitialValues] = useState<TransactionCreationFormValues | null>(null);
+  const [isCreationVisible, setCreationVisible] = useState(false);
+  const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [hasProcessedCode, setHasProcessedCode] = useState(false);
   const cameraDevice = useCameraDevice('back');
+  const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
+
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+    fetch(`${apiBaseUrl}/api/accounts`, {headers: {Authorization: `Bearer ${token}`}})
+      .then(async response => {
+        const data = await response.json().catch(() => null);
+        if (!response.ok) {
+          throw new Error(data?.detail || 'Nie udało się pobrać rachunków.');
+        }
+        setAccounts(data?.accounts ?? []);
+      })
+      .catch(error => setScanError(error instanceof Error ? error.message : 'Nie udało się pobrać rachunków.'));
+  }, [apiBaseUrl, token]);
+
+  const handleCodeScanned = useCallback(({value}: {value?: string}) => {
+    if (hasProcessedCode || !value) {
+      return;
+    }
+    let payment: {type?: string; version?: number; recipient_email?: string; currency_code?: string; amount?: string | number};
+    try {
+      payment = JSON.parse(value);
+    } catch {
+      setScanError('Ten kod QR nie zawiera danych płatności Pecunia.');
+      return;
+    }
+    if (
+      payment.type !== 'pecunia-payment' || payment.version !== 1 ||
+      typeof payment.recipient_email !== 'string' ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payment.recipient_email) ||
+      typeof payment.currency_code !== 'string' ||
+      !/^[A-Z]{3}$/.test(payment.currency_code) ||
+      !/^\d+(\.\d{1,2})?$/.test(String(payment.amount)) ||
+      Number(payment.amount) <= 0
+    ) {
+      setScanError('Dane płatności w kodzie QR są nieprawidłowe.');
+      return;
+    }
+    const account = accounts.find(item => item.currency_code === payment.currency_code);
+    if (!account) {
+      setScanError(`Nie masz rachunku w walucie ${payment.currency_code}.`);
+      return;
+    }
+    setHasProcessedCode(true);
+    setScanError(null);
+    setInitialValues({
+      recipientEmail: payment.recipient_email,
+      account,
+      amount: String(payment.amount),
+    });
+    setCreationVisible(true);
+  }, [accounts, hasProcessedCode]);
+
+  const codeScanner = useCodeScanner({
+    codeTypes: ['qr'],
+    onCodeScanned: codes => {
+      const value = codes.find(code => code.value)?.value;
+      handleCodeScanned({value});
+    },
+  });
+
+  const closeCreation = () => {
+    setCreationVisible(false);
+    setInitialValues(null);
+    setHasProcessedCode(false);
+  };
 
   useEffect(() => {
     const permission =
@@ -58,6 +141,7 @@ export function QrScannerScreen({onBack}: BackScreenProps) {
               style={styles.camera}
               device={cameraDevice}
               isActive
+              codeScanner={codeScanner}
             />
           ) : null}
           <View style={[styles.corner, styles.topLeft]} />
@@ -65,6 +149,7 @@ export function QrScannerScreen({onBack}: BackScreenProps) {
           <View style={[styles.corner, styles.bottomLeft]} />
           <View style={[styles.corner, styles.bottomRight]} />
         </View>
+        {scanError ? <Text style={styles.scanError}>{scanError}</Text> : null}
 
         <View style={styles.button}>
           <AppButton
@@ -74,6 +159,20 @@ export function QrScannerScreen({onBack}: BackScreenProps) {
           />
         </View>
       </View>
+      <TransactionCreation
+        visible={isCreationVisible}
+        token={token}
+        accounts={accounts}
+        initialValues={initialValues}
+        onClose={closeCreation}
+        onCreated={transactionId => setSelectedTransactionId(transactionId ?? null)}
+      />
+      <TransactionDetails
+        transactionId={selectedTransactionId}
+        token={token}
+        onClose={() => setSelectedTransactionId(null)}
+        goHome={goHome}
+      />
     </ScrollView>
   );
 }
@@ -107,6 +206,12 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     fontSize: 14,
     marginTop: 8,
+  },
+  scanError: {
+    color: '#FCA5A5',
+    fontSize: 14,
+    marginTop: 16,
+    textAlign: 'center',
   },
   scannerFrame: {
     width: 240,
