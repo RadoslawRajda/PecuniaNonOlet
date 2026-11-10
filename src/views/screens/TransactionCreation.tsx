@@ -14,9 +14,10 @@ import {API_URL} from '@env';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 
 import {AppButton, FormInput} from '../components/Ui';
-import {COLORS} from '../theme';
+import {COLORS, createThemedStyles} from '../theme';
 import type {TransactionCreationProps} from '../../types/TransactionCreationProps';
 import type {TransactionCreationFormValues} from '../../types/TransactionCreationFormValues';
+import {useAppPreferences} from '../../context/AppPreferences';
 
 export function TransactionCreation({
   visible,
@@ -26,6 +27,7 @@ export function TransactionCreation({
   onClose,
   onCreated,
 }: TransactionCreationProps) {
+  const {preferredCurrency} = useAppPreferences();
   const insets = useSafeAreaInsets();
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
   const [values, setValues] = React.useState<TransactionCreationFormValues>({
@@ -42,13 +44,13 @@ export function TransactionCreation({
     if (visible) {
       setValues({
         recipientEmail: initialValues?.recipientEmail ?? '',
-        account: initialValues?.account ?? accounts[0] ?? null,
+        account: initialValues?.account ?? accounts.find(account => account.currency_code === preferredCurrency) ?? accounts[0] ?? null,
         amount: initialValues?.amount ?? '',
       });
       setIsReviewing(false);
       setError(null);
     }
-  }, [accounts, initialValues, visible]);
+  }, [accounts, initialValues, preferredCurrency, visible]);
 
   const reviewTransaction = () => {
     const amount = Number(values.amount.replace(',', '.'));
@@ -231,7 +233,7 @@ function ReviewRow({label, value}: {label: string; value: string}) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyles(() => StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.65)',
@@ -300,4 +302,4 @@ const styles = StyleSheet.create({
     color: '#FCA5A5',
     fontSize: 14,
   },
-});
+}));

@@ -11,7 +11,7 @@ import {API_URL} from '@env';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 
 import {AppButton} from '../components/Ui';
-import {COLORS} from '../theme';
+import {COLORS, createThemedStyles} from '../theme';
 import type {TransactionDetailsData} from '../../types/TransactionDetailsData';
 import type {TransactionDetailsProps} from '../../types/TransactionDetailsProps';
 
@@ -152,7 +152,7 @@ function DetailRow({label, value}: {label: string; value: string}) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyles(() => StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.65)',
@@ -199,4 +199,4 @@ const styles = StyleSheet.create({
     color: '#FCA5A5',
     fontSize: 15,
   },
-});
+}));

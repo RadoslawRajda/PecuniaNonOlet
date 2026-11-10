@@ -10,7 +10,7 @@ import {
 import {API_URL} from '@env';
 
 import {AppButton, BrandLogo} from '../components/Ui';
-import {COLORS} from '../theme';
+import {COLORS, createThemedStyles} from '../theme';
 import {TransactionDetails} from './TransactionDetails';
 import type {Transaction} from '../../types/Transaction';
 import type {TransactionHistoryScreenProps} from '../../types/TransactionHistoryScreenProps';
@@ -165,7 +165,7 @@ export function TransactionHistoryScreen({token, onBack, goHome}: TransactionHis
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyles(() => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: COLORS.background,
@@ -237,4 +237,4 @@ const styles = StyleSheet.create({
     color: '#FCA5A5',
     fontSize: 14,
   },
-});
+}));

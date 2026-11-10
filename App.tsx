@@ -19,19 +19,20 @@ import {TransactionHistoryScreen} from './src/views/screens/TransactionHistorySc
 import {Loading} from './src/views/screens/Loading';
 
 import {COLORS} from './src/views/theme';
+import {AppPreferencesProvider, useAppPreferences} from './src/context/AppPreferences';
 
-function App() {
-  const controller = useAppController();
+function AppScreens({controller}: {controller: ReturnType<typeof useAppController>}) {
+  const {colorScheme} = useAppPreferences();
 
   return (
     <SafeAreaProvider>
       <StatusBar
-        barStyle="light-content"
+        barStyle={colorScheme === 'light' ? 'dark-content' : 'light-content'}
         backgroundColor={COLORS.background}
       />
 
       <SafeAreaView
-        style={styles.container}
+        style={[styles.container, {backgroundColor: COLORS.background}]}
         edges={['top', 'bottom']}>
 
         {controller.screen === 'loading' && <Loading/>}
@@ -114,6 +115,15 @@ function App() {
 
       </SafeAreaView>
     </SafeAreaProvider>
+  );
+}
+
+function App() {
+  const controller = useAppController();
+  return (
+    <AppPreferencesProvider token={controller.token}>
+      <AppScreens controller={controller} />
+    </AppPreferencesProvider>
   );
 }
 

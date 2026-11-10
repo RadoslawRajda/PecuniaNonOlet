@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 
 import {AppButton, BrandLogo} from '../components/Ui';
-import {COLORS} from '../theme';
+import {COLORS, createThemedStyles} from '../theme';
 import {
   PERMISSIONS,
   request,
@@ -177,7 +177,7 @@ export function QrScannerScreen({onBack, token, goHome}: QrScannerProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyles(() => StyleSheet.create({
   container: {
     flexGrow: 1,
     paddingHorizontal: 24,
@@ -257,4 +257,4 @@ const styles = StyleSheet.create({
     width: '100%',
     marginTop: 48,
   },
-});
+}));

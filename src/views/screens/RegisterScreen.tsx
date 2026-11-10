@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 
 import {AppButton, FormInput} from '../components/Ui';
-import {COLORS} from '../theme';
+import {COLORS, createThemedStyles} from '../theme';
 import type {RegisterScreenProps} from '../../types/RegisterScreenProps';
 
 export function RegisterScreen({
@@ -103,7 +103,7 @@ export function RegisterScreen({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyles(() => StyleSheet.create({
   container: {
     flex: 1,
   },
@@ -151,4 +151,4 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-});
+}));

@@ -11,12 +11,13 @@ import {
 import {API_URL} from '@env';
 
 import {AppButton, BrandLogo} from '../components/Ui';
-import {COLORS} from '../theme';
+import {COLORS, createThemedStyles} from '../theme';
 import {TransactionDetails} from './TransactionDetails';
 import {TransactionCreation} from './TransactionCreation';
 import type {Account} from '../../types/Account';
 import type {Transaction} from '../../types/Transaction';
 import type {DashboardProps} from '../../types/DashboardProps';
+import {useAppPreferences} from '../../context/AppPreferences';
 
 export function Dashboard({
   onLogout,
@@ -29,6 +30,7 @@ export function Dashboard({
   onTransactionHistory,
   goHome
 }: DashboardProps) {
+  const {preferredCurrency} = useAppPreferences();
   const [accounts, setAccounts] = React.useState<Account[]>([]);
   const [transactions, setTransactions] = React.useState<Transaction[]>([]);
   const [selectedCurrency, setSelectedCurrency] = React.useState<string | null>(null);
@@ -72,7 +74,9 @@ export function Dashboard({
       setSelectedCurrency(current => (
         current && nextAccounts.some((account: Account) => account.currency_code === current)
           ? current
-          : nextAccounts[0]?.currency_code ?? null
+          : nextAccounts.find((account: Account) => account.currency_code === preferredCurrency)?.currency_code
+            ?? nextAccounts[0]?.currency_code
+            ?? null
       ));
     } catch (loadError) {
       console.error('Nie udało się pobrać danych dashboardu:', loadError);
@@ -80,7 +84,7 @@ export function Dashboard({
     } finally {
       setIsLoading(false);
     }
-  }, [apiBaseUrl, token]);
+  }, [apiBaseUrl, preferredCurrency, token]);
 
   React.useEffect(() => {
     loadDashboardData();
@@ -287,7 +291,7 @@ export function Dashboard({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyles(() => StyleSheet.create({
   container: {
     flexGrow: 1,
     paddingHorizontal: 24,
@@ -459,4 +463,4 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontSize: 17,
   },
-});
+}));

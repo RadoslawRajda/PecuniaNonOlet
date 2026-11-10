@@ -4,8 +4,9 @@ import QRCode from 'react-native-qrcode-svg';
 import {API_URL} from '@env';
 
 import {AppButton, BrandLogo} from '../components/Ui';
-import {COLORS} from '../theme';
+import {COLORS, createThemedStyles} from '../theme';
 import type {Account} from '../../types/Account';
+import {useAppPreferences} from '../../context/AppPreferences';
 
 type QrPaymentProps = {
   username: string;
@@ -14,6 +15,7 @@ type QrPaymentProps = {
 };
 
 export function QrGenerationScreen({username, token, onBack}: QrPaymentProps) {
+  const {preferredCurrency} = useAppPreferences();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedCurrency, setSelectedCurrency] = useState('');
   const [loading, setLoading] = useState(true);
@@ -43,11 +45,11 @@ export function QrGenerationScreen({username, token, onBack}: QrPaymentProps) {
       .then(data => {
         const userAccounts = data?.accounts ?? [];
         setAccounts(userAccounts);
-        setSelectedCurrency(userAccounts[0]?.currency_code ?? '');
+        setSelectedCurrency(userAccounts.find((account: Account) => account.currency_code === preferredCurrency)?.currency_code ?? userAccounts[0]?.currency_code ?? '');
       })
       .catch(error => console.error('Nie udało się pobrać kont:', error))
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [preferredCurrency, token]);
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -113,7 +115,7 @@ export function QrGenerationScreen({username, token, onBack}: QrPaymentProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyles(() => StyleSheet.create({
   container: {flexGrow: 1, paddingHorizontal: 24, paddingVertical: 20},
   content: {flexGrow: 1, alignItems: 'center', paddingVertical: 35},
   title: {color: COLORS.yellow, fontSize: 30, fontWeight: '800', textAlign: 'center', marginTop: 30},
@@ -131,4 +133,4 @@ const styles = StyleSheet.create({
   qrAmount: {color: '#111827', fontSize: 18, fontWeight: '800', marginTop: 14},
   qrEmail: {color: '#374151', fontSize: 13, marginTop: 4},
   hint: {color: '#FCA5A5', marginTop: 12},
-});
+}));

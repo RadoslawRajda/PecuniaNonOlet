@@ -1,19 +1,44 @@
 import React from 'react';
 import {
+  Image,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import {COLORS} from '../theme';
+import {useAppPreferences} from '../../context/AppPreferences';
+import {COLORS, createThemedStyles} from '../theme';
 import type {ButtonProps} from '../../types/ButtonProps';
 import type {FormInputProps} from '../../types/FormInputProps';
 
 export function BrandLogo() {
+  const {profilePhotoRevision, profilePhotoDataUri} = useAppPreferences();
+  const [photoUnavailable, setPhotoUnavailable] = React.useState(false);
+  const [photoLoaded, setPhotoLoaded] = React.useState(false);
+  React.useEffect(() => {
+    setPhotoUnavailable(false);
+    setPhotoLoaded(false);
+  }, [profilePhotoRevision]);
+
   return (
     <View style={styles.logo}>
       <Text style={styles.logoText}>P</Text>
+      {profilePhotoDataUri && !photoUnavailable ? (
+      <Image
+        accessibilityLabel="Zdjęcie profilowe"
+        source={{uri: profilePhotoDataUri}}
+        onLoad={() => {
+          console.info('Profile photo loaded');
+          setPhotoLoaded(true);
+        }}
+        onError={event => {
+          console.error('Profile photo failed to load', event.nativeEvent.error);
+          setPhotoUnavailable(true);
+        }}
+        style={[styles.logoImage, {opacity: photoLoaded ? 1 : 0}]}
+      />
+      ) : null}
     </View>
   );
 }
@@ -63,7 +88,7 @@ export function FormInput({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyles(() => StyleSheet.create({
   logo: {
     width: 82,
     height: 82,
@@ -76,6 +101,12 @@ const styles = StyleSheet.create({
     fontSize: 50,
     fontWeight: '900',
     color: COLORS.darkText,
+  },
+  logoImage: {
+    ...StyleSheet.absoluteFill,
+    width: 82,
+    height: 82,
+    borderRadius: 22,
   },
   button: {
     backgroundColor: COLORS.yellow,
@@ -120,4 +151,4 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-});
+}));

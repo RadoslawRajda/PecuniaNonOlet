@@ -4,10 +4,11 @@ import {API_URL} from '@env';
 import {WebView} from 'react-native-webview';
 
 import {AppButton, BrandLogo, FormInput} from '../components/Ui';
-import {COLORS} from '../theme';
+import {COLORS, createThemedStyles} from '../theme';
 import type {Account} from '../../types/Account';
 import type {BackScreenProps} from '../../types/BackScreenProps';
 import {TransactionDetails} from './TransactionDetails';
+import {useAppPreferences} from '../../context/AppPreferences';
 
 type ExchangeRatesProps = BackScreenProps & {token: string | null; goHome: () => void};
 type ExchangeRate = {currency_code: string; pln_per_unit: string};
@@ -24,6 +25,7 @@ type Quote = {
 };
 
 export function ExchangeRatesScreen({onBack, token, goHome}: ExchangeRatesProps) {
+  const {preferredCurrency} = useAppPreferences();
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [rates, setRates] = useState<ExchangeRate[]>([]);
@@ -73,16 +75,19 @@ export function ExchangeRatesScreen({onBack, token, goHome}: ExchangeRatesProps)
       setProvider(rateData?.provider ?? '');
       setEffectiveDate(rateData?.effective_date ?? '');
       setAccounts(nextAccounts);
+      const preferredAccount = nextAccounts.find(account => account.currency_code === preferredCurrency);
+      const defaultSource = preferredAccount ?? nextAccounts[0];
+      const defaultDestination = nextAccounts.find(account => account.id !== defaultSource?.id);
       setSourceAccountId(current => current && nextAccounts.some(account => account.id === current)
-        ? current : nextAccounts[0]?.id ?? null);
-      setDestinationAccountId(current => current && nextAccounts.some(account => account.id === current)
-        ? current : nextAccounts.find(account => account.id !== nextAccounts[0]?.id)?.id ?? null);
+        ? current : defaultSource?.id ?? null);
+      setDestinationAccountId(current => current && current !== defaultSource?.id && nextAccounts.some(account => account.id === current)
+        ? current : defaultDestination?.id ?? null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Nie udało się pobrać danych wymiany.');
     } finally {
       setIsLoading(false);
     }
-  }, [apiBaseUrl, goHome, token]);
+  }, [apiBaseUrl, goHome, preferredCurrency, token]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -287,7 +292,7 @@ export function ExchangeRatesScreen({onBack, token, goHome}: ExchangeRatesProps)
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyles(() => StyleSheet.create({
   container: {flexGrow: 1, paddingHorizontal: 24, paddingVertical: 20},
   content: {flexGrow: 1, alignItems: 'center', paddingVertical: 35, gap: 12},
   title: {color: COLORS.yellow, fontSize: 30, fontWeight: '800', textAlign: 'center', marginTop: 24, marginBottom: 12},
@@ -315,4 +320,4 @@ const styles = StyleSheet.create({
   modalCard: {maxHeight: '90%', backgroundColor: COLORS.surface, borderColor: COLORS.border, borderWidth: 1, borderRadius: 18, padding: 20},
   exchangeForm: {gap: 12, paddingBottom: 4},
   modalTitle: {color: COLORS.white, fontSize: 22, fontWeight: '800', marginBottom: 4},
-});
+}));
