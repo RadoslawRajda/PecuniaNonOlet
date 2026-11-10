@@ -14,6 +14,7 @@ import {Dashboard} from './src/views/screens/Dashboard';
 import {ExchangeRatesScreen} from './src/views/screens/ExchangeRatesScreen';
 import {ProfileScreen} from './src/views/screens/ProfileScreen';
 import {QrScannerScreen} from './src/views/screens/QrScannerScreen';
+import {QrGenerationScreen} from './src/views/screens/QrGenerationScreen';
 import {TransactionHistoryScreen} from './src/views/screens/TransactionHistoryScreen';
 import {Loading} from './src/views/screens/Loading';
 
@@ -67,6 +68,7 @@ function App() {
             onExchangeRates={controller.goExchangeRates}
             onProfile={controller.goProfile}
             onQrScanner={controller.goQrScanner}
+            onQrGeneration={controller.goQrGeneration}
             onTransactionHistory={controller.goTransactionHistory}
             goHome={controller.goHome}
           />
@@ -84,6 +86,14 @@ function App() {
 
         {controller.screen === 'qrScanner' && (
           <QrScannerScreen onBack={controller.goDashboard} />
+        )}
+
+        {controller.screen === 'qrGeneration' && (
+          <QrGenerationScreen
+            username={controller.username}
+            token={controller.token}
+            onBack={controller.goDashboard}
+          />
         )}
 
         {controller.screen === 'transactionHistory' && (

@@ -5,6 +5,7 @@ export type DashboardProps = {
   onExchangeRates: () => void;
   onProfile: () => void;
   onQrScanner: () => void;
+  onQrGeneration: () => void;
   onTransactionHistory: () => void;
   goHome: () => void;
 };

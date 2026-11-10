@@ -151,6 +151,7 @@ export function TransactionHistoryScreen({token, onBack, goHome}: TransactionHis
         transactionId={selectedTransactionId}
         token={token}
         onClose={() => setSelectedTransactionId(null)}
+        goHome={goHome}
       />
     </View>
   );

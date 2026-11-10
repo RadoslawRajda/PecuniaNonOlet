@@ -25,6 +25,7 @@ export function Dashboard({
   onExchangeRates,
   onProfile,
   onQrScanner,
+  onQrGeneration,
   onTransactionHistory,
   goHome
 }: DashboardProps) {
@@ -216,6 +217,11 @@ export function Dashboard({
               <AppButton
                 title="Skaner QR"
                 onPress={onQrScanner}
+                secondary
+              />
+              <AppButton
+                title="Wygeneruj kod do wpłaty"
+                onPress={onQrGeneration}
                 secondary
               />
 

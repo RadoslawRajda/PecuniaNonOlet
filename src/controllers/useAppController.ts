@@ -90,6 +90,7 @@ export function useAppController() {
   const goExchangeRates = () => setScreen('exchangeRates');
   const goProfile = () => setScreen('profile');
   const goQrScanner = () => setScreen('qrScanner');
+  const goQrGeneration = () => setScreen('qrGeneration');
   const goTransactionHistory = () => setScreen('transactionHistory');
 
   async function submitLogin(data: LoginData) {
@@ -291,6 +292,7 @@ export function useAppController() {
     goExchangeRates,
     goProfile,
     goQrScanner,
+    goQrGeneration,
     goTransactionHistory,
     submitLogin,
     submitRegister,
