@@ -1,6 +1,5 @@
 import React, {useCallback, useEffect, useState} from 'react';
 import {
-  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -8,7 +7,7 @@ import {
   Platform,
 } from 'react-native';
 
-import {AppButton, BrandLogo} from '../components/Ui';
+import {BrandLogo} from '../components/Ui';
 import {COLORS, createThemedStyles} from '../theme';
 import {
   PERMISSIONS,
