@@ -9,6 +9,7 @@ import type {Account} from '../../types/Account';
 import type {BackScreenProps} from '../../types/BackScreenProps';
 import {TransactionDetails} from './TransactionDetails';
 import {useAppPreferences} from '../../context/AppPreferences';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 type ExchangeRatesProps = {token: string | null; goHome: () => void};
 type ExchangeRate = {currency_code: string; pln_per_unit: string};
@@ -204,11 +205,12 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
           </View>
         </View>
       </ScrollView>
+      
       <Modal
         visible={isSourcePageVisible}
         animationType="slide"
         onRequestClose={() => setSourcePageVisible(false)}>
-        <View style={styles.sourcePage}>
+        <SafeAreaView style={styles.sourcePage}>
           <View style={styles.sourcePageHeader}>
             <Text style={styles.sourcePageTitle}>Kursy walut NBP</Text>
             <Pressable accessibilityRole="button" onPress={() => setSourcePageVisible(false)}>
@@ -224,7 +226,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
             nestedScrollEnabled
             style={styles.webView}
           />
-        </View>
+        </SafeAreaView>
       </Modal>
       <Modal
         visible={isExchangeMenuVisible}
