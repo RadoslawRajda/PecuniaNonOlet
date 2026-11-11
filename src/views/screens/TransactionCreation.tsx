@@ -17,7 +17,7 @@ import {AppButton, FormInput} from '../components/Ui';
 import {COLORS, createThemedStyles} from '../theme';
 import type {TransactionCreationProps} from '../../types/TransactionCreationProps';
 import type {TransactionCreationFormValues} from '../../types/TransactionCreationFormValues';
-import {useAppPreferences} from '../../context/AppPreferences';
+import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
 
 export function TransactionCreation({
   visible,
@@ -27,7 +27,7 @@ export function TransactionCreation({
   onClose,
   onCreated,
 }: TransactionCreationProps) {
-  const {preferredCurrency} = useAppPreferences();
+  const {preferredCurrency, handleForbidden} = useAppPreferences();
   const insets = useSafeAreaInsets();
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
   const [values, setValues] = React.useState<TransactionCreationFormValues>({
@@ -98,6 +98,7 @@ export function TransactionCreation({
           amount_minor: amountMinor,
         }),
       });
+      if (handleForbiddenResponse(response, handleForbidden)) return;
       const data = await response.json().catch(() => null);
       if (!response.ok) {
         throw new Error(data?.detail || 'Nie udało się utworzyć transakcji.');

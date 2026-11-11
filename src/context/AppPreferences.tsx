@@ -35,11 +35,12 @@ type Preferences = {
   setPreferredCurrency: (currency: string) => void;
   setLocationCurrencyEnabled: (enabled: boolean) => void;
   refreshProfilePhoto: () => void;
+  handleForbidden: () => void;
 };
 
 const PreferencesContext = createContext<Preferences | null>(null);
 
-export function AppPreferencesProvider({token, role, children}: PropsWithChildren<{token: string | null; role: UserRole | null}>) {
+export function AppPreferencesProvider({token, role, handleForbidden, children}: PropsWithChildren<{token: string | null; role: UserRole | null; handleForbidden: () => void}>) {
   const [colorScheme, setColorSchemeState] = useState<ColorScheme>('dark');
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [preferredCurrency, setPreferredCurrencyState] = useState<string | null>(null);
@@ -73,6 +74,7 @@ export function AppPreferencesProvider({token, role, children}: PropsWithChildre
       headers: {Authorization: `Bearer ${token}`},
     })
       .then(async response => {
+        if (handleForbiddenResponse(response, handleForbidden)) return null;
         if (response.status === 404) return null;
         if (!response.ok) throw new Error(`Photo request failed (${response.status})`);
         const blob = await response.blob();
@@ -219,9 +221,16 @@ export function AppPreferencesProvider({token, role, children}: PropsWithChildre
     setPreferredCurrency: updatePreferredCurrency,
     setLocationCurrencyEnabled: updateLocationCurrencyEnabled,
     refreshProfilePhoto,
-  }), [token, role, colorScheme, preferencesLoaded, preferredCurrency, locationCurrencyEnabled, locationDetectedCurrency, profilePhotoRevision, profilePhoto, photoResolvedToken, updateColorScheme, updatePreferredCurrency, updateLocationCurrencyEnabled, refreshProfilePhoto]);
+    handleForbidden,
+  }), [token, role, colorScheme, preferencesLoaded, preferredCurrency, locationCurrencyEnabled, locationDetectedCurrency, profilePhotoRevision, profilePhoto, photoResolvedToken, updateColorScheme, updatePreferredCurrency, updateLocationCurrencyEnabled, refreshProfilePhoto, handleForbidden]);
 
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
+}
+
+export function handleForbiddenResponse(response: Response, onForbidden: () => void) {
+  if (response.status !== 403) return false;
+  onForbidden();
+  return true;
 }
 
 export function useAppPreferences() {

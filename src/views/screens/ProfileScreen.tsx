@@ -12,7 +12,7 @@ import {API_URL} from '@env';
 
 import {AppButton, BrandLogo} from '../components/Ui';
 import {COLORS, createThemedStyles} from '../theme';
-import {useAppPreferences} from '../../context/AppPreferences';
+import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
 import type {Account} from '../../types/Account';
 
 export function ProfileScreen({onQrGeneration, onLogout}: {onQrGeneration: () => void; onLogout: () => void}) {
@@ -26,6 +26,7 @@ export function ProfileScreen({onQrGeneration, onLogout}: {onQrGeneration: () =>
     locationDetectedCurrency,
     setLocationCurrencyEnabled,
     refreshProfilePhoto,
+    handleForbidden,
   } = useAppPreferences();
   const [accounts, setAccounts] = React.useState<Account[]>([]);
   const [isUploading, setIsUploading] = React.useState(false);
@@ -36,12 +37,13 @@ export function ProfileScreen({onQrGeneration, onLogout}: {onQrGeneration: () =>
     if (!token) return;
     fetch(`${apiBaseUrl}/api/accounts`, {headers: {Authorization: `Bearer ${token}`}})
       .then(async response => {
+        if (handleForbiddenResponse(response, handleForbidden)) return;
         const data = await response.json().catch(() => null);
         if (!response.ok) throw new Error(data?.detail || 'Nie udało się pobrać rachunków.');
         setAccounts(data?.accounts ?? []);
       })
       .catch(error => console.warn('Unable to load accounts for profile settings', error));
-  }, [apiBaseUrl, token]);
+  }, [apiBaseUrl, token, handleForbidden]);
 
   async function changeProfileImage() {
     setPhotoStatus('Otwieram galerię zdjęć…');
@@ -84,6 +86,7 @@ export function ProfileScreen({onQrGeneration, onLogout}: {onQrGeneration: () =>
         headers: {Authorization: `Bearer ${token}`},
         body: form,
       });
+      if (handleForbiddenResponse(response, handleForbidden)) return;
       console.info('Profile photo upload response', response.status);
       if (!response.ok) {
         const data = await response.json().catch(() => null);

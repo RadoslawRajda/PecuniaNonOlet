@@ -159,7 +159,7 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
 function App() {
   const controller = useAppController();
   return (
-    <AppPreferencesProvider token={controller.token} role={controller.role}>
+    <AppPreferencesProvider token={controller.token} role={controller.role} handleForbidden={controller.handleForbidden}>
       <AppScreens controller={controller} />
     </AppPreferencesProvider>
   );

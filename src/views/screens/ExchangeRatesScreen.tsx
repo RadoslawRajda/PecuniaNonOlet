@@ -8,7 +8,7 @@ import {COLORS, createThemedStyles} from '../theme';
 import type {Account} from '../../types/Account';
 import type {BackScreenProps} from '../../types/BackScreenProps';
 import {TransactionDetails} from './TransactionDetails';
-import {useAppPreferences} from '../../context/AppPreferences';
+import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 type ExchangeRatesProps = {token: string | null; goHome: () => void};
@@ -26,7 +26,7 @@ type Quote = {
 };
 
 export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
-  const {preferredCurrency} = useAppPreferences();
+  const {preferredCurrency, handleForbidden} = useAppPreferences();
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [rates, setRates] = useState<ExchangeRate[]>([]);
@@ -79,6 +79,8 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
         rateResponse.json().catch(() => null),
         accountResponse.json().catch(() => null),
       ]);
+      if (handleForbiddenResponse(rateResponse, handleForbidden) ||
+          handleForbiddenResponse(accountResponse, handleForbidden)) return;
       if (!rateResponse.ok || !accountResponse.ok) {
         throw new Error(rateData?.detail || accountData?.detail || 'Nie udało się pobrać kursów lub rachunków.');
       }
@@ -103,7 +105,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [apiBaseUrl, goHome, preferredCurrency, token]);
+  }, [apiBaseUrl, goHome, preferredCurrency, token, handleForbidden]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -135,6 +137,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
           source_amount_minor: sourceAmountMinor,
         }),
       });
+      if (handleForbiddenResponse(response, handleForbidden)) return;
       const data = await response.json().catch(() => null);
       if (!response.ok) {
         throw new Error(data?.detail || 'Nie udało się pobrać wyceny.');
@@ -163,6 +166,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
         },
         body: JSON.stringify({quote_id: quote.quote_id}),
       });
+      if (handleForbiddenResponse(response, handleForbidden)) return;
       const data = await response.json().catch(() => null);
       if (!response.ok) {
         throw new Error(data?.detail || 'Nie udało się wymienić środków. Pobierz nową wycenę.');

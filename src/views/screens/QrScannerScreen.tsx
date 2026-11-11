@@ -22,10 +22,12 @@ import type {Account} from '../../types/Account';
 import type {TransactionCreationFormValues} from '../../types/TransactionCreationFormValues';
 import {TransactionCreation} from './TransactionCreation';
 import {TransactionDetails} from './TransactionDetails';
+import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
 
 type QrScannerProps = {token: string | null; goHome: () => void};
 
 export function QrScannerScreen({token, goHome}: QrScannerProps) {
+  const {handleForbidden} = useAppPreferences();
   const [cameraPermission, setCameraPermission] = useState<string>('pending');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [initialValues, setInitialValues] = useState<TransactionCreationFormValues | null>(null);
@@ -42,6 +44,7 @@ export function QrScannerScreen({token, goHome}: QrScannerProps) {
     }
     fetch(`${apiBaseUrl}/api/accounts`, {headers: {Authorization: `Bearer ${token}`}})
       .then(async response => {
+        if (handleForbiddenResponse(response, handleForbidden)) return;
         const data = await response.json().catch(() => null);
         if (!response.ok) {
           throw new Error(data?.detail || 'Nie udało się pobrać rachunków.');
@@ -49,7 +52,7 @@ export function QrScannerScreen({token, goHome}: QrScannerProps) {
         setAccounts(data?.accounts ?? []);
       })
       .catch(error => setScanError(error instanceof Error ? error.message : 'Nie udało się pobrać rachunków.'));
-  }, [apiBaseUrl, token]);
+  }, [apiBaseUrl, token, handleForbidden]);
 
   const handleCodeScanned = useCallback(({value}: {value?: string}) => {
     if (hasProcessedCode || !value) {

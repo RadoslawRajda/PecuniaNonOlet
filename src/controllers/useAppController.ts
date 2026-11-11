@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Alert } from 'react-native';
 import * as Keychain from 'react-native-keychain';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -33,6 +33,11 @@ export function useAppController() {
   const [username, setUsername] = useState<string>('test user');
   const [token, setToken] = useState<string | null>(null);
   const [role, setRole] = useState<UserRole | null>(null);
+  const tokenRef = useRef(token);
+  const roleRef = useRef(role);
+  const forbiddenAlertPending = useRef(false);
+  tokenRef.current = token;
+  roleRef.current = role;
 
   function navigate(nextScreen: ScreenName) {
     if (nextScreen === screen) return;
@@ -56,6 +61,53 @@ export function useAppController() {
     screenHistory.current = [];
     setScreen('dashboard');
   }
+
+  function resetToAnalytics() {
+    screenHistory.current = [];
+    setScreen('analytics');
+  }
+
+  const handleForbidden = useCallback(() => {
+    if (forbiddenAlertPending.current) return;
+    forbiddenAlertPending.current = true;
+    void (async () => {
+      let actualRole = roleRef.current;
+      const activeToken = tokenRef.current;
+      if (activeToken) {
+        try {
+          const response = await fetch(`${apiBaseUrl}/api/me`, {
+            headers: {Authorization: `Bearer ${activeToken}`},
+          });
+          const data = await response.json().catch(() => null);
+          if (response.ok && isUserRole(data?.role)) actualRole = data.role;
+          else if (response.status === 401) actualRole = null;
+        } catch (error) {
+          console.warn('Unable to verify role after access denial', error);
+        }
+      }
+      if (isUserRole(actualRole)) {
+        setRole(actualRole);
+        void AsyncStorage.setItem(ROLE_STORAGE_KEY, actualRole)
+          .catch(error => console.warn('Unable to save verified user role', error));
+      }
+      Alert.alert('Brak dostępu', 'Nie masz uprawnień do wyświetlenia tej strony.', [{
+        text: 'OK',
+        onPress: () => {
+          forbiddenAlertPending.current = false;
+          if (!activeToken || !isUserRole(actualRole)) {
+            setToken(null);
+            setRole(null);
+            void Keychain.resetGenericPassword(KEYCHAIN_OPTIONS);
+            void AsyncStorage.removeItem(ROLE_STORAGE_KEY);
+            resetToHome();
+          } else {
+            if (actualRole === 'analyst') resetToAnalytics();
+            else resetToDashboard();
+          }
+        },
+      }]);
+    })();
+  }, []);
 
   // Sprawdzanie zapisanego tokena przy starcie aplikacji
   useEffect(() => {
@@ -96,7 +148,8 @@ export function useAppController() {
               if (responseData.email) {
                 setUsername(responseData.email);
               }
-              resetToDashboard();
+              if (verifiedRole === 'analyst') resetToAnalytics();
+              else resetToDashboard();
               wentToDashboard = true;
             } else {
               // Usuwanie nieprawidłowego tokena z Keychain
@@ -106,9 +159,11 @@ export function useAppController() {
               setToken(null);
             }
           } catch {
-            setRole(isUserRole(savedRole) ? savedRole : 'user');
+            const cachedRole: UserRole = isUserRole(savedRole) ? savedRole : 'user';
+            setRole(cachedRole);
             setToken(savedToken);
-            resetToDashboard();
+            if (cachedRole === 'analyst') resetToAnalytics();
+            else resetToDashboard();
             wentToDashboard = true;
           }
         } else {
@@ -178,7 +233,9 @@ export function useAppController() {
           setUsername(responseData.user.email);
         }
 
-        resetToDashboard();
+        // The selected home page is based on the role returned by login.
+        if (responseData.user?.role === 'analyst') resetToAnalytics();
+        else resetToDashboard();
       } else {
         Alert.alert(
           'Błąd',
@@ -239,7 +296,8 @@ export function useAppController() {
           setUsername(responseData.user.email);
         }
 
-        resetToDashboard();
+        if (responseData.user?.role === 'analyst') resetToAnalytics();
+        else resetToDashboard();
       } else {
         Alert.alert(
           'Błąd',
@@ -343,6 +401,7 @@ export function useAppController() {
     username,
     token,
     role,
+    handleForbidden,
     goHome,
     goLogin,
     goRegister,

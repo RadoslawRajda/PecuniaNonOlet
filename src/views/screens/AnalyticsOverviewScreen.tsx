@@ -4,6 +4,7 @@ import {API_URL} from '@env';
 
 import {AppButton, FormInput} from '../components/Ui';
 import {COLORS, createThemedStyles} from '../theme';
+import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
 
 type Page = 'overview' | 'users' | 'transactions' | 'auditEvents';
 type Overview = {
@@ -43,6 +44,7 @@ const PAGES: {id: Page; label: string}[] = [
 ];
 
 export function AnalyticsOverviewScreen({token, onLogout}: {token: string | null; onLogout: () => void}) {
+  const {handleForbidden} = useAppPreferences();
   const [page, setPage] = useState<Page>('overview');
   const [overview, setOverview] = useState<Overview | null>(null);
   const [pageData, setPageData] = useState<PageData>({});
@@ -91,12 +93,13 @@ export function AnalyticsOverviewScreen({token, onLogout}: {token: string | null
     setError(null);
     fetch(requestUrl, {headers: {Authorization: `Bearer ${token}`}})
       .then(async response => {
+        if (handleForbiddenResponse(response, handleForbidden)) return null;
         const data = await response.json().catch(() => null);
         if (!response.ok) throw new Error(data?.detail || 'Nie udało się pobrać danych analitycznych.');
         return data;
       })
       .then(data => {
-        if (!active) return;
+        if (!active || !data) return;
         if (page === 'overview') setOverview(data as Overview);
         else setPageData(data as PageData);
       })
@@ -105,7 +108,7 @@ export function AnalyticsOverviewScreen({token, onLogout}: {token: string | null
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [apiBaseUrl, appliedFilters, offset, page, reloadKey, token]);
+  }, [apiBaseUrl, appliedFilters, handleForbidden, offset, page, reloadKey, token]);
 
   const metrics = overview ? [
     {label: 'Użytkownicy', value: overview.users_total},

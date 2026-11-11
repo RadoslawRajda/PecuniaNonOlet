@@ -14,8 +14,10 @@ import {AppButton} from '../components/Ui';
 import {COLORS, createThemedStyles} from '../theme';
 import type {TransactionDetailsData} from '../../types/TransactionDetailsData';
 import type {TransactionDetailsProps} from '../../types/TransactionDetailsProps';
+import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
 
 export function TransactionDetails({transactionId, token, onClose, goHome}: TransactionDetailsProps) {
+  const {handleForbidden} = useAppPreferences();
   const [transaction, setTransaction] =
     React.useState<TransactionDetailsData | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
@@ -47,6 +49,7 @@ export function TransactionDetails({transactionId, token, onClose, goHome}: Tran
           `${apiBaseUrl}/api/transactions/${encodeURIComponent(requestedTransactionId)}`,
           {headers: {Authorization: `Bearer ${token}`}},
         );
+        if (handleForbiddenResponse(response, handleForbidden)) return;
         const data = await response.json().catch(() => null);
         if (!response.ok) {
           throw new Error(data?.detail || 'Nie udało się pobrać transakcji.');
@@ -74,7 +77,7 @@ export function TransactionDetails({transactionId, token, onClose, goHome}: Tran
     return () => {
       isCurrent = false;
     };
-  }, [apiBaseUrl, token, transactionId]);
+  }, [apiBaseUrl, token, transactionId, handleForbidden]);
 
   const formatDate = (date: string) => (
     new Intl.DateTimeFormat('pl-PL', {

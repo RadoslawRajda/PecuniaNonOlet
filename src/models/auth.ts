@@ -4,6 +4,7 @@ export type ScreenName =
   | 'login'
   | 'register'
   | 'dashboard'
+  | 'analytics'
   | 'exchangeRates'
   | 'profile'
   | 'qrScanner'

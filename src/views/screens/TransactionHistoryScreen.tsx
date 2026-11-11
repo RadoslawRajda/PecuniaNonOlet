@@ -14,8 +14,10 @@ import {COLORS, createThemedStyles} from '../theme';
 import {TransactionDetails} from './TransactionDetails';
 import type {Transaction} from '../../types/Transaction';
 import type {TransactionHistoryScreenProps} from '../../types/TransactionHistoryScreenProps';
+import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
 
 export function TransactionHistoryScreen({token, goHome}: TransactionHistoryScreenProps) {
+  const {handleForbidden} = useAppPreferences();
   const [transactions, setTransactions] = React.useState<Transaction[]>([]);
   const [selectedTransactionId, setSelectedTransactionId] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
@@ -43,6 +45,7 @@ export function TransactionHistoryScreen({token, goHome}: TransactionHistoryScre
           `${apiBaseUrl}/api/transactions?limit=${limit}&offset=${offset}`,
           {headers: {Authorization: `Bearer ${token}`}},
         );
+        if (handleForbiddenResponse(response, handleForbidden)) return;
         const data = await response.json().catch(() => null);
         if (!response.ok) {
           throw new Error(data?.detail || 'Nie udało się pobrać historii transakcji.');
@@ -68,7 +71,7 @@ export function TransactionHistoryScreen({token, goHome}: TransactionHistoryScre
     } finally {
       setIsLoading(false);
     }
-  }, [apiBaseUrl, token]);
+  }, [apiBaseUrl, token, handleForbidden]);
 
   React.useEffect(() => {
     loadHistory();
