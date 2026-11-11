@@ -46,6 +46,17 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
 
   const sourceAccount = accounts.find(account => account.id === sourceAccountId) ?? null;
   const destinationAccount = accounts.find(account => account.id === destinationAccountId) ?? null;
+  const preferredRate = rates.find(rate => rate.currency_code === preferredCurrency);
+  const preferredRateValue = preferredCurrency === 'PLN' ? 1 : Number(preferredRate?.pln_per_unit);
+  const ratesInPreferredCurrency = rates.map(rate => {
+    const rateInPln = Number(rate.pln_per_unit);
+    return {
+      ...rate,
+      value: Number.isFinite(rateInPln) && Number.isFinite(preferredRateValue) && preferredRateValue > 0
+        ? rateInPln / preferredRateValue
+        : null,
+    };
+  });
   const normalizedAmount = amount.trim().replace(',', '.');
   const validAmount = /^\d+(\.\d{1,2})?$/.test(normalizedAmount) && Number(normalizedAmount) > 0;
 
@@ -189,10 +200,12 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
 
           <Text style={styles.sectionTitle}>Aktualne kursy</Text>
           {provider ? <Text style={styles.muted}>{provider} · tabela z {effectiveDate}</Text> : null}
-          {rates.map(rate => (
+          {ratesInPreferredCurrency.filter(rate => rate.currency_code !== preferredCurrency).map(rate => (
             <View key={rate.currency_code} style={styles.rateRow}>
               <Text style={styles.rateCurrency}>1 {rate.currency_code}</Text>
-              <Text style={styles.rateValue}>{rate.pln_per_unit} PLN</Text>
+              <Text style={styles.rateValue}>
+                {rate.value === null ? '—' : `${rate.value.toFixed(4)} ${preferredCurrency}`}
+              </Text>
             </View>
           ))}
           <Text style={styles.sectionTitle}>Kursy na stronie NBP</Text>
@@ -248,7 +261,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
               </View>
               <Text style={styles.label}>Na rachunek</Text>
               <View style={styles.accountList}>
-                {accounts.map(account => (
+                {accounts.filter(account => account.id !== sourceAccountId).map(account => (
                   <Pressable key={`destination-${account.id}`} onPress={() => chooseAccount(account, 'destination')}
                     style={[styles.accountOption, destinationAccountId === account.id && styles.selected]}>
                     <Text style={styles.accountText}>{account.currency_code} · {account.balance}</Text>
