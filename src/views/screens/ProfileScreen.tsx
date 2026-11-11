@@ -22,6 +22,9 @@ export function ProfileScreen({onQrGeneration, onLogout}: {onQrGeneration: () =>
     setColorScheme,
     preferredCurrency,
     setPreferredCurrency,
+    locationCurrencyEnabled,
+    locationDetectedCurrency,
+    setLocationCurrencyEnabled,
     refreshProfilePhoto,
   } = useAppPreferences();
   const [accounts, setAccounts] = React.useState<Account[]>([]);
@@ -131,9 +134,10 @@ export function ProfileScreen({onQrGeneration, onLogout}: {onQrGeneration: () =>
           </Pressable>
         ))}
 
+        {!locationCurrencyEnabled && <>
         <Text style={styles.sectionTitle}>Preferowana waluta</Text>
         <Text style={styles.description}>Używana jako domyślny wybór na dashboardzie, w przelewach i wymianie.</Text>
-        {accounts.map(account => (
+        {!locationCurrencyEnabled && accounts.map(account => (
           <Pressable
             key={account.id}
             accessibilityRole="button"
@@ -144,6 +148,24 @@ export function ProfileScreen({onQrGeneration, onLogout}: {onQrGeneration: () =>
             <Text style={styles.currencyHint}>{preferredCurrency === account.currency_code ? 'Preferowana' : 'Ustaw jako domyślną'}</Text>
           </Pressable>
         ))}
+
+        </>}
+        <Text style={styles.sectionTitle}>Waluta na podstawie lokalizacji</Text>
+        <Text style={styles.description}>Po włączeniu aplikacja sprawdzi lokalizację przy logowaniu i ustawi walutę kraju.</Text>
+        {locationCurrencyEnabled ? (
+          <View style={[styles.currencyOption, styles.currencySelected]}>
+            <Text style={styles.currencyText}>{locationDetectedCurrency ?? 'Brak wyniku'}</Text>
+            <Text style={styles.currencyHint}>{locationDetectedCurrency && 'Waluta z ostatniego wyszukiwania lokalizacji'}</Text>
+          </View>
+        ) : null}
+        <Pressable
+          accessibilityRole="switch"
+          accessibilityState={{checked: locationCurrencyEnabled}}
+          onPress={() => setLocationCurrencyEnabled(!locationCurrencyEnabled)}
+          style={[styles.currencyOption, locationCurrencyEnabled && styles.currencySelected]}>
+          <Text style={styles.currencyText}>{locationCurrencyEnabled ? 'Włączona' : 'Wyłączona'}</Text>
+          <Text style={styles.currencyHint}>{locationCurrencyEnabled ? 'Dotknij, aby wyłączyć' : 'Dotknij, aby włączyć'}</Text>
+        </Pressable>
 
         <View style={styles.button}>
           <AppButton title="Wyloguj się" onPress={onLogout} secondary />

@@ -1,22 +1,35 @@
 import React, {createContext, useCallback, useContext, useEffect, useMemo, useRef, useState} from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {Platform} from 'react-native';
+import Geolocation from 'react-native-geolocation-service';
+import {check, PERMISSIONS, request, RESULTS} from 'react-native-permissions';
 import {API_URL} from '@env';
 import type {PropsWithChildren} from 'react';
 import {setColorScheme, type ColorScheme} from '../views/theme';
 
 const THEME_KEY = '@app_theme';
 const CURRENCY_KEY = '@app_preferred_currency';
+const LOCATION_CURRENCY_KEY = '@app_location_currency_enabled';
+const COUNTRY_CURRENCIES: Record<string, string> = {
+  PL: 'PLN', CZ: 'CZK', GB: 'GBP', US: 'USD',
+  AT: 'EUR', BE: 'EUR', CY: 'EUR', DE: 'EUR', EE: 'EUR', ES: 'EUR', FI: 'EUR',
+  FR: 'EUR', GR: 'EUR', HR: 'EUR', IE: 'EUR', IT: 'EUR', LT: 'EUR', LU: 'EUR',
+  LV: 'EUR', MT: 'EUR', NL: 'EUR', PT: 'EUR', SI: 'EUR', SK: 'EUR',
+};
 
 type Preferences = {
   token: string | null;
   colorScheme: ColorScheme;
   preferencesLoaded: boolean;
   preferredCurrency: string | null;
+  locationCurrencyEnabled: boolean;
+  locationDetectedCurrency: string | null;
   profilePhotoRevision: number;
   profilePhotoDataUri: string | null;
   profilePhotoResolved: boolean;
   setColorScheme: (scheme: ColorScheme) => void;
   setPreferredCurrency: (currency: string) => void;
+  setLocationCurrencyEnabled: (enabled: boolean) => void;
   refreshProfilePhoto: () => void;
 };
 
@@ -26,15 +39,20 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
   const [colorScheme, setColorSchemeState] = useState<ColorScheme>('dark');
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [preferredCurrency, setPreferredCurrencyState] = useState<string | null>(null);
+  const [manualPreferredCurrency, setManualPreferredCurrency] = useState<string | null>(null);
+  const [locationCurrencyEnabled, setLocationCurrencyEnabledState] = useState(false);
+  const [locationDetectedCurrency, setLocationDetectedCurrency] = useState<string | null>(null);
   const [profilePhotoRevision, setProfilePhotoRevision] = useState(0);
   const [profilePhoto, setProfilePhoto] = useState<{token: string; dataUri: string} | null>(null);
   const [photoResolvedToken, setPhotoResolvedToken] = useState<string | null>(null);
   const previousToken = useRef(token);
+  const locationCheckStarted = useRef(false);
 
   useEffect(() => {
     if (previousToken.current !== token) {
       previousToken.current = token;
       setProfilePhotoRevision(current => current + 1);
+      if (token) locationCheckStarted.current = false;
     }
   }, [token]);
 
@@ -77,14 +95,16 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
 
   useEffect(() => {
     let active = true;
-    Promise.all([AsyncStorage.getItem(THEME_KEY), AsyncStorage.getItem(CURRENCY_KEY)])
-      .then(([savedTheme, savedCurrency]) => {
+    Promise.all([AsyncStorage.getItem(THEME_KEY), AsyncStorage.getItem(CURRENCY_KEY), AsyncStorage.getItem(LOCATION_CURRENCY_KEY)])
+      .then(([savedTheme, savedCurrency, savedLocationCurrency]) => {
         if (!active) return;
         const validThemes: ColorScheme[] = ['dark', 'light', 'pink', 'blue', 'blackAndWhite', 'highContrast'];
         const nextTheme: ColorScheme = validThemes.includes(savedTheme as ColorScheme) ? savedTheme as ColorScheme : 'dark';
         setColorScheme(nextTheme);
         setColorSchemeState(nextTheme);
         setPreferredCurrencyState(savedCurrency);
+        setManualPreferredCurrency(savedCurrency);
+        setLocationCurrencyEnabledState(savedLocationCurrency === 'true');
       })
       .catch(error => console.warn('Unable to load preferences', error))
       .finally(() => { if (active) setPreferencesLoaded(true); });
@@ -99,8 +119,53 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
 
   const updatePreferredCurrency = useCallback((currency: string) => {
     setPreferredCurrencyState(currency);
+    setManualPreferredCurrency(currency);
     AsyncStorage.setItem(CURRENCY_KEY, currency).catch(error => console.warn('Unable to save preferred currency', error));
   }, []);
+
+  const applyLocationCurrency = useCallback((currency: string) => {
+    setLocationDetectedCurrency(currency);
+    setPreferredCurrencyState(currency);
+  }, []);
+
+  const updateLocationCurrencyEnabled = useCallback((enabled: boolean) => {
+    setLocationCurrencyEnabledState(enabled);
+    AsyncStorage.setItem(LOCATION_CURRENCY_KEY, String(enabled)).catch(error => console.warn('Unable to save location currency preference', error));
+    if (!enabled) {
+      locationCheckStarted.current = false;
+      setLocationDetectedCurrency(null);
+      setPreferredCurrencyState(manualPreferredCurrency);
+    }
+  }, [manualPreferredCurrency]);
+
+  useEffect(() => {
+    if (!preferencesLoaded || !token || !locationCurrencyEnabled || locationCheckStarted.current) return;
+    locationCheckStarted.current = true;
+    let active = true;
+    const permission = Platform.OS === 'ios' ? PERMISSIONS.IOS.LOCATION_WHEN_IN_USE : PERMISSIONS.ANDROID.ACCESS_COARSE_LOCATION;
+    const resolveCurrency = async () => {
+      try {
+        const status = await check(permission);
+        const granted = status === RESULTS.GRANTED || (await request(permission)) === RESULTS.GRANTED;
+        if (!granted) return;
+        const position = await new Promise<{coords: {latitude: number; longitude: number}}>((resolve, reject) => {
+          Geolocation.getCurrentPosition(resolve, reject, {enableHighAccuracy: false, timeout: 15000, maximumAge: 60000});
+        });
+        const {latitude, longitude} = position.coords;
+        const url = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=pl`;
+        const response = await fetch(url);
+        if (!response.ok) return;
+        const data = await response.json();
+        const countryCode = String(data?.countryCode ?? '').toUpperCase();
+        const currency = COUNTRY_CURRENCIES[countryCode];
+        if (active && currency) applyLocationCurrency(currency);
+      } catch (error) {
+        console.warn('Unable to determine location-based currency', error);
+      }
+    };
+    void resolveCurrency();
+    return () => { active = false; };
+  }, [preferencesLoaded, token, locationCurrencyEnabled, applyLocationCurrency]);
 
   const refreshProfilePhoto = useCallback(() => setProfilePhotoRevision(current => current + 1), []);
   const value = useMemo(() => ({
@@ -108,13 +173,16 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
     colorScheme,
     preferencesLoaded,
     preferredCurrency,
+    locationCurrencyEnabled,
+    locationDetectedCurrency,
     profilePhotoRevision,
     profilePhotoDataUri: token && profilePhoto?.token === token ? profilePhoto.dataUri : null,
     profilePhotoResolved: !token || photoResolvedToken === token,
     setColorScheme: updateColorScheme,
     setPreferredCurrency: updatePreferredCurrency,
+    setLocationCurrencyEnabled: updateLocationCurrencyEnabled,
     refreshProfilePhoto,
-  }), [token, colorScheme, preferencesLoaded, preferredCurrency, profilePhotoRevision, profilePhoto, photoResolvedToken, updateColorScheme, updatePreferredCurrency, refreshProfilePhoto]);
+  }), [token, colorScheme, preferencesLoaded, preferredCurrency, locationCurrencyEnabled, locationDetectedCurrency, profilePhotoRevision, profilePhoto, photoResolvedToken, updateColorScheme, updatePreferredCurrency, updateLocationCurrencyEnabled, refreshProfilePhoto]);
 
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
 }
