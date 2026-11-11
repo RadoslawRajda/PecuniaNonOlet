@@ -1,5 +1,10 @@
 import React from 'react';
 import {BackHandler, Pressable, StatusBar, StyleSheet, Text, View} from 'react-native';
+import Home from 'lucide-react-native/icons/house';
+import History from 'lucide-react-native/icons/rotate-ccw-clock';
+import CircleDollarSign from 'lucide-react-native/icons/circle-dollar-sign';
+import QrCode from 'lucide-react-native/icons/qr-code';
+import UserRound from 'lucide-react-native/icons/user-round';
 import {
   SafeAreaProvider,
   SafeAreaView,
@@ -30,11 +35,11 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
   }, [controller.goBack]);
   if (!preferencesLoaded) return null;
   const tabs = [
-    {screen: 'dashboard', label: 'Pulpit', icon: '⌂', onPress: controller.goDashboard},
-    {screen: 'transactionHistory', label: 'Historia', icon: '↕', onPress: controller.goTransactionHistory},
-    {screen: 'exchangeRates', label: 'Wymiana', icon: '⇄', onPress: controller.goExchangeRates},
-    {screen: 'qrHub', label: 'QR', icon: '▦', onPress: controller.goQrHub},
-    {screen: 'profile', label: 'Profil', icon: '●', onPress: controller.goProfile},
+    {screen: 'dashboard', label: 'Pulpit', icon: Home, onPress: controller.goDashboard},
+    {screen: 'transactionHistory', label: 'Historia', icon: History, onPress: controller.goTransactionHistory},
+    {screen: 'exchangeRates', label: 'Wymiana', icon: CircleDollarSign, onPress: controller.goExchangeRates},
+    {screen: 'qrHub', label: 'QR', icon: QrCode, onPress: controller.goQrHub},
+    {screen: 'profile', label: 'Profil', icon: UserRound, onPress: controller.goProfile},
   ] as const;
   const showNavigation = ['dashboard', 'transactionHistory', 'exchangeRates', 'qrScanner', 'qrHub', 'profile', 'qrGeneration'].includes(controller.screen);
 
@@ -129,9 +134,10 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
           <View style={styles.navbar}>
             {tabs.map(tab => {
               const active = controller.screen === tab.screen || (controller.screen === 'qrGeneration' && tab.screen === 'profile');
+              const Icon = tab.icon;
               return (
                 <Pressable key={tab.screen} accessibilityRole="button" accessibilityState={{selected: active}} accessibilityLabel={tab.label} onPress={tab.onPress} style={styles.navItem}>
-                  <Text style={[styles.navIcon, active && styles.navActive]}>{tab.icon}</Text>
+                  <Icon size={21} color={active ? COLORS.yellow : COLORS.muted} strokeWidth={2.2} />
                   <Text numberOfLines={1} style={[styles.navLabel, active && styles.navActive]}>{tab.label}</Text>
                 </Pressable>
               );
