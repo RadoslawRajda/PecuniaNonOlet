@@ -29,10 +29,11 @@ import {AppPreferencesProvider, useAppPreferences} from './src/context/AppPrefer
 
 function AppScreens({controller}: {controller: ReturnType<typeof useAppController>}) {
   const {colorScheme, preferencesLoaded} = useAppPreferences();
+  const goBack = controller.goBack;
   React.useEffect(() => {
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => controller.goBack());
+    const subscription = BackHandler.addEventListener('hardwareBackPress', goBack);
     return () => subscription.remove();
-  }, [controller.goBack]);
+  }, [goBack]);
   if (!preferencesLoaded) return null;
   const tabs = [
     {screen: 'dashboard', label: 'Pulpit', icon: Home, onPress: controller.goDashboard},
@@ -87,6 +88,9 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
             username={controller.username}
             token={controller.token}
             goHome={controller.goHome}
+            onExchange={controller.goExchangeRates}
+            onQr={controller.goQrHub}
+            onHistory={controller.goTransactionHistory}
           />
         )}
 
@@ -99,6 +103,7 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
 
         {controller.screen === 'profile' && (
           <ProfileScreen
+            username={controller.username}
             onQrGeneration={controller.goQrGeneration}
             onLogout={controller.logout}
           />

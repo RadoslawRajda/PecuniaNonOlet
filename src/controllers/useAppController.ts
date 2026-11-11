@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Alert } from 'react-native';
 import * as Keychain from 'react-native-keychain';
 
@@ -32,17 +32,17 @@ export function useAppController() {
     setScreen(nextScreen);
   }
 
-  function goBack() {
+  const goBack = useCallback(() => {
     const previousScreen = screenHistory.current.pop();
     if (!previousScreen) return false;
     setScreen(previousScreen);
     return true;
-  }
+  }, []);
 
-  function resetToHome() {
+  const resetToHome = useCallback(() => {
     screenHistory.current = [];
     setScreen('home');
-  }
+  }, []);
 
   function resetToDashboard() {
     screenHistory.current = [];
@@ -106,7 +106,7 @@ export function useAppController() {
     }
 
     loadStoredToken();
-  }, []);
+  }, [resetToHome]);
 
   const goHome = resetToHome;
   const goLogin = () => navigate('login');
