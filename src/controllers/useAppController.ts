@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Alert } from 'react-native';
 import * as Keychain from 'react-native-keychain';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { API_URL } from '@env';
 
@@ -11,9 +12,15 @@ import {
   validateLogin,
   validateRegister,
 } from '../models/auth';
+import type {UserRole} from '../models/auth';
 
 const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
 const TOKEN_STORAGE_KEY = '@app_auth_token';
+const ROLE_STORAGE_KEY = '@app_user_role';
+
+function isUserRole(value: unknown): value is UserRole {
+  return value === 'user' || value === 'analyst';
+}
 
 const KEYCHAIN_OPTIONS = {
   service: TOKEN_STORAGE_KEY,
@@ -25,6 +32,7 @@ export function useAppController() {
   const screenHistory = useRef<ScreenName[]>([]);
   const [username, setUsername] = useState<string>('test user');
   const [token, setToken] = useState<string | null>(null);
+  const [role, setRole] = useState<UserRole | null>(null);
 
   function navigate(nextScreen: ScreenName) {
     if (nextScreen === screen) return;
@@ -63,10 +71,9 @@ export function useAppController() {
         const savedToken = credentials
           ? credentials.password
           : null;
+        const savedRole = await AsyncStorage.getItem(ROLE_STORAGE_KEY);
 
         if (savedToken) {
-          setToken(savedToken);
-
           try {
             const response = await fetch(`${apiBaseUrl}/api/me`, {
               method: 'GET',
@@ -79,6 +86,13 @@ export function useAppController() {
             const responseData = await response.json().catch(() => null);
 
             if (response.ok && responseData) {
+              const verifiedRole: UserRole = isUserRole(responseData.role)
+                ? responseData.role
+                : isUserRole(savedRole) ? savedRole : 'user';
+              setRole(verifiedRole);
+              void AsyncStorage.setItem(ROLE_STORAGE_KEY, verifiedRole)
+                .catch(error => console.warn('Unable to save user role', error));
+              setToken(savedToken);
               if (responseData.email) {
                 setUsername(responseData.email);
               }
@@ -87,13 +101,19 @@ export function useAppController() {
             } else {
               // Usuwanie nieprawidłowego tokena z Keychain
               await Keychain.resetGenericPassword(KEYCHAIN_OPTIONS);
+              await AsyncStorage.removeItem(ROLE_STORAGE_KEY);
+              setRole(null);
               setToken(null);
             }
           } catch {
+            setRole(isUserRole(savedRole) ? savedRole : 'user');
             setToken(savedToken);
             resetToDashboard();
             wentToDashboard = true;
           }
+        } else {
+          setRole(null);
+          await AsyncStorage.removeItem(ROLE_STORAGE_KEY);
         }
       } catch (e) {
         console.error('Błąd podczas odczytu tokena z pamięci:', e);
@@ -140,6 +160,10 @@ export function useAppController() {
 
       if (response.ok && responseData) {
         if (responseData.token) {
+          const loginRole: UserRole = isUserRole(responseData.user?.role) ? responseData.user.role : 'user';
+          setRole(loginRole);
+          void AsyncStorage.setItem(ROLE_STORAGE_KEY, loginRole)
+            .catch(error => console.warn('Unable to save user role', error));
           setToken(responseData.token);
 
           // Bezpieczne zapisanie tokena w Keychain
@@ -197,6 +221,10 @@ export function useAppController() {
 
       if (response.ok && responseData) {
         if (responseData.token) {
+          const registeredRole: UserRole = isUserRole(responseData.user?.role) ? responseData.user.role : 'user';
+          setRole(registeredRole);
+          void AsyncStorage.setItem(ROLE_STORAGE_KEY, registeredRole)
+            .catch(error => console.warn('Unable to save user role', error));
           setToken(responseData.token);
 
           // Bezpieczne zapisanie tokena w Keychain
@@ -262,6 +290,8 @@ export function useAppController() {
       await Keychain.resetGenericPassword(KEYCHAIN_OPTIONS);
 
       setToken(null);
+      setRole(null);
+      await AsyncStorage.removeItem(ROLE_STORAGE_KEY);
       setUsername('test user');
     }
   }
@@ -312,6 +342,7 @@ export function useAppController() {
     goBack,
     username,
     token,
+    role,
     goHome,
     goLogin,
     goRegister,

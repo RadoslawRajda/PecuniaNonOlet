@@ -11,6 +11,8 @@ export type ScreenName =
   | 'qrGeneration'
   | 'transactionHistory';
 
+export type UserRole = 'user' | 'analyst';
+
 export type LoginData = {
   email: string;
   password: string;

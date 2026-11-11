@@ -23,6 +23,7 @@ import {QrGenerationScreen} from './src/views/screens/QrGenerationScreen';
 import {TransactionHistoryScreen} from './src/views/screens/TransactionHistoryScreen';
 import {Loading} from './src/views/screens/Loading';
 import {QrHubScreen} from './src/views/screens/QrHubScreen';
+import {AnalyticsOverviewScreen} from './src/views/screens/AnalyticsOverviewScreen';
 
 import {COLORS, createThemedStyles} from './src/views/theme';
 import {AppPreferencesProvider, useAppPreferences} from './src/context/AppPreferences';
@@ -41,7 +42,7 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
     {screen: 'qrHub', label: 'QR', icon: QrCode, onPress: controller.goQrHub},
     {screen: 'profile', label: 'Profil', icon: UserRound, onPress: controller.goProfile},
   ] as const;
-  const showNavigation = ['dashboard', 'transactionHistory', 'exchangeRates', 'qrScanner', 'qrHub', 'profile', 'qrGeneration'].includes(controller.screen);
+  const showNavigation = controller.role !== 'analyst' && ['dashboard', 'transactionHistory', 'exchangeRates', 'qrScanner', 'qrHub', 'profile', 'qrGeneration'].includes(controller.screen);
 
   return (
     <SafeAreaProvider>
@@ -55,6 +56,10 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
         edges={['top', 'bottom']}>
 
         <View style={styles.screenContent}>
+
+        {controller.role === 'analyst' ? (
+          <AnalyticsOverviewScreen token={controller.token} onLogout={controller.logout} />
+        ) : <>
 
         {controller.screen === 'loading' && <Loading/>}
 
@@ -129,6 +134,8 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
           />
         )}
 
+        </>}
+
         </View>
         {showNavigation && controller.token ? (
           <View style={styles.navbar}>
@@ -152,7 +159,7 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
 function App() {
   const controller = useAppController();
   return (
-    <AppPreferencesProvider token={controller.token}>
+    <AppPreferencesProvider token={controller.token} role={controller.role}>
       <AppScreens controller={controller} />
     </AppPreferencesProvider>
   );

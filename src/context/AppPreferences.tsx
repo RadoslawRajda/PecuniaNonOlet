@@ -7,6 +7,7 @@ import {API_URL} from '@env';
 import type {PropsWithChildren} from 'react';
 import {setColorScheme, type ColorScheme} from '../views/theme';
 import { Alert } from 'react-native';
+import type {UserRole} from '../models/auth';
 
 const THEME_KEY = '@app_theme';
 const CURRENCY_KEY = '@app_preferred_currency';
@@ -38,7 +39,7 @@ type Preferences = {
 
 const PreferencesContext = createContext<Preferences | null>(null);
 
-export function AppPreferencesProvider({token, children}: PropsWithChildren<{token: string | null}>) {
+export function AppPreferencesProvider({token, role, children}: PropsWithChildren<{token: string | null; role: UserRole | null}>) {
   const [colorScheme, setColorSchemeState] = useState<ColorScheme>('dark');
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [preferredCurrency, setPreferredCurrencyState] = useState<string | null>(null);
@@ -60,9 +61,9 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
   }, [token]);
 
   useEffect(() => {
-    if (!token) {
+    if (!token || role !== 'user') {
       setProfilePhoto(null);
-      setPhotoResolvedToken(null);
+      setPhotoResolvedToken(role === 'analyst' ? token : null);
       return;
     }
 
@@ -94,7 +95,7 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
       });
 
     return () => { active = false; };
-  }, [token, profilePhotoRevision]);
+  }, [token, role, profilePhotoRevision]);
 
   useEffect(() => {
     let active = true;
@@ -212,13 +213,13 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
     locationCurrencyEnabled,
     locationDetectedCurrency,
     profilePhotoRevision,
-    profilePhotoDataUri: token && profilePhoto?.token === token ? profilePhoto.dataUri : null,
-    profilePhotoResolved: !token || photoResolvedToken === token,
+    profilePhotoDataUri: token && role === 'user' && profilePhoto?.token === token ? profilePhoto.dataUri : null,
+    profilePhotoResolved: !token || role === 'analyst' || photoResolvedToken === token,
     setColorScheme: updateColorScheme,
     setPreferredCurrency: updatePreferredCurrency,
     setLocationCurrencyEnabled: updateLocationCurrencyEnabled,
     refreshProfilePhoto,
-  }), [token, colorScheme, preferencesLoaded, preferredCurrency, locationCurrencyEnabled, locationDetectedCurrency, profilePhotoRevision, profilePhoto, photoResolvedToken, updateColorScheme, updatePreferredCurrency, updateLocationCurrencyEnabled, refreshProfilePhoto]);
+  }), [token, role, colorScheme, preferencesLoaded, preferredCurrency, locationCurrencyEnabled, locationDetectedCurrency, profilePhotoRevision, profilePhoto, photoResolvedToken, updateColorScheme, updatePreferredCurrency, updateLocationCurrencyEnabled, refreshProfilePhoto]);
 
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
 }
