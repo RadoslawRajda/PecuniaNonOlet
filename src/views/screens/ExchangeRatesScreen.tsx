@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
-import {ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {API_URL} from '@env';
 import {WebView} from 'react-native-webview';
 
@@ -83,7 +83,11 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
         throw new Error(rateData?.detail || accountData?.detail || 'Nie udało się pobrać kursów lub rachunków.');
       }
       const nextAccounts: Account[] = accountData?.accounts ?? [];
-      setRates(rateData?.rates ?? []);
+      const nextRates: ExchangeRate[] = Array.isArray(rateData?.rates) ? rateData.rates : [];
+      setRates(nextRates);
+      if (nextRates.length === 0) {
+        Alert.alert('Brak kursów walut', 'Serwer nie zwrócił aktualnych kursów wymiany. Spróbuj ponownie później.');
+      }
       setProvider(rateData?.provider ?? '');
       setEffectiveDate(rateData?.effective_date ?? '');
       setAccounts(nextAccounts);

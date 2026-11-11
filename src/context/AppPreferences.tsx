@@ -9,6 +9,7 @@ import {setColorScheme, type ColorScheme} from '../views/theme';
 
 const THEME_KEY = '@app_theme';
 const CURRENCY_KEY = '@app_preferred_currency';
+const DEFAULT_CURRENCY = 'PLN';
 const LOCATION_CURRENCY_KEY = '@app_location_currency_enabled';
 const LOCATION_CURRENCY_RESULT_KEY = '@app_location_currency_result';
 const COUNTRY_CURRENCIES: Record<string, string> = {
@@ -106,14 +107,19 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
         if (!active) return;
         const validThemes: ColorScheme[] = ['dark', 'light', 'pink', 'blue', 'blackAndWhite', 'highContrast'];
         const nextTheme: ColorScheme = validThemes.includes(savedTheme as ColorScheme) ? savedTheme as ColorScheme : 'dark';
+        const initialCurrency = savedCurrency || DEFAULT_CURRENCY;
         const locationEnabled = savedLocationCurrency === 'true';
         const validLocationResult = savedLocationResult && Object.values(COUNTRY_CURRENCIES).includes(savedLocationResult)
           ? savedLocationResult
           : null;
         setColorScheme(nextTheme);
         setColorSchemeState(nextTheme);
-        setPreferredCurrencyState(savedCurrency);
-        setManualPreferredCurrency(savedCurrency);
+        setPreferredCurrencyState(initialCurrency);
+        setManualPreferredCurrency(initialCurrency);
+        if (!savedCurrency) {
+          AsyncStorage.setItem(CURRENCY_KEY, DEFAULT_CURRENCY)
+            .catch(error => console.warn('Unable to save default preferred currency', error));
+        }
         setLocationCurrencyEnabledState(locationEnabled);
         setLocationDetectedCurrency(validLocationResult);
         if (locationEnabled && validLocationResult) {
