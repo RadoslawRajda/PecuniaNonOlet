@@ -25,6 +25,7 @@ export function useAppController() {
   const screenHistory = useRef<ScreenName[]>([]);
   const [username, setUsername] = useState<string>('test user');
   const [token, setToken] = useState<string | null>(null);
+  const [pendingTransactionId, setPendingTransactionId] = useState<string | null>(null);
 
   function navigate(nextScreen: ScreenName) {
     if (nextScreen === screen) return;
@@ -118,6 +119,10 @@ export function useAppController() {
   const goQrHub = () => navigate('qrHub');
   const goQrGeneration = () => navigate('qrGeneration');
   const goTransactionHistory = () => navigate('transactionHistory');
+  const openTransactionOnDashboard = (transactionId?: string) => {
+    setPendingTransactionId(transactionId ?? null);
+    resetToDashboard();
+  };
 
   async function submitLogin(data: LoginData) {
     const error = validateLogin(data);
@@ -243,17 +248,6 @@ export function useAppController() {
             'Content-Type': 'application/json',
           },
         });
-        Alert.alert("",
-          "Wylogowano",
-          [
-            {
-              text: 'OK',
-              onPress: async () => {
-                  goHome();
-                }
-            }
-          ]
-        );
       }
     } catch (e) {
       console.error('Błąd podczas wylogowywania:', e);
@@ -263,6 +257,7 @@ export function useAppController() {
 
       setToken(null);
       setUsername('test user');
+      resetToHome();
     }
   }
 
@@ -322,6 +317,9 @@ export function useAppController() {
     goQrHub,
     goQrGeneration,
     goTransactionHistory,
+    pendingTransactionId,
+    clearPendingTransaction: () => setPendingTransactionId(null),
+    openTransactionOnDashboard,
     submitLogin,
     submitRegister,
     loginWithPasskey,

@@ -20,16 +20,14 @@ import {API_URL} from '@env';
 import type {Account} from '../../types/Account';
 import type {TransactionCreationFormValues} from '../../types/TransactionCreationFormValues';
 import {TransactionCreation} from './TransactionCreation';
-import {TransactionDetails} from './TransactionDetails';
 
-type QrScannerProps = {token: string | null; goHome: () => void};
+type QrScannerProps = {token: string | null; onTransferCreated: (transactionId?: string) => void};
 
-export function QrScannerScreen({token, goHome}: QrScannerProps) {
+export function QrScannerScreen({token, onTransferCreated}: QrScannerProps) {
   const [cameraPermission, setCameraPermission] = useState<string>('pending');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [initialValues, setInitialValues] = useState<TransactionCreationFormValues | null>(null);
   const [isCreationVisible, setCreationVisible] = useState(false);
-  const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [hasProcessedCode, setHasProcessedCode] = useState(false);
   const cameraDevice = useCameraDevice('back');
@@ -156,13 +154,7 @@ export function QrScannerScreen({token, goHome}: QrScannerProps) {
         accounts={accounts}
         initialValues={initialValues}
         onClose={closeCreation}
-        onCreated={transactionId => setSelectedTransactionId(transactionId ?? null)}
-      />
-      <TransactionDetails
-        transactionId={selectedTransactionId}
-        token={token}
-        onClose={() => setSelectedTransactionId(null)}
-        goHome={goHome}
+        onCreated={transactionId => onTransferCreated(transactionId)}
       />
     </ScrollView>
   );

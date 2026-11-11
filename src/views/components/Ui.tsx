@@ -12,7 +12,7 @@ import {COLORS, createThemedStyles} from '../theme';
 import type {ButtonProps} from '../../types/ButtonProps';
 import type {FormInputProps} from '../../types/FormInputProps';
 
-export function BrandLogo({size = 82}: {size?: number}) {
+export function BrandLogo({size = 82, showProfilePhoto = false}: {size?: number; showProfilePhoto?: boolean}) {
   const {profilePhotoRevision, profilePhotoDataUri, profilePhotoResolved} = useAppPreferences();
   const [photoUnavailable, setPhotoUnavailable] = React.useState(false);
   React.useEffect(() => {
@@ -21,8 +21,8 @@ export function BrandLogo({size = 82}: {size?: number}) {
 
   return (
     <View style={[styles.logo, {width: size, height: size, borderRadius: size * 0.27}]}>
-      {profilePhotoResolved && !profilePhotoDataUri ? <Text style={[styles.logoText, {fontSize: size * 0.61}]}>P</Text> : null}
-      {profilePhotoDataUri && !photoUnavailable ? (
+      {(!showProfilePhoto || (profilePhotoResolved && !profilePhotoDataUri)) ? <Text style={[styles.logoText, {fontSize: size * 0.61}]}>P</Text> : null}
+      {showProfilePhoto && profilePhotoDataUri && !photoUnavailable ? (
       <Image
         accessibilityLabel="Zdjęcie profilowe"
         source={{uri: profilePhotoDataUri}}

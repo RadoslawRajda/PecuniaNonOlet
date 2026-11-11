@@ -5,4 +5,6 @@ export type DashboardProps = {
   onExchange: () => void;
   onQr: () => void;
   onHistory: () => void;
+  initialTransactionId?: string | null;
+  onInitialTransactionShown?: () => void;
 };

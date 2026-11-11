@@ -29,6 +29,8 @@ export function Dashboard({
   onExchange,
   onQr,
   onHistory,
+  initialTransactionId,
+  onInitialTransactionShown,
 }: DashboardProps) {
   const {preferredCurrency} = useAppPreferences();
   const [accounts, setAccounts] = React.useState<Account[]>([]);
@@ -41,6 +43,12 @@ export function Dashboard({
   const [error, setError] = React.useState<string | null>(null);
   const previousPreferredCurrency = React.useRef(preferredCurrency);
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
+
+  React.useEffect(() => {
+    if (!initialTransactionId) return;
+    setSelectedTransactionId(initialTransactionId);
+    onInitialTransactionShown?.();
+  }, [initialTransactionId, onInitialTransactionShown]);
 
   const loadDashboardData = React.useCallback(async () => {
     if (!token) {
@@ -200,9 +208,8 @@ export function Dashboard({
           transparent
           animationType="fade"
           onRequestClose={() => setCurrencyPickerVisible(false)}>
-          <Pressable
-            style={styles.modalBackdrop}
-            onPress={() => setCurrencyPickerVisible(false)}>
+          <View style={styles.modalBackdrop}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Zamknij wybór waluty" onPress={() => setCurrencyPickerVisible(false)} style={StyleSheet.absoluteFill} />
             <View style={styles.modalCard}>
               <Text style={styles.modalTitle}>Wybierz walutę</Text>
               {accounts.map(account => (
@@ -219,7 +226,7 @@ export function Dashboard({
                 </Pressable>
               ))}
             </View>
-          </Pressable>
+          </View>
         </Modal>
         <TransactionDetails
           transactionId={selectedTransactionId}

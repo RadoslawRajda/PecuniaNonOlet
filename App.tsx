@@ -87,6 +87,8 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
           <Dashboard
             username={controller.username}
             token={controller.token}
+            initialTransactionId={controller.pendingTransactionId}
+            onInitialTransactionShown={controller.clearPendingTransaction}
             goHome={controller.goHome}
             onExchange={controller.goExchangeRates}
             onQr={controller.goQrHub}
@@ -104,7 +106,6 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
         {controller.screen === 'profile' && (
           <ProfileScreen
             username={controller.username}
-            onQrGeneration={controller.goQrGeneration}
             onLogout={controller.logout}
           />
         )}
@@ -112,7 +113,7 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
         {controller.screen === 'qrScanner' && (
           <QrScannerScreen
             token={controller.token}
-            goHome={controller.goHome}
+            onTransferCreated={controller.openTransactionOnDashboard}
           />
         )}
 

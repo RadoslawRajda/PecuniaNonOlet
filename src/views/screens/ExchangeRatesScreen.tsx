@@ -1,11 +1,12 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
-import {ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {ActivityIndicator, Animated, Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {API_URL} from '@env';
 import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 import {WebView} from 'react-native-webview';
 import ChevronDown from 'lucide-react-native/icons/chevron-down';
 import ArrowLeftRight from 'lucide-react-native/icons/arrow-left-right';
 import X from 'lucide-react-native/icons/x';
+import Info from 'lucide-react-native/icons/info';
 
 import {AppButton, FormInput, ScreenHeader} from '../components/Ui';
 import {COLORS, createThemedStyles} from '../theme';
@@ -49,6 +50,14 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
   const [error, setError] = useState<string | null>(null);
   const exchangeInFlight = useRef(false);
   const idempotencyKey = useRef<string | null>(null);
+  const pickerHeight = Dimensions.get('window').height;
+  const pickerPosition = useRef(new Animated.Value(pickerHeight)).current;
+
+  useEffect(() => {
+    if (picker === null) return;
+    pickerPosition.setValue(pickerHeight);
+    Animated.spring(pickerPosition, {toValue: 0, useNativeDriver: true, speed: 18, bounciness: 2}).start();
+  }, [picker, pickerHeight, pickerPosition]);
 
   const sourceAccount = accounts.find(account => account.id === sourceAccountId) ?? null;
   const destinationAccount = accounts.find(account => account.id === destinationAccountId) ?? null;
@@ -180,12 +189,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
         {error && !quote ? <Text style={styles.error}>{error}</Text> : null}
 
         <View style={styles.ratesCard}>
-          <View style={styles.sectionHeading}>
-            <Text style={styles.sectionTitle}>Kursy walut</Text>
-            <Pressable accessibilityRole="button" onPress={() => setSourcePageVisible(true)} style={styles.sourceLink}>
-              <Text style={styles.sourceLinkText}>NBP</Text>
-            </Pressable>
-          </View>
+          <Text style={styles.sectionTitle}>Kursy walut</Text>
           {provider ? <Text style={styles.muted}>{provider} · tabela z {effectiveDate}</Text> : null}
           {ratesInPreferredCurrency.filter(rate => rate.currency_code !== preferredCurrency).map(rate => (
             <View key={rate.currency_code} style={styles.rateRow}>
@@ -194,6 +198,10 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
             </View>
           ))}
           <Text style={styles.muted}>Przeliczenie orientacyjne. Kwotę rozliczenia wylicza serwer.</Text>
+          <Pressable accessibilityRole="link" onPress={() => setSourcePageVisible(true)} style={styles.sourceInfo}>
+            <Info size={16} color={COLORS.yellow} />
+            <Text style={styles.sourceInfoText}>Kursy oparte na tabeli NBP z {effectiveDate || 'ostatniej aktualizacji'}</Text>
+          </Pressable>
         </View>
 
         {quote ? (
@@ -234,9 +242,10 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
       </ScrollView>
 
       <RatesWebViewModal visible={isSourcePageVisible} onClose={() => setSourcePageVisible(false)} />
-      <Modal visible={picker !== null} transparent animationType="slide" onRequestClose={() => setPicker(null)}>
+      <Modal visible={picker !== null} transparent animationType="fade" onRequestClose={() => setPicker(null)}>
         <View style={styles.modalBackdrop}>
-          <View style={styles.pickerCard}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Zamknij wybór rachunku" onPress={() => setPicker(null)} style={StyleSheet.absoluteFill} />
+          <Animated.View style={[styles.pickerCard, {transform: [{translateY: pickerPosition}]}]}>
             <Text style={styles.sectionTitle}>{picker === 'source' ? 'Wybierz rachunek źródłowy' : 'Wybierz rachunek docelowy'}</Text>
             <ScrollView>
               {accounts.filter(account => picker === 'source' || account.id !== sourceAccountId).map(account => (
@@ -247,7 +256,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
               ))}
             </ScrollView>
             <AppButton title="Anuluj" onPress={() => setPicker(null)} secondary />
-          </View>
+          </Animated.View>
         </View>
       </Modal>
       <TransactionDetails transactionId={transactionId} token={token} onClose={() => setTransactionId(null)} goHome={goHome} />
@@ -291,8 +300,8 @@ const styles = createThemedStyles(() => StyleSheet.create({
   ratesCard: {backgroundColor: COLORS.surface, borderColor: COLORS.border, borderWidth: 1, borderRadius: 16, padding: 16, gap: 10},
   sectionHeading: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'},
   sectionTitle: {color: COLORS.white, fontSize: 20, fontWeight: '800'},
-  sourceLink: {minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center'},
-  sourceLinkText: {color: COLORS.yellow, fontWeight: '700'},
+  sourceInfo: {minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 7, alignSelf: 'flex-start'},
+  sourceInfoText: {color: COLORS.yellow, fontSize: 13, textDecorationLine: 'underline', flexShrink: 1},
   muted: {color: COLORS.muted, fontSize: 13, lineHeight: 19},
   rateRow: {borderTopWidth: 1, borderTopColor: COLORS.border, paddingVertical: 9, flexDirection: 'row', justifyContent: 'space-between'},
   rateCurrency: {color: COLORS.white, fontSize: 15, fontWeight: '700'},
@@ -314,7 +323,7 @@ const styles = createThemedStyles(() => StyleSheet.create({
   sourcePageClose: {minWidth: 88, minHeight: 44, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4},
   sourcePageCloseText: {color: COLORS.white, fontSize: 14, fontWeight: '700'},
   webView: {flex: 1, backgroundColor: '#FFFFFF'},
-  modalBackdrop: {flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.7)', padding: 16},
+  modalBackdrop: {flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.7)', padding: 16, overflow: 'hidden'},
   pickerCard: {maxHeight: '75%', backgroundColor: COLORS.surface, borderColor: COLORS.border, borderWidth: 1, borderRadius: 18, padding: 20, gap: 14},
   accountOption: {minHeight: 56, borderBottomWidth: 1, borderBottomColor: COLORS.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'},
   accountText: {color: COLORS.white, fontSize: 16, fontWeight: '700'},
