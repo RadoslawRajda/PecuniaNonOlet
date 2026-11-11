@@ -4,7 +4,7 @@ import ChevronRight from 'lucide-react-native/icons/chevron-right';
 import MapPin from 'lucide-react-native/icons/map-pin';
 import Palette from 'lucide-react-native/icons/palette';
 import Shield from 'lucide-react-native/icons/shield';
-import CircleHelp from 'lucide-react-native/icons/circle-help';
+import CircleHelp from 'lucide-react-native/icons/circle-question-mark';
 import LogOut from 'lucide-react-native/icons/log-out';
 import QrCode from 'lucide-react-native/icons/qr-code';
 import {launchImageLibrary, type ImageLibraryOptions} from 'react-native-image-picker';
