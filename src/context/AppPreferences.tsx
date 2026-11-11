@@ -6,6 +6,7 @@ import {check, PERMISSIONS, request, RESULTS} from 'react-native-permissions';
 import {API_URL} from '@env';
 import type {PropsWithChildren} from 'react';
 import {setColorScheme, type ColorScheme} from '../views/theme';
+import { Alert } from 'react-native';
 
 const THEME_KEY = '@app_theme';
 const CURRENCY_KEY = '@app_preferred_currency';
@@ -170,7 +171,19 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
       try {
         const status = await check(permission);
         const granted = status === RESULTS.GRANTED || (await request(permission)) === RESULTS.GRANTED;
-        if (!granted) return;
+        if (!granted) {
+          if (!active) return;
+          locationCheckStarted.current = false;
+          setLocationCurrencyEnabledState(false);
+          setLocationDetectedCurrency(null);
+          setPreferredCurrencyState(manualPreferredCurrency);
+          AsyncStorage.setItem(LOCATION_CURRENCY_KEY, 'false')
+            .catch(error => console.warn('Unable to disable location currency preference', error));
+          AsyncStorage.removeItem(LOCATION_CURRENCY_RESULT_KEY)
+            .catch(error => console.warn('Unable to clear location currency result', error));
+          Alert.alert('Błąd', 'Odmowa dostępu do lokalizacji. Proszę wybrać preferowaną walutę ręcznie.');
+          return;
+        }
         const position = await new Promise<{coords: {latitude: number; longitude: number}}>((resolve, reject) => {
           Geolocation.getCurrentPosition(resolve, reject, {enableHighAccuracy: false, timeout: 15000, maximumAge: 60000});
         });
@@ -188,7 +201,7 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
     };
     void resolveCurrency();
     return () => { active = false; };
-  }, [preferencesLoaded, token, locationCurrencyEnabled, applyLocationCurrency]);
+  }, [preferencesLoaded, token, locationCurrencyEnabled, manualPreferredCurrency, applyLocationCurrency]);
 
   const refreshProfilePhoto = useCallback(() => setProfilePhotoRevision(current => current + 1), []);
   const value = useMemo(() => ({
