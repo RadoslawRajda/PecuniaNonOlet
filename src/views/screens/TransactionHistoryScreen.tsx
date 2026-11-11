@@ -5,11 +5,12 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import {API_URL} from '@env';
 
-import {AppButton, BrandLogo} from '../components/Ui';
+import {AppButton, ScreenHeader} from '../components/Ui';
 import {COLORS, createThemedStyles} from '../theme';
 import {TransactionDetails} from './TransactionDetails';
 import type {Transaction} from '../../types/Transaction';
@@ -20,6 +21,8 @@ export function TransactionHistoryScreen({token, goHome}: TransactionHistoryScre
   const [selectedTransactionId, setSelectedTransactionId] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [filter, setFilter] = React.useState<'all' | 'incoming' | 'outgoing'>('all');
+  const [search, setSearch] = React.useState('');
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
 
   const loadHistory = React.useCallback(async () => {
@@ -68,7 +71,7 @@ export function TransactionHistoryScreen({token, goHome}: TransactionHistoryScre
     } finally {
       setIsLoading(false);
     }
-  }, [apiBaseUrl, token]);
+  }, [apiBaseUrl, goHome, token]);
 
   React.useEffect(() => {
     loadHistory();
@@ -100,12 +103,29 @@ export function TransactionHistoryScreen({token, goHome}: TransactionHistoryScre
     return 'Transakcja';
   };
 
+  const visibleTransactions = transactions.filter(transaction => {
+    const matchesDirection = filter === 'all' || transaction.direction === filter;
+    const query = search.trim().toLocaleLowerCase('pl-PL');
+    const matchesSearch = !query || [transactionLabel(transaction), transaction.currency_code, transaction.counterparty_email ?? '']
+      .some(value => value.toLocaleLowerCase('pl-PL').includes(query));
+    return matchesDirection && matchesSearch;
+  });
+
   return (
     <View style={styles.screen}>
       <ScrollView contentContainerStyle={styles.container}>
-        <BrandLogo />
-        <Text style={styles.title}>Historia transakcji</Text>
-        <Text style={styles.subtitle}>Wszystkie transakcje użytkownika</Text>
+        <ScreenHeader title="Historia" subtitle="Wszystkie Twoje transakcje" />
+
+        <View style={styles.filters}>
+          {FILTERS.map(item => (
+            <Pressable key={item.value} accessibilityRole="button" accessibilityState={{selected: filter === item.value}}
+              onPress={() => setFilter(item.value)} style={[styles.filterChip, filter === item.value && styles.filterChipActive]}>
+              <Text style={[styles.filterText, filter === item.value && styles.filterTextActive]}>{item.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <TextInput value={search} onChangeText={setSearch} placeholder="Szukaj transakcji" placeholderTextColor={COLORS.muted}
+          accessibilityLabel="Szukaj transakcji" style={styles.searchInput} returnKeyType="search" />
 
         {isLoading ? (
           <ActivityIndicator color={COLORS.yellow} style={styles.loader} />
@@ -116,11 +136,16 @@ export function TransactionHistoryScreen({token, goHome}: TransactionHistoryScre
           </View>
         ) : transactions.length === 0 ? (
           <Text style={styles.emptyText}>Brak transakcji.</Text>
+        ) : visibleTransactions.length === 0 ? (
+          <Text style={styles.emptyText}>Brak transakcji pasujących do filtrów.</Text>
         ) : (
           <View style={styles.list}>
-            {transactions.map(transaction => (
+            {visibleTransactions.map((transaction, index) => (
+              <React.Fragment key={transaction.id}>
+                {(index === 0 || formatDate(visibleTransactions[index - 1].created_at) !== formatDate(transaction.created_at)) ? (
+                  <Text style={styles.groupDate}>{formatDate(transaction.created_at)}</Text>
+                ) : null}
               <Pressable
-                key={transaction.id}
                 accessibilityRole="button"
                 accessibilityLabel="Pokaż szczegóły transakcji"
                 onPress={() => setSelectedTransactionId(transaction.id)}
@@ -148,6 +173,7 @@ export function TransactionHistoryScreen({token, goHome}: TransactionHistoryScre
                     : transaction.currency_code}
                 </Text>
               </Pressable>
+              </React.Fragment>
             ))}
           </View>
         )}
@@ -171,21 +197,15 @@ const styles = createThemedStyles(() => StyleSheet.create({
   },
   container: {
     flexGrow: 1,
-    padding: 24,
-    paddingTop: 32,
-    gap: 14,
+    padding: 20, paddingTop: 16, gap: 12,
   },
-  title: {
-    color: COLORS.yellow,
-    fontSize: 30,
-    fontWeight: '800',
-    marginTop: 18,
-  },
-  subtitle: {
-    color: COLORS.muted,
-    fontSize: 15,
-    marginBottom: 10,
-  },
+  filters: {flexDirection: 'row', gap: 8},
+  filterChip: {flex: 1, minHeight: 42, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, backgroundColor: COLORS.surface, paddingHorizontal: 6},
+  filterChipActive: {backgroundColor: COLORS.yellow, borderColor: COLORS.yellow},
+  filterText: {color: COLORS.muted, fontSize: 13, fontWeight: '700'},
+  filterTextActive: {color: COLORS.darkText},
+  searchInput: {minHeight: 48, borderRadius: 12, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.input, paddingHorizontal: 14, color: COLORS.white, fontSize: 15},
+  groupDate: {color: COLORS.muted, fontSize: 13, fontWeight: '700', marginTop: 8},
   loader: {
     marginTop: 30,
   },
@@ -237,3 +257,9 @@ const styles = createThemedStyles(() => StyleSheet.create({
     fontSize: 14,
   },
 }));
+
+const FILTERS = [
+  {value: 'all', label: 'Wszystkie'},
+  {value: 'incoming', label: 'Wpływy'},
+  {value: 'outgoing', label: 'Wydatki'},
+] as const;
