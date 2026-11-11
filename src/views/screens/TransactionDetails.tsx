@@ -12,6 +12,7 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 
 import {AppButton} from '../components/Ui';
 import {COLORS, createThemedStyles} from '../theme';
+import {formatExchangeRateLabel} from '../formatters';
 import type {TransactionDetailsData} from '../../types/TransactionDetailsData';
 import type {TransactionDetailsProps} from '../../types/TransactionDetailsProps';
 
@@ -74,7 +75,7 @@ export function TransactionDetails({transactionId, token, onClose, goHome}: Tran
     return () => {
       isCurrent = false;
     };
-  }, [apiBaseUrl, token, transactionId]);
+  }, [apiBaseUrl, goHome, token, transactionId]);
 
   const formatDate = (date: string) => (
     new Intl.DateTimeFormat('pl-PL', {
@@ -131,7 +132,12 @@ export function TransactionDetails({transactionId, token, onClose, goHome}: Tran
                 value={`${transaction.destination_amount} ${transaction.destination_currency_code}`}
               />
               {transaction.exchange_rate && (
-                <DetailRow label="Kurs wymiany" value={transaction.exchange_rate} />
+                <DetailRow
+                  label="Kurs wymiany"
+                  value={transaction.source_currency_code && transaction.destination_currency_code
+                    ? formatExchangeRateLabel(transaction.source_currency_code, transaction.exchange_rate, transaction.destination_currency_code)
+                    : transaction.exchange_rate}
+                />
               )}
             </ScrollView>
           ) : null}
