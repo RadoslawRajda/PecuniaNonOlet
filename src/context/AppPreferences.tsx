@@ -10,6 +10,7 @@ import {setColorScheme, type ColorScheme} from '../views/theme';
 const THEME_KEY = '@app_theme';
 const CURRENCY_KEY = '@app_preferred_currency';
 const LOCATION_CURRENCY_KEY = '@app_location_currency_enabled';
+const LOCATION_CURRENCY_RESULT_KEY = '@app_location_currency_result';
 const COUNTRY_CURRENCIES: Record<string, string> = {
   PL: 'PLN', CZ: 'CZK', GB: 'GBP', US: 'USD',
   AT: 'EUR', BE: 'EUR', CY: 'EUR', DE: 'EUR', EE: 'EUR', ES: 'EUR', FI: 'EUR',
@@ -95,16 +96,30 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
 
   useEffect(() => {
     let active = true;
-    Promise.all([AsyncStorage.getItem(THEME_KEY), AsyncStorage.getItem(CURRENCY_KEY), AsyncStorage.getItem(LOCATION_CURRENCY_KEY)])
-      .then(([savedTheme, savedCurrency, savedLocationCurrency]) => {
+    Promise.all([
+      AsyncStorage.getItem(THEME_KEY),
+      AsyncStorage.getItem(CURRENCY_KEY),
+      AsyncStorage.getItem(LOCATION_CURRENCY_KEY),
+      AsyncStorage.getItem(LOCATION_CURRENCY_RESULT_KEY),
+    ])
+      .then(([savedTheme, savedCurrency, savedLocationCurrency, savedLocationResult]) => {
         if (!active) return;
         const validThemes: ColorScheme[] = ['dark', 'light', 'pink', 'blue', 'blackAndWhite', 'highContrast'];
         const nextTheme: ColorScheme = validThemes.includes(savedTheme as ColorScheme) ? savedTheme as ColorScheme : 'dark';
+        const locationEnabled = savedLocationCurrency === 'true';
+        const validLocationResult = savedLocationResult && Object.values(COUNTRY_CURRENCIES).includes(savedLocationResult)
+          ? savedLocationResult
+          : null;
         setColorScheme(nextTheme);
         setColorSchemeState(nextTheme);
         setPreferredCurrencyState(savedCurrency);
         setManualPreferredCurrency(savedCurrency);
-        setLocationCurrencyEnabledState(savedLocationCurrency === 'true');
+        setLocationCurrencyEnabledState(locationEnabled);
+        setLocationDetectedCurrency(validLocationResult);
+        if (locationEnabled && validLocationResult) {
+          setPreferredCurrencyState(validLocationResult);
+          locationCheckStarted.current = true;
+        }
       })
       .catch(error => console.warn('Unable to load preferences', error))
       .finally(() => { if (active) setPreferencesLoaded(true); });
@@ -126,6 +141,7 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
   const applyLocationCurrency = useCallback((currency: string) => {
     setLocationDetectedCurrency(currency);
     setPreferredCurrencyState(currency);
+    AsyncStorage.setItem(LOCATION_CURRENCY_RESULT_KEY, currency).catch(error => console.warn('Unable to save location currency result', error));
   }, []);
 
   const updateLocationCurrencyEnabled = useCallback((enabled: boolean) => {
@@ -135,6 +151,7 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
       locationCheckStarted.current = false;
       setLocationDetectedCurrency(null);
       setPreferredCurrencyState(manualPreferredCurrency);
+      AsyncStorage.removeItem(LOCATION_CURRENCY_RESULT_KEY).catch(error => console.warn('Unable to clear location currency result', error));
     }
   }, [manualPreferredCurrency]);
 
