@@ -28,7 +28,7 @@ const KEYCHAIN_OPTIONS = {
 };
 
 export function useAppController() {
-  const [screen, setScreen] = useState<ScreenName>('loading');
+  const [storedScreen, setScreen] = useState<ScreenName>('loading');
   const screenHistory = useRef<ScreenName[]>([]);
   const [username, setUsername] = useState<string>('test user');
   const [token, setToken] = useState<string | null>(null);
@@ -39,6 +39,25 @@ export function useAppController() {
   tokenRef.current = token;
   roleRef.current = role;
   const [pendingTransactionId, setPendingTransactionId] = useState<string | null>(null);
+
+  const roleHomeScreen: ScreenName = role === 'analyst' ? 'analytics' : 'dashboard';
+  const allowedScreens: readonly ScreenName[] = role === 'analyst'
+    ? ['home', 'login', 'register', 'analytics', 'analyticsUsers', 'analyticsTransactions', 'analyticsAuditEvents', 'profile']
+    : ['home', 'login', 'register', 'dashboard', 'transactionHistory', 'exchangeRates', 'qrScanner', 'qrHub', 'profile', 'qrGeneration'];
+  const screen = token && role && storedScreen !== 'loading' && !allowedScreens.includes(storedScreen)
+    ? roleHomeScreen
+    : storedScreen;
+
+  useEffect(() => {
+    if (screen !== storedScreen) {
+      screenHistory.current = [];
+      Alert.alert(
+        'Brak dostępu',
+        `${role === 'analyst' ? 'Analityk' : 'Użytkownik'} nie ma uprawnień do wyświetlenia tej strony.`,
+      );
+      setScreen(screen);
+    }
+  }, [screen, storedScreen, role]);
 
   function navigate(nextScreen: ScreenName) {
     if (nextScreen === screen) return;

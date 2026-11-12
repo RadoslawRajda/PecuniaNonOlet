@@ -49,6 +49,12 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
     {screen: 'exchangeRates', label: 'Wymiana', icon: CircleDollarSign, onPress: controller.goExchangeRates},
     {screen: 'qrHub', label: 'QR', icon: QrCode, onPress: controller.goQrHub},
     {screen: 'profile', label: 'Profil', icon: UserRound, onPress: controller.goProfile},
+
+    //For testing access control
+    // {screen: 'analytics', label: 'Przegląd', icon: ChartPie, onPress: controller.goAnalytics},
+    // {screen: 'analyticsUsers', label: 'Użytk.', icon: Users, onPress: controller.goAnalyticsUsers},
+    // {screen: 'analyticsTransactions', label: 'Transakcje', icon: ArrowLeftRight, onPress: controller.goAnalyticsTransactions},
+    // {screen: 'analyticsAuditEvents', label: 'Audyt', icon: ClipboardList, onPress: controller.goAnalyticsAuditEvents},
   ] as const;
   const analystTabs = [
     {screen: 'analytics', label: 'Przegląd', icon: ChartPie, onPress: controller.goAnalytics},
@@ -56,6 +62,12 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
     {screen: 'analyticsTransactions', label: 'Transakcje', icon: ArrowLeftRight, onPress: controller.goAnalyticsTransactions},
     {screen: 'analyticsAuditEvents', label: 'Audyt', icon: ClipboardList, onPress: controller.goAnalyticsAuditEvents},
     {screen: 'profile', label: 'Profil', icon: UserRound, onPress: controller.goProfile},
+
+    //For testing access control
+    // {screen: 'dashboard', label: 'Pulpit', icon: Home, onPress: controller.goDashboard},
+    // {screen: 'transactionHistory', label: 'Historia', icon: History, onPress: controller.goTransactionHistory},
+    // {screen: 'exchangeRates', label: 'Wymiana', icon: CircleDollarSign, onPress: controller.goExchangeRates},
+    // {screen: 'qrHub', label: 'QR', icon: QrCode, onPress: controller.goQrHub},
   ] as const;
   const isAnalyst = controller.role === 'analyst';
   const tabs = isAnalyst ? analystTabs : userTabs;
