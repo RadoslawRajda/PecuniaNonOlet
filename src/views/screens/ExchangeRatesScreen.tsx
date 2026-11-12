@@ -1,15 +1,20 @@
-import React, {useCallback, useEffect, useMemo, useState} from 'react';
-import {ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
+import {ActivityIndicator, Animated, Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {API_URL} from '@env';
+import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 import {WebView} from 'react-native-webview';
+import ChevronDown from 'lucide-react-native/icons/chevron-down';
+import ArrowLeftRight from 'lucide-react-native/icons/arrow-left-right';
+import X from 'lucide-react-native/icons/x';
+import Info from 'lucide-react-native/icons/info';
 
-import {AppButton, BrandLogo, FormInput} from '../components/Ui';
+import {AppButton, FormInput, ScreenHeader} from '../components/Ui';
 import {COLORS, createThemedStyles} from '../theme';
 import type {Account} from '../../types/Account';
-import type {BackScreenProps} from '../../types/BackScreenProps';
 import {TransactionDetails} from './TransactionDetails';
 import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {formatExchangeRate, formatExchangeRateLabel} from '../formatters';
+import {estimateExchangeAmount, parseExchangeAmountMinor} from '../exchange';
 
 type ExchangeRatesProps = {token: string | null; goHome: () => void};
 type ExchangeRate = {currency_code: string; pln_per_unit: string};
@@ -37,12 +42,22 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
   const [amount, setAmount] = useState('');
   const [quote, setQuote] = useState<Quote | null>(null);
   const [transactionId, setTransactionId] = useState<string | null>(null);
-  const [isExchangeMenuVisible, setExchangeMenuVisible] = useState(false);
+  const [picker, setPicker] = useState<'source' | 'destination' | null>(null);
   const [isSourcePageVisible, setSourcePageVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isQuoting, setIsQuoting] = useState(false);
   const [isExchanging, setIsExchanging] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const exchangeInFlight = useRef(false);
+  const idempotencyKey = useRef<string | null>(null);
+  const pickerHeight = Dimensions.get('window').height;
+  const pickerPosition = useRef(new Animated.Value(pickerHeight)).current;
+
+  useEffect(() => {
+    if (picker === null) return;
+    pickerPosition.setValue(pickerHeight);
+    Animated.spring(pickerPosition, {toValue: 0, useNativeDriver: true, speed: 18, bounciness: 2}).start();
+  }, [picker, pickerHeight, pickerPosition]);
 
   const sourceAccount = accounts.find(account => account.id === sourceAccountId) ?? null;
   const destinationAccount = accounts.find(account => account.id === destinationAccountId) ?? null;
@@ -50,19 +65,17 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
   const preferredRateValue = preferredCurrency === 'PLN' ? 1 : Number(preferredRate?.pln_per_unit);
   const ratesInPreferredCurrency = rates.map(rate => {
     const rateInPln = Number(rate.pln_per_unit);
-    return {
-      ...rate,
-      value: Number.isFinite(rateInPln) && Number.isFinite(preferredRateValue) && preferredRateValue > 0
-        ? rateInPln / preferredRateValue
-        : null,
-    };
+    return {...rate, value: Number.isFinite(rateInPln) && Number.isFinite(preferredRateValue) && preferredRateValue > 0 ? rateInPln / preferredRateValue : null};
   });
-  const normalizedAmount = amount.trim().replace(',', '.');
-  const validAmount = /^\d+(\.\d{1,2})?$/.test(normalizedAmount) && Number(normalizedAmount) > 0;
+  const sourceAmountMinor = parseExchangeAmountMinor(amount);
+  const estimatedAmount = sourceAccount && destinationAccount
+    ? estimateExchangeAmount(amount, sourceAccount.currency_code, destinationAccount.currency_code, rates)
+    : null;
+  const canRequestQuote = Boolean(token && sourceAccount && destinationAccount && sourceAccount.id !== destinationAccount.id && sourceAccount.currency_code !== destinationAccount.currency_code && sourceAmountMinor !== null);
 
   const loadData = useCallback(async () => {
     if (!token) {
-      setError('Brak aktywnej sesji. Zaloguj się ponownie.');
+      setError('Brak aktywnej sesji. Zaloguj siÄ™ ponownie.');
       setIsLoading(false);
       goHome();
       return;
@@ -82,26 +95,21 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
       if (handleForbiddenResponse(rateResponse, handleForbidden) ||
           handleForbiddenResponse(accountResponse, handleForbidden)) return;
       if (!rateResponse.ok || !accountResponse.ok) {
-        throw new Error(rateData?.detail || accountData?.detail || 'Nie udało się pobrać kursów lub rachunków.');
+        throw new Error(rateData?.detail || accountData?.detail || 'Nie udaĹ‚o siÄ™ pobraÄ‡ kursĂłw lub rachunkĂłw.');
       }
       const nextAccounts: Account[] = accountData?.accounts ?? [];
       const nextRates: ExchangeRate[] = Array.isArray(rateData?.rates) ? rateData.rates : [];
       setRates(nextRates);
-      if (nextRates.length === 0) {
-        Alert.alert('Brak kursów walut', 'Serwer nie zwrócił aktualnych kursów wymiany. Spróbuj ponownie później.');
-      }
       setProvider(rateData?.provider ?? '');
       setEffectiveDate(rateData?.effective_date ?? '');
       setAccounts(nextAccounts);
       const preferredAccount = nextAccounts.find(account => account.currency_code === preferredCurrency);
       const defaultSource = preferredAccount ?? nextAccounts[0];
       const defaultDestination = nextAccounts.find(account => account.id !== defaultSource?.id);
-      setSourceAccountId(current => current && nextAccounts.some(account => account.id === current)
-        ? current : defaultSource?.id ?? null);
-      setDestinationAccountId(current => current && current !== defaultSource?.id && nextAccounts.some(account => account.id === current)
-        ? current : defaultDestination?.id ?? null);
+      setSourceAccountId(current => current && nextAccounts.some(account => account.id === current) ? current : defaultSource?.id ?? null);
+      setDestinationAccountId(current => current && current !== defaultSource?.id && nextAccounts.some(account => account.id === current) ? current : defaultDestination?.id ?? null);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Nie udało się pobrać danych wymiany.');
+      setError(loadError instanceof Error ? loadError.message : 'Nie udaĹ‚o siÄ™ pobraÄ‡ danych wymiany.');
     } finally {
       setIsLoading(false);
     }
@@ -109,19 +117,15 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const sourceAmountMinor = useMemo(
-    () => Math.round(Number(normalizedAmount) * 100),
-    [normalizedAmount],
-  );
-  const canRequestQuote = Boolean(
-    token && sourceAccount && destinationAccount && sourceAccount.id !== destinationAccount.id &&
-    sourceAccount.currency_code !== destinationAccount.currency_code && validAmount &&
-    sourceAmountMinor > 0 && sourceAmountMinor <= 9_000_000_000_000_000,
-  );
+  const invalidateQuote = () => {
+    setQuote(null);
+    idempotencyKey.current = null;
+    setError(null);
+  };
 
   const requestQuote = async () => {
-    if (!canRequestQuote || !sourceAccount || !destinationAccount || !token) {
-      setError('Wybierz dwa różne rachunki i podaj poprawną kwotę.');
+    if (!canRequestQuote || !sourceAccount || !destinationAccount || !token || sourceAmountMinor === null) {
+      setError('Wybierz dwa rĂłĹĽne rachunki i podaj poprawnÄ… kwotÄ™.');
       return;
     }
     setIsQuoting(true);
@@ -129,217 +133,207 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
     setQuote(null);
     try {
       const response = await fetch(`${apiBaseUrl}/api/exchange/quote`, {
-        method: 'POST',
-        headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          source_account_id: sourceAccount.id,
-          destination_account_id: destinationAccount.id,
-          source_amount_minor: sourceAmountMinor,
-        }),
+        method: 'POST', headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
+        body: JSON.stringify({source_account_id: sourceAccount.id, destination_account_id: destinationAccount.id, source_amount_minor: sourceAmountMinor}),
       });
       if (handleForbiddenResponse(response, handleForbidden)) return;
       const data = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(data?.detail || 'Nie udało się pobrać wyceny.');
-      }
+      if (!response.ok) throw new Error(data?.detail || 'Nie udaĹ‚o siÄ™ pobraÄ‡ wyceny.');
       setQuote(data);
+      idempotencyKey.current = `exchange-${data.quote_id}`;
     } catch (quoteError) {
-      setError(quoteError instanceof Error ? quoteError.message : 'Nie udało się pobrać wyceny.');
+      setError(quoteError instanceof Error ? quoteError.message : 'Nie udaĹ‚o siÄ™ pobraÄ‡ wyceny.');
     } finally {
       setIsQuoting(false);
     }
   };
 
   const executeExchange = async () => {
-    if (!quote || !token) {
-      return;
-    }
+    if (!quote || !token || exchangeInFlight.current) return;
+    exchangeInFlight.current = true;
     setIsExchanging(true);
     setError(null);
     try {
       const response = await fetch(`${apiBaseUrl}/api/exchange`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': `exchange-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        },
+        headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey.current ?? `exchange-${quote.quote_id}`},
         body: JSON.stringify({quote_id: quote.quote_id}),
       });
       if (handleForbiddenResponse(response, handleForbidden)) return;
       const data = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error(data?.detail || 'Nie udało się wymienić środków. Pobierz nową wycenę.');
+        if (response.status === 409) invalidateQuote();
+        throw new Error(data?.detail || 'Nie udaĹ‚o siÄ™ wymieniÄ‡ Ĺ›rodkĂłw. Pobierz nowÄ… wycenÄ™.');
       }
       setQuote(null);
+      idempotencyKey.current = null;
       setAmount('');
       await loadData();
-      setExchangeMenuVisible(false);
       setTransactionId(data.transaction_id);
     } catch (exchangeError) {
-      setError(exchangeError instanceof Error ? exchangeError.message : 'Nie udało się wymienić środków.');
+      setError(exchangeError instanceof Error ? exchangeError.message : 'Nie udaĹ‚o siÄ™ wymieniÄ‡ Ĺ›rodkĂłw.');
     } finally {
+      exchangeInFlight.current = false;
       setIsExchanging(false);
     }
   };
 
-  const chooseAccount = (account: Account, field: 'source' | 'destination') => {
-    setQuote(null);
-    if (field === 'source') {
+  const chooseAccount = (account: Account) => {
+    invalidateQuote();
+    if (picker === 'source') {
       setSourceAccountId(account.id);
-      if (destinationAccountId === account.id) {
-        setDestinationAccountId(accounts.find(item => item.id !== account.id)?.id ?? null);
-      }
+      if (destinationAccountId === account.id) setDestinationAccountId(accounts.find(item => item.id !== account.id)?.id ?? null);
     } else {
       setDestinationAccountId(account.id);
-      if (sourceAccountId === account.id) {
-        setSourceAccountId(accounts.find(item => item.id !== account.id)?.id ?? null);
-      }
+      if (sourceAccountId === account.id) setSourceAccountId(accounts.find(item => item.id !== account.id)?.id ?? null);
     }
+    setPicker(null);
   };
 
   return (
     <>
-      <ScrollView contentContainerStyle={styles.container}>
-        <View style={styles.content}>
-          <BrandLogo />
-          <Text style={styles.title}>Kursy i wymiana walut</Text>
-          {isLoading ? <ActivityIndicator color={COLORS.yellow} /> : null}
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+        <ScreenHeader title="Wymiana" subtitle="Kursy i wymiana walut" />
+        {isLoading ? <ActivityIndicator color={COLORS.yellow} /> : null}
+        {error && !quote ? <Text style={styles.error}>{error}</Text> : null}
 
-          <Text style={styles.sectionTitle}>Aktualne kursy</Text>
-          {provider ? <Text style={styles.muted}>{provider} · tabela z {effectiveDate}</Text> : null}
+        <View style={styles.ratesCard}>
+          <Text style={styles.sectionTitle}>Kursy walut</Text>
+          {provider ? <Text style={styles.muted}>{provider} Â· tabela z {effectiveDate}</Text> : null}
           {ratesInPreferredCurrency.filter(rate => rate.currency_code !== preferredCurrency).map(rate => (
             <View key={rate.currency_code} style={styles.rateRow}>
               <Text style={styles.rateCurrency}>1 {rate.currency_code}</Text>
-              <Text style={styles.rateValue}>
-                {rate.value === null ? '—' : `${rate.value.toFixed(4)} ${preferredCurrency}`}
-              </Text>
+              <Text style={styles.rateValue}>{rate.value === null ? 'â€”' : `${formatExchangeRate(rate.value)} ${preferredCurrency}`}</Text>
             </View>
           ))}
-          <Text style={styles.sectionTitle}>Kursy na stronie NBP</Text>
-          <Text style={styles.muted}>Oficjalna tabela źródłowa używana przez aplikację.</Text>
-          <AppButton title="Otwórz stronę NBP" onPress={() => setSourcePageVisible(true)} secondary />
-          <View style={styles.backButton}>
-            <AppButton title="Wymień waluty" onPress={() => setExchangeMenuVisible(true)} />
-          </View>
-          <View style={styles.backButton}>
-          </View>
+          <Text style={styles.muted}>Przeliczenie orientacyjne. KwotÄ™ rozliczenia wylicza serwer.</Text>
+          <Pressable accessibilityRole="link" onPress={() => setSourcePageVisible(true)} style={styles.sourceInfo}>
+            <Info size={16} color={COLORS.yellow} />
+            <Text style={styles.sourceInfoText}>Kursy oparte na tabeli NBP z {effectiveDate || 'ostatniej aktualizacji'}</Text>
+          </Pressable>
         </View>
+
+        {quote ? (
+          <View style={styles.formCard}>
+            <Text style={styles.sectionTitle}>PotwierdĹş wymianÄ™</Text>
+            <View style={styles.quoteAmount}>
+              <Text style={styles.muted}>Oddasz</Text>
+              <Text style={styles.quoteBig}>{quote.source_amount} {quote.source_currency_code}</Text>
+            </View>
+            <ArrowLeftRight size={21} color={COLORS.yellow} />
+            <View style={styles.quoteAmount}>
+              <Text style={styles.muted}>Otrzymasz</Text>
+              <Text style={styles.quoteBig}>{quote.destination_amount} {quote.destination_currency_code}</Text>
+            </View>
+            <View style={styles.quoteMeta}>
+              <Text style={styles.quoteMetaText}>{formatExchangeRateLabel(quote.source_currency_code, quote.exchange_rate, quote.destination_currency_code)}</Text>
+              <Text style={styles.quoteMetaText}>ĹąrĂłdĹ‚o: {quote.provider} Â· tabela z {quote.effective_date}</Text>
+              <Text style={styles.quoteMetaText}>Wycena waĹĽna do {new Date(quote.expires_at).toLocaleTimeString('pl-PL', {hour: '2-digit', minute: '2-digit'})}</Text>
+            </View>
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+            {isExchanging ? <ActivityIndicator color={COLORS.yellow} /> : <AppButton title="PotwierdĹş wymianÄ™" onPress={executeExchange} />}
+            <AppButton title="WrĂłÄ‡ i zmieĹ„ dane" onPress={invalidateQuote} secondary />
+          </View>
+        ) : (
+          <View style={styles.formCard}>
+            <Text style={styles.sectionTitle}>Przygotuj wymianÄ™</Text>
+            <Text style={styles.label}>Z rachunku</Text>
+            <AccountSelector label="Wybierz rachunek ĹşrĂłdĹ‚owy" account={sourceAccount} onPress={() => setPicker('source')} />
+            <Text style={styles.label}>Na rachunek</Text>
+            <AccountSelector label="Wybierz rachunek docelowy" account={destinationAccount} onPress={() => setPicker('destination')} />
+            <FormInput label={`Kwota${sourceAccount ? ` (${sourceAccount.currency_code})` : ''}`} value={amount} onChangeText={value => {setAmount(value); invalidateQuote();}} keyboardType="decimal-pad" placeholder="0,00" />
+            {sourceAccount && destinationAccount && sourceAmountMinor !== null ? <Text style={styles.preview}>{estimatedAmount
+              ? `Orientacyjnie otrzymasz okoĹ‚o ${estimatedAmount} ${destinationAccount.currency_code}. DokĹ‚adnÄ… kwotÄ™ pokaĹĽe wycena.`
+              : 'Nie udaĹ‚o siÄ™ obliczyÄ‡ orientacyjnej kwoty. Pobierz wycenÄ™, aby zobaczyÄ‡ dokĹ‚adny wynik.'}</Text> : null}
+            {isQuoting ? <ActivityIndicator color={COLORS.yellow} /> : <AppButton title="Pobierz wycenÄ™" onPress={requestQuote} />}
+          </View>
+        )}
       </ScrollView>
-      
-      <Modal
-        visible={isSourcePageVisible}
-        animationType="slide"
-        onRequestClose={() => setSourcePageVisible(false)}>
-        <SafeAreaView style={styles.sourcePage}>
-          <View style={styles.sourcePageHeader}>
-            <Text style={styles.sourcePageTitle}>Kursy walut NBP</Text>
-            <Pressable accessibilityRole="button" onPress={() => setSourcePageVisible(false)}>
-              <Text style={styles.sourcePageClose}>Zamknij</Text>
-            </Pressable>
-          </View>
-          <WebView
-            source={{uri: 'https://nbp.pl/statystyka-i-sprawozdawczosc/kursy/tabela-a/'} }
-            startInLoadingState
-            javaScriptEnabled
-            domStorageEnabled
-            scrollEnabled
-            nestedScrollEnabled
-            style={styles.webView}
-          />
-        </SafeAreaView>
-      </Modal>
-      <Modal
-        visible={isExchangeMenuVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setExchangeMenuVisible(false)}>
+
+      <RatesWebViewModal visible={isSourcePageVisible} onClose={() => setSourcePageVisible(false)} />
+      <Modal visible={picker !== null} transparent animationType="fade" onRequestClose={() => setPicker(null)}>
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.exchangeForm}>
-              <Text style={styles.modalTitle}>Wymień środki</Text>
-              <Text style={styles.label}>Z rachunku</Text>
-              <View style={styles.accountList}>
-                {accounts.map(account => (
-                  <Pressable key={`source-${account.id}`} onPress={() => chooseAccount(account, 'source')}
-                    style={[styles.accountOption, sourceAccountId === account.id && styles.selected]}>
-                    <Text style={styles.accountText}>{account.currency_code} · {account.balance}</Text>
-                  </Pressable>
-                ))}
-              </View>
-              <Text style={styles.label}>Na rachunek</Text>
-              <View style={styles.accountList}>
-                {accounts.filter(account => account.id !== sourceAccountId).map(account => (
-                  <Pressable key={`destination-${account.id}`} onPress={() => chooseAccount(account, 'destination')}
-                    style={[styles.accountOption, destinationAccountId === account.id && styles.selected]}>
-                    <Text style={styles.accountText}>{account.currency_code} · {account.balance}</Text>
-                  </Pressable>
-                ))}
-              </View>
-              <FormInput
-                label={`Kwota${sourceAccount ? ` (${sourceAccount.currency_code})` : ''}`}
-                value={amount}
-                onChangeText={value => { setAmount(value); setQuote(null); }}
-                keyboardType="decimal-pad"
-                placeholder="0.00"
-              />
-              {isQuoting ? <ActivityIndicator color={COLORS.yellow} /> : (
-                <AppButton title="Pobierz wycenę" onPress={requestQuote} />
-              )}
-              {quote ? (
-                <View style={styles.quoteCard}>
-                  <Text style={styles.quoteTitle}>Podsumowanie wymiany</Text>
-                  <Text style={styles.quoteText}>Oddasz: {quote.source_amount} {quote.source_currency_code}</Text>
-                  <Text style={styles.quoteText}>Otrzymasz: {quote.destination_amount} {quote.destination_currency_code}</Text>
-                  <Text style={styles.quoteText}>Kurs: 1 {quote.source_currency_code} = {quote.exchange_rate} {quote.destination_currency_code}</Text>
-                  <Text style={styles.muted}>Wycena wygasa: {new Date(quote.expires_at).toLocaleTimeString('pl-PL')}</Text>
-                  {isExchanging ? <ActivityIndicator color={COLORS.yellow} /> : (
-                    <AppButton title="Potwierdź wymianę" onPress={executeExchange} />
-                  )}
-                </View>
-              ) : null}
-              {error ? <Text style={styles.error}>{error}</Text> : null}
-              <AppButton title="Zamknij" onPress={() => setExchangeMenuVisible(false)} secondary />
+          <Pressable accessibilityRole="button" accessibilityLabel="Zamknij wybĂłr rachunku" onPress={() => setPicker(null)} style={StyleSheet.absoluteFill} />
+          <Animated.View style={[styles.pickerCard, {transform: [{translateY: pickerPosition}]}]}>
+            <Text style={styles.sectionTitle}>{picker === 'source' ? 'Wybierz rachunek ĹşrĂłdĹ‚owy' : 'Wybierz rachunek docelowy'}</Text>
+            <ScrollView>
+              {accounts.filter(account => picker === 'source' || account.id !== sourceAccountId).map(account => (
+                <Pressable key={account.id} accessibilityRole="button" onPress={() => chooseAccount(account)} style={styles.accountOption}>
+                  <Text style={styles.accountText}>{account.currency_code}</Text>
+                  <Text style={styles.muted}>{account.balance}</Text>
+                </Pressable>
+              ))}
             </ScrollView>
-          </View>
+            <AppButton title="Anuluj" onPress={() => setPicker(null)} secondary />
+          </Animated.View>
         </View>
       </Modal>
-      <TransactionDetails
-        transactionId={transactionId}
-        token={token}
-        onClose={() => setTransactionId(null)}
-        goHome={goHome}
-      />
+      <TransactionDetails transactionId={transactionId} token={token} onClose={() => setTransactionId(null)} goHome={goHome} />
     </>
   );
 }
 
+function AccountSelector({label, account, onPress}: {label: string; account: Account | null; onPress: () => void}) {
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={styles.selector}>
+      <View>
+        <Text style={styles.selectorTitle}>{account?.currency_code ?? 'Wybierz rachunek'}</Text>
+        {account ? <Text style={styles.selectorBalance}>Saldo: {account.balance}</Text> : null}
+      </View>
+      <ChevronDown size={20} color={COLORS.muted} />
+    </Pressable>
+  );
+}
+
+function RatesWebViewModal({visible, onClose}: {visible: boolean; onClose: () => void}) {
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaProvider>
+        <SafeAreaView style={styles.sourcePage} edges={['top', 'bottom']}>
+          <View style={styles.sourcePageHeader}>
+            <Text style={styles.sourcePageTitle}>Kursy walut NBP</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Zamknij kursy walut NBP" onPress={onClose} style={styles.sourcePageClose}>
+              <X size={22} color={COLORS.white} />
+              <Text style={styles.sourcePageCloseText}>Zamknij</Text>
+            </Pressable>
+          </View>
+          <WebView source={{uri: 'https://nbp.pl/statystyka-i-sprawozdawczosc/kursy/tabela-a/'}} startInLoadingState javaScriptEnabled domStorageEnabled scrollEnabled nestedScrollEnabled style={styles.webView} />
+        </SafeAreaView>
+      </SafeAreaProvider>
+    </Modal>
+  );
+}
+
 const styles = createThemedStyles(() => StyleSheet.create({
-  container: {flexGrow: 1, paddingHorizontal: 24, paddingVertical: 20},
-  content: {flexGrow: 1, alignItems: 'center', paddingVertical: 35, gap: 12},
-  title: {color: COLORS.yellow, fontSize: 30, fontWeight: '800', textAlign: 'center', marginTop: 24, marginBottom: 12},
-  sectionTitle: {alignSelf: 'stretch', color: COLORS.white, fontSize: 20, fontWeight: '700', marginTop: 18},
-  muted: {alignSelf: 'stretch', color: COLORS.muted, fontSize: 13},
-  rateRow: {alignSelf: 'stretch', backgroundColor: COLORS.surface, borderColor: COLORS.border, borderWidth: 1, borderRadius: 12, padding: 14, flexDirection: 'row', justifyContent: 'space-between'},
-  rateCurrency: {color: COLORS.white, fontSize: 16, fontWeight: '700'},
-  rateValue: {color: COLORS.yellow, fontSize: 16, fontWeight: '700'},
-  label: {alignSelf: 'stretch', color: COLORS.muted, fontSize: 14, fontWeight: '600', marginTop: 6},
-  accountList: {alignSelf: 'stretch', gap: 6},
-  accountOption: {backgroundColor: COLORS.surface, borderColor: COLORS.border, borderWidth: 1, borderRadius: 10, padding: 12},
-  selected: {borderColor: COLORS.yellow},
-  accountText: {color: COLORS.white, fontSize: 15},
-  quoteCard: {alignSelf: 'stretch', backgroundColor: COLORS.surface, borderRadius: 14, padding: 16, gap: 12, marginTop: 8},
-  quoteTitle: {color: COLORS.yellow, fontSize: 18, fontWeight: '700'},
-  quoteText: {color: COLORS.white, fontSize: 15},
-  error: {alignSelf: 'stretch', color: '#FCA5A5', fontSize: 14},
-  backButton: {alignSelf: 'stretch', marginTop: 16},
+  container: {flexGrow: 1, paddingHorizontal: 20, paddingTop: 16, paddingBottom: 28, gap: 16},
+  ratesCard: {backgroundColor: COLORS.surface, borderColor: COLORS.border, borderWidth: 1, borderRadius: 16, padding: 16, gap: 10},
+  sectionHeading: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'},
+  sectionTitle: {color: COLORS.white, fontSize: 20, fontWeight: '800'},
+  sourceInfo: {minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 7, alignSelf: 'flex-start'},
+  sourceInfoText: {color: COLORS.yellow, fontSize: 13, textDecorationLine: 'underline', flexShrink: 1},
+  muted: {color: COLORS.muted, fontSize: 13, lineHeight: 19},
+  rateRow: {borderTopWidth: 1, borderTopColor: COLORS.border, paddingVertical: 9, flexDirection: 'row', justifyContent: 'space-between'},
+  rateCurrency: {color: COLORS.white, fontSize: 15, fontWeight: '700'},
+  rateValue: {color: COLORS.yellow, fontSize: 15, fontWeight: '700'},
+  formCard: {backgroundColor: COLORS.surface, borderColor: COLORS.border, borderWidth: 1, borderRadius: 16, padding: 18, gap: 13},
+  label: {color: COLORS.muted, fontSize: 14, fontWeight: '600'},
+  selector: {minHeight: 60, backgroundColor: COLORS.input, borderColor: COLORS.border, borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'},
+  selectorTitle: {color: COLORS.white, fontSize: 16, fontWeight: '700'},
+  selectorBalance: {color: COLORS.muted, fontSize: 12, marginTop: 3},
+  preview: {color: COLORS.muted, fontSize: 13},
+  quoteAmount: {alignSelf: 'stretch', gap: 4},
+  quoteBig: {color: COLORS.white, fontSize: 25, fontWeight: '800'},
+  quoteMeta: {alignSelf: 'stretch', borderTopWidth: 1, borderTopColor: COLORS.border, paddingTop: 12, gap: 8},
+  quoteMetaText: {color: COLORS.muted, fontSize: 14},
+  error: {color: '#FCA5A5', fontSize: 14, lineHeight: 20},
   sourcePage: {flex: 1, backgroundColor: COLORS.background},
-  sourcePageHeader: {backgroundColor: COLORS.surface, paddingHorizontal: 18, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'},
-  sourcePageTitle: {color: COLORS.white, fontSize: 17, fontWeight: '700'},
-  sourcePageClose: {color: COLORS.yellow, fontSize: 15, fontWeight: '700', padding: 6},
+  sourcePageHeader: {minHeight: 64, backgroundColor: COLORS.surface, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: COLORS.border},
+  sourcePageTitle: {color: COLORS.white, fontSize: 18, fontWeight: '700'},
+  sourcePageClose: {minWidth: 88, minHeight: 44, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4},
+  sourcePageCloseText: {color: COLORS.white, fontSize: 14, fontWeight: '700'},
   webView: {flex: 1, backgroundColor: '#FFFFFF'},
-  modalBackdrop: {flex: 1, justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.7)', padding: 20},
-  modalCard: {maxHeight: '90%', backgroundColor: COLORS.surface, borderColor: COLORS.border, borderWidth: 1, borderRadius: 18, padding: 20},
-  exchangeForm: {gap: 12, paddingBottom: 4},
-  modalTitle: {color: COLORS.white, fontSize: 22, fontWeight: '800', marginBottom: 4},
+  modalBackdrop: {flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.7)', padding: 16, overflow: 'hidden'},
+  pickerCard: {maxHeight: '75%', backgroundColor: COLORS.surface, borderColor: COLORS.border, borderWidth: 1, borderRadius: 18, padding: 20, gap: 14},
+  accountOption: {minHeight: 56, borderBottomWidth: 1, borderBottomColor: COLORS.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'},
+  accountText: {color: COLORS.white, fontSize: 16, fontWeight: '700'},
 }));

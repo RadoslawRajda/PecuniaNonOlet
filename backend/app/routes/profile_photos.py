@@ -12,7 +12,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from PIL import Image, ImageOps, UnidentifiedImageError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
@@ -261,6 +261,28 @@ def get_profile_photo(user: AuthenticatedUser) -> Response:
             "Content-Disposition": "inline; filename=profile.jpg",
         },
     )
+
+
+@router.get("/recipient", response_class=Response)
+def get_recipient_photo(
+    user: AuthenticatedUser,
+    email: str = Query(min_length=3, max_length=254),
+) -> Response:
+    """Return a recipient photo when available; missing users and photos look identical."""
+    with closing(connect_db()) as db:
+        row = db.execute(
+            """SELECT p.storage_key FROM users AS u
+               JOIN profile_photos AS p ON p.user_id = u.id
+               WHERE u.email = ? AND u.id != ?""",
+            (email.strip().lower(), user.id),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Zdjęcie niedostępne.")
+    try:
+        content = photo_path(row["storage_key"]).read_bytes()
+    except FileNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Zdjęcie niedostępne.") from exc
+    return Response(content=content, media_type="image/jpeg", headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @router.delete("", status_code=204, response_class=Response)

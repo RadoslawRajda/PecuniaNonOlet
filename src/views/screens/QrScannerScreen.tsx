@@ -1,6 +1,5 @@
 import React, {useCallback, useEffect, useState} from 'react';
 import {
-  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -8,7 +7,7 @@ import {
   Platform,
 } from 'react-native';
 
-import {AppButton, BrandLogo} from '../components/Ui';
+import {BrandLogo} from '../components/Ui';
 import {COLORS, createThemedStyles} from '../theme';
 import {
   PERMISSIONS,
@@ -24,15 +23,14 @@ import {TransactionCreation} from './TransactionCreation';
 import {TransactionDetails} from './TransactionDetails';
 import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
 
-type QrScannerProps = {token: string | null; goHome: () => void};
+type QrScannerProps = {token: string | null; onTransferCreated: (transactionId?: string) => void};
 
-export function QrScannerScreen({token, goHome}: QrScannerProps) {
+export function QrScannerScreen({token, onTransferCreated}: QrScannerProps) {
   const {handleForbidden} = useAppPreferences();
   const [cameraPermission, setCameraPermission] = useState<string>('pending');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [initialValues, setInitialValues] = useState<TransactionCreationFormValues | null>(null);
   const [isCreationVisible, setCreationVisible] = useState(false);
-  const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [hasProcessedCode, setHasProcessedCode] = useState(false);
   const cameraDevice = useCameraDevice('back');
@@ -160,13 +158,7 @@ export function QrScannerScreen({token, goHome}: QrScannerProps) {
         accounts={accounts}
         initialValues={initialValues}
         onClose={closeCreation}
-        onCreated={transactionId => setSelectedTransactionId(transactionId ?? null)}
-      />
-      <TransactionDetails
-        transactionId={selectedTransactionId}
-        token={token}
-        onClose={() => setSelectedTransactionId(null)}
-        goHome={goHome}
+        onCreated={transactionId => onTransferCreated(transactionId)}
       />
     </ScrollView>
   );

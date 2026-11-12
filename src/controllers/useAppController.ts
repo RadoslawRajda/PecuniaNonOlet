@@ -38,6 +38,7 @@ export function useAppController() {
   const forbiddenAlertPending = useRef(false);
   tokenRef.current = token;
   roleRef.current = role;
+  const [pendingTransactionId, setPendingTransactionId] = useState<string | null>(null);
 
   function navigate(nextScreen: ScreenName) {
     if (nextScreen === screen) return;
@@ -45,17 +46,17 @@ export function useAppController() {
     setScreen(nextScreen);
   }
 
-  function goBack() {
+  const goBack = useCallback(() => {
     const previousScreen = screenHistory.current.pop();
     if (!previousScreen) return false;
     setScreen(previousScreen);
     return true;
-  }
+  }, []);
 
-  function resetToHome() {
+  const resetToHome = useCallback(() => {
     screenHistory.current = [];
     setScreen('home');
-  }
+  }, []);
 
   function resetToDashboard() {
     screenHistory.current = [];
@@ -181,7 +182,7 @@ export function useAppController() {
     }
 
     loadStoredToken();
-  }, []);
+  }, [resetToHome]);
 
   const goHome = resetToHome;
   const goLogin = () => navigate('login');
@@ -193,6 +194,10 @@ export function useAppController() {
   const goQrHub = () => navigate('qrHub');
   const goQrGeneration = () => navigate('qrGeneration');
   const goTransactionHistory = () => navigate('transactionHistory');
+  const openTransactionOnDashboard = (transactionId?: string) => {
+    setPendingTransactionId(transactionId ?? null);
+    resetToDashboard();
+  };
 
   async function submitLogin(data: LoginData) {
     const error = validateLogin(data);
@@ -329,17 +334,6 @@ export function useAppController() {
             'Content-Type': 'application/json',
           },
         });
-        Alert.alert("",
-          "Wylogowano",
-          [
-            {
-              text: 'OK',
-              onPress: async () => {
-                  goHome();
-                }
-            }
-          ]
-        );
       }
     } catch (e) {
       console.error('Błąd podczas wylogowywania:', e);
@@ -351,6 +345,7 @@ export function useAppController() {
       setRole(null);
       await AsyncStorage.removeItem(ROLE_STORAGE_KEY);
       setUsername('test user');
+      resetToHome();
     }
   }
 
@@ -412,6 +407,9 @@ export function useAppController() {
     goQrHub,
     goQrGeneration,
     goTransactionHistory,
+    pendingTransactionId,
+    clearPendingTransaction: () => setPendingTransactionId(null),
+    openTransactionOnDashboard,
     submitLogin,
     submitRegister,
     loginWithPasskey,

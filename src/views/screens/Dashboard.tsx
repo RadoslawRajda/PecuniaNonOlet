@@ -8,9 +8,12 @@ import {
   Text,
   View,
 } from 'react-native';
+import ArrowRightLeft from 'lucide-react-native/icons/arrow-right-left';
+import QrCode from 'lucide-react-native/icons/qr-code';
+import ChevronRight from 'lucide-react-native/icons/chevron-right';
 import {API_URL} from '@env';
 
-import {AppButton, BrandLogo} from '../components/Ui';
+import {AppButton, ScreenHeader} from '../components/Ui';
 import {COLORS, createThemedStyles} from '../theme';
 import {TransactionDetails} from './TransactionDetails';
 import {TransactionCreation} from './TransactionCreation';
@@ -22,7 +25,12 @@ import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPrefe
 export function Dashboard({
   username,
   token,
-  goHome
+  goHome,
+  onExchange,
+  onQr,
+  onHistory,
+  initialTransactionId,
+  onInitialTransactionShown,
 }: DashboardProps) {
   const {preferredCurrency, handleForbidden} = useAppPreferences();
   const [accounts, setAccounts] = React.useState<Account[]>([]);
@@ -33,7 +41,14 @@ export function Dashboard({
   const [isCreationVisible, setCreationVisible] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const previousPreferredCurrency = React.useRef(preferredCurrency);
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
+
+  React.useEffect(() => {
+    if (!initialTransactionId) return;
+    setSelectedTransactionId(initialTransactionId);
+    onInitialTransactionShown?.();
+  }, [initialTransactionId, onInitialTransactionShown]);
 
   const loadDashboardData = React.useCallback(async () => {
     if (!token) {
@@ -80,7 +95,7 @@ export function Dashboard({
     } finally {
       setIsLoading(false);
     }
-  }, [apiBaseUrl, preferredCurrency, token, handleForbidden]);
+  }, [apiBaseUrl, goHome, preferredCurrency, token, handleForbidden]);
 
   React.useEffect(() => {
     loadDashboardData();
@@ -89,6 +104,14 @@ export function Dashboard({
   const selectedAccount = accounts.find(
     account => account.currency_code === selectedCurrency,
   );
+
+  React.useEffect(() => {
+    const preferenceChanged = previousPreferredCurrency.current !== preferredCurrency;
+    previousPreferredCurrency.current = preferredCurrency;
+    if (preferenceChanged && preferredCurrency && accounts.some(account => account.currency_code === preferredCurrency)) {
+      setSelectedCurrency(preferredCurrency);
+    }
+  }, [accounts, preferredCurrency]);
 
   const formatTransactionDate = (date: string) => (
     new Intl.DateTimeFormat('pl-PL', {
@@ -120,102 +143,75 @@ export function Dashboard({
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-        <View style={styles.content}>
-            <BrandLogo />
+      <View style={styles.content}>
+        <ScreenHeader title={`Cześć, ${username}`} subtitle="Twoje finanse w jednym miejscu" />
 
-            <Text style={styles.title}>
-            Dashboard
-            </Text>
-
-            <Text style={styles.subtitle}>
-            Panel użytkownika
-            </Text>
-
-            <Text style={styles.description}>
-            Jesteś Zalogowany jako {username} :D
-            </Text>
-
-            <View style={styles.dataSection}>
-              <Text style={styles.sectionTitle}>Twoje saldo</Text>
-              {isLoading ? (
-                <ActivityIndicator color={COLORS.yellow} />
-              ) : error ? (
-                <View style={styles.messageBox}>
-                  <Text style={styles.errorText}>{error}</Text>
-                  <AppButton title="Spróbuj ponownie" onPress={loadDashboardData} />
-                </View>
-              ) : (
-                <>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Wybierz walutę salda"
-                    onPress={() => setCurrencyPickerVisible(true)}
-                    style={styles.currencySelector}>
-                    <Text style={styles.currencyText}>
-                      {selectedCurrency ?? 'Brak waluty'}
-                    </Text>
-                    <Text style={styles.selectorHint}>Zmień walutę</Text>
-                  </Pressable>
-                  <Text style={styles.balance}>
-                    {selectedAccount?.balance ?? '0.00'} {selectedCurrency ?? ''}
-                  </Text>
-
-                  <Text style={styles.sectionTitle}>Najnowsze transakcje</Text>
-                  <AppButton
-                    title="Utwórz transakcję"
-                    onPress={() => setCreationVisible(true)}
-                  />
-                  {transactions.length === 0 ? (
-                    <Text style={styles.emptyText}>Brak transakcji.</Text>
-                  ) : (
-                    transactions.map(transaction => (
-                      <Pressable
-                        key={transaction.id}
-                        accessibilityRole="button"
-                        accessibilityLabel="Pokaż szczegóły transakcji"
-                        onPress={() => setSelectedTransactionId(transaction.id)}
-                        style={({pressed}) => [
-                          styles.transaction,
-                          pressed && styles.pressed,
-                        ]}>
-                        <View style={styles.transactionDetails}>
-                          <Text style={styles.transactionLabel}>
-                            {transactionLabel(transaction)}
-                          </Text>
-                          <Text style={styles.transactionDate}>
-                            {formatTransactionDate(transaction.created_at)}
-                          </Text>
-                        </View>
-                        <Text
-                          style={[
-                            styles.transactionAmount,
-                            transaction.direction === 'outgoing' && styles.outgoing,
-                          ]}>
-                          {transaction.direction === 'outgoing' ? '-' : '+'}
-                          {transaction.type === 'exchange'
-                            ? transaction.destination_amount
-                            : transaction.amount}{' '}
-                          {transaction.type === 'exchange'
-                            ? transaction.destination_currency_code
-                            : transaction.currency_code}
-                        </Text>
-                      </Pressable>
-                    ))
-                  )}
-                </>
-              )}
+        <View style={styles.balanceCard}>
+          <Text style={styles.balanceCaption}>Dostępne środki</Text>
+          {isLoading ? <ActivityIndicator color={COLORS.yellow} /> : error ? (
+            <View style={styles.messageBox}>
+              <Text style={styles.errorText}>{error}</Text>
+              <AppButton title="Spróbuj ponownie" onPress={loadDashboardData} />
             </View>
-
+          ) : (
+            <>
+              <Pressable accessibilityRole="button" accessibilityLabel="Wybierz walutę salda" onPress={() => setCurrencyPickerVisible(true)} style={styles.currencySelector}>
+                <Text style={styles.currencyText}>{selectedCurrency ?? 'Brak waluty'}</Text>
+                <Text style={styles.selectorHint}>Zmień walutę</Text>
+              </Pressable>
+              <Text style={styles.balance}>{selectedAccount?.balance ?? '0.00'} {selectedCurrency ?? ''}</Text>
+              <Text style={styles.balanceFootnote}>Saldo na wybranym rachunku</Text>
+            </>
+          )}
         </View>
+
+        <View style={styles.sectionHeading}>
+          <Text style={styles.sectionTitle}>Szybkie działania</Text>
+        </View>
+        <Pressable accessibilityRole="button" onPress={() => setCreationVisible(true)} style={({pressed}) => [styles.transferAction, pressed && styles.pressed]}>
+          <ArrowRightLeft size={22} color={COLORS.darkText} strokeWidth={2.5} />
+          <Text style={styles.transferActionText}>Nowy przelew</Text>
+          <ChevronRight size={20} color={COLORS.darkText} />
+        </Pressable>
+        <View style={styles.secondaryActions}>
+          <Pressable accessibilityRole="button" onPress={onExchange} style={({pressed}) => [styles.secondaryAction, pressed && styles.pressed]}>
+            <ArrowRightLeft size={20} color={COLORS.yellow} />
+            <Text style={styles.secondaryActionText}>Wymień</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={onQr} style={({pressed}) => [styles.secondaryAction, pressed && styles.pressed]}>
+            <QrCode size={20} color={COLORS.yellow} />
+            <Text style={styles.secondaryActionText}>Kod QR</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.sectionHeading}>
+          <Text style={styles.sectionTitle}>Ostatnie transakcje</Text>
+          <Pressable accessibilityRole="button" onPress={onHistory} style={styles.historyLink}>
+            <Text style={styles.historyLinkText}>Zobacz wszystkie</Text>
+          </Pressable>
+        </View>
+        {isLoading ? null : transactions.length === 0 ? <Text style={styles.emptyText}>Brak transakcji.</Text> : (
+          transactions.slice(0, 5).map(transaction => (
+            <Pressable key={transaction.id} accessibilityRole="button" accessibilityLabel="Pokaż szczegóły transakcji" onPress={() => setSelectedTransactionId(transaction.id)} style={({pressed}) => [styles.transaction, pressed && styles.pressed]}>
+              <View style={styles.transactionDetails}>
+                <Text style={styles.transactionLabel}>{transactionLabel(transaction)}</Text>
+                <Text style={styles.transactionDate}>{formatTransactionDate(transaction.created_at)}</Text>
+              </View>
+              <Text style={[styles.transactionAmount, transaction.direction === 'outgoing' && styles.outgoing]}>
+                {transaction.direction === 'outgoing' ? '-' : '+'}{transaction.type === 'exchange' ? transaction.destination_amount : transaction.amount}{' '}{transaction.type === 'exchange' ? transaction.destination_currency_code : transaction.currency_code}
+              </Text>
+            </Pressable>
+          ))
+        )}
+      </View>
 
         <Modal
           visible={isCurrencyPickerVisible}
           transparent
           animationType="fade"
           onRequestClose={() => setCurrencyPickerVisible(false)}>
-          <Pressable
-            style={styles.modalBackdrop}
-            onPress={() => setCurrencyPickerVisible(false)}>
+          <View style={styles.modalBackdrop}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Zamknij wybór waluty" onPress={() => setCurrencyPickerVisible(false)} style={StyleSheet.absoluteFill} />
             <View style={styles.modalCard}>
               <Text style={styles.modalTitle}>Wybierz walutę</Text>
               {accounts.map(account => (
@@ -232,7 +228,7 @@ export function Dashboard({
                 </Pressable>
               ))}
             </View>
-          </Pressable>
+          </View>
         </Modal>
         <TransactionDetails
           transactionId={selectedTransactionId}
@@ -256,55 +252,24 @@ export function Dashboard({
 
 const styles = createThemedStyles(() => StyleSheet.create({
   container: {
-    flexGrow: 1,
-    paddingHorizontal: 24,
-    paddingTop: 20,
-    paddingBottom: 28,
+    flexGrow: 1, paddingHorizontal: 20, paddingTop: 16, paddingBottom: 28,
   },
   content: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 35,
+    flexGrow: 1, gap: 14,
   },
-  title: {
-    color: COLORS.yellow,
-    fontSize: 34,
-    fontWeight: '800',
-    textAlign: 'center',
-    marginTop: 30,
-  },
-  subtitle: {
-    color: COLORS.white,
-    fontSize: 20,
-    marginTop: 10,
-  },
-  description: {
-    color: COLORS.muted,
-    fontSize: 15,
-    textAlign: 'center',
-    marginTop: 12,
-  },
-  dataSection: {
-    width: '100%',
-    marginTop: 30,
-    gap: 12,
-  },
-  sectionTitle: {
-    color: COLORS.white,
-    fontSize: 20,
-    fontWeight: '700',
-    marginTop: 12,
-  },
+  balanceCard: {backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, padding: 20, gap: 8},
+  balanceCaption: {color: COLORS.muted, fontSize: 14, fontWeight: '600'},
+  sectionTitle: {color: COLORS.white, fontSize: 19, fontWeight: '800'},
+  sectionHeading: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8},
+  transferAction: {minHeight: 64, backgroundColor: COLORS.yellow, borderRadius: 15, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 12},
+  transferActionText: {flex: 1, color: COLORS.darkText, fontSize: 17, fontWeight: '800'},
+  secondaryActions: {flexDirection: 'row', gap: 12},
+  secondaryAction: {flex: 1, minHeight: 58, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9},
+  secondaryActionText: {color: COLORS.white, fontSize: 15, fontWeight: '700'},
+  historyLink: {minHeight: 44, justifyContent: 'center', paddingHorizontal: 4},
+  historyLinkText: {color: COLORS.yellow, fontSize: 13, fontWeight: '700'},
   currencySelector: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 14,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    alignSelf: 'flex-start', backgroundColor: COLORS.input, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 10,
   },
   currencyText: {
     color: COLORS.yellow,
@@ -319,13 +284,11 @@ const styles = createThemedStyles(() => StyleSheet.create({
     color: COLORS.white,
     fontSize: 30,
     fontWeight: '800',
-    textAlign: 'center',
-    marginBottom: 8,
+    marginTop: 2,
   },
+  balanceFootnote: {color: COLORS.muted, fontSize: 12},
   transaction: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    padding: 14,
+    backgroundColor: COLORS.surface, borderRadius: 12, borderWidth: 1, borderColor: COLORS.border, padding: 14,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',

@@ -12,33 +12,39 @@ import {COLORS, createThemedStyles} from '../theme';
 import type {ButtonProps} from '../../types/ButtonProps';
 import type {FormInputProps} from '../../types/FormInputProps';
 
-export function BrandLogo() {
+export function BrandLogo({size = 82, showProfilePhoto = false}: {size?: number; showProfilePhoto?: boolean}) {
   const {profilePhotoRevision, profilePhotoDataUri, profilePhotoResolved} = useAppPreferences();
   const [photoUnavailable, setPhotoUnavailable] = React.useState(false);
-  const [photoLoaded, setPhotoLoaded] = React.useState(false);
   React.useEffect(() => {
     setPhotoUnavailable(false);
-    setPhotoLoaded(false);
   }, [profilePhotoRevision]);
 
   return (
-    <View style={styles.logo}>
-      {profilePhotoResolved && !profilePhotoDataUri ? <Text style={styles.logoText}>P</Text> : null}
-      {profilePhotoDataUri && !photoUnavailable ? (
+    <View style={[styles.logo, {width: size, height: size, borderRadius: size * 0.27}]}>
+      {(!showProfilePhoto || (profilePhotoResolved && !profilePhotoDataUri)) ? <Text style={[styles.logoText, {fontSize: size * 0.61}]}>P</Text> : null}
+      {showProfilePhoto && profilePhotoDataUri && !photoUnavailable ? (
       <Image
         accessibilityLabel="Zdjęcie profilowe"
         source={{uri: profilePhotoDataUri}}
-        onLoad={() => {
-          console.info('Profile photo loaded');
-          setPhotoLoaded(true);
-        }}
         onError={event => {
           console.error('Profile photo failed to load', event.nativeEvent.error);
           setPhotoUnavailable(true);
         }}
-        style={[styles.logoImage, {opacity: photoLoaded ? 1 : 0}]}
+        style={styles.logoImage}
       />
       ) : null}
+    </View>
+  );
+}
+
+export function ScreenHeader({title, subtitle}: {title: string; subtitle?: string}) {
+  return (
+    <View style={styles.screenHeader}>
+      <View style={styles.screenHeaderText}>
+        <Text style={styles.screenHeaderTitle}>{title}</Text>
+        {subtitle ? <Text style={styles.screenHeaderSubtitle}>{subtitle}</Text> : null}
+      </View>
+      <BrandLogo size={42} />
     </View>
   );
 }
@@ -51,6 +57,7 @@ export function AppButton({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={title}
       onPress={onPress}
       style={({pressed}) => [
         styles.button,
@@ -90,9 +97,8 @@ export function FormInput({
 
 const styles = createThemedStyles(() => StyleSheet.create({
   logo: {
-    width: 82,
-    height: 82,
     borderRadius: 22,
+    overflow: 'hidden',
     backgroundColor: COLORS.yellow,
     justifyContent: 'center',
     alignItems: 'center',
@@ -104,10 +110,11 @@ const styles = createThemedStyles(() => StyleSheet.create({
   },
   logoImage: {
     ...StyleSheet.absoluteFill,
-    width: 82,
-    height: 82,
-    borderRadius: 22,
   },
+  screenHeader: {width: '100%', minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 14},
+  screenHeaderText: {flex: 1, gap: 3},
+  screenHeaderTitle: {color: COLORS.white, fontSize: 26, fontWeight: '800'},
+  screenHeaderSubtitle: {color: COLORS.muted, fontSize: 14},
   button: {
     backgroundColor: COLORS.yellow,
     borderRadius: 12,

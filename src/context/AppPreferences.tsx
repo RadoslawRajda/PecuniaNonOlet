@@ -1,6 +1,6 @@
 import React, {createContext, useCallback, useContext, useEffect, useMemo, useRef, useState} from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {Platform} from 'react-native';
+import {AppState, Linking, Platform} from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
 import {check, PERMISSIONS, request, RESULTS} from 'react-native-permissions';
 import {API_URL} from '@env';
@@ -28,12 +28,16 @@ type Preferences = {
   preferredCurrency: string | null;
   locationCurrencyEnabled: boolean;
   locationDetectedCurrency: string | null;
+  locationPermissionStatus: 'GRANTED' | 'DENIED' | 'BLOCKED' | 'UNAVAILABLE' | 'ERROR' | 'NOT_REQUESTED';
+  locationError: string | null;
   profilePhotoRevision: number;
   profilePhotoDataUri: string | null;
   profilePhotoResolved: boolean;
   setColorScheme: (scheme: ColorScheme) => void;
   setPreferredCurrency: (currency: string) => void;
   setLocationCurrencyEnabled: (enabled: boolean) => void;
+  openLocationSettings: () => Promise<void>;
+  retryLocationCurrency: () => void;
   refreshProfilePhoto: () => void;
   handleForbidden: () => void;
 };
@@ -47,6 +51,9 @@ export function AppPreferencesProvider({token, role, handleForbidden, children}:
   const [manualPreferredCurrency, setManualPreferredCurrency] = useState<string | null>(null);
   const [locationCurrencyEnabled, setLocationCurrencyEnabledState] = useState(false);
   const [locationDetectedCurrency, setLocationDetectedCurrency] = useState<string | null>(null);
+  const [locationPermissionStatus, setLocationPermissionStatus] = useState<Preferences['locationPermissionStatus']>('NOT_REQUESTED');
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [locationAttempt, setLocationAttempt] = useState(0);
   const [profilePhotoRevision, setProfilePhotoRevision] = useState(0);
   const [profilePhoto, setProfilePhoto] = useState<{token: string; dataUri: string} | null>(null);
   const [photoResolvedToken, setPhotoResolvedToken] = useState<string | null>(null);
@@ -155,15 +162,40 @@ export function AppPreferencesProvider({token, role, handleForbidden, children}:
   }, []);
 
   const updateLocationCurrencyEnabled = useCallback((enabled: boolean) => {
+    setLocationError(null);
     setLocationCurrencyEnabledState(enabled);
     AsyncStorage.setItem(LOCATION_CURRENCY_KEY, String(enabled)).catch(error => console.warn('Unable to save location currency preference', error));
     if (!enabled) {
       locationCheckStarted.current = false;
       setLocationDetectedCurrency(null);
+      setLocationPermissionStatus('NOT_REQUESTED');
       setPreferredCurrencyState(manualPreferredCurrency);
       AsyncStorage.removeItem(LOCATION_CURRENCY_RESULT_KEY).catch(error => console.warn('Unable to clear location currency result', error));
     }
   }, [manualPreferredCurrency]);
+
+  const retryLocationCurrency = useCallback(() => {
+    locationCheckStarted.current = false;
+    setLocationAttempt(value => value + 1);
+  }, []);
+
+  const openLocationSettings = useCallback(async () => {
+    try {
+      await Linking.openSettings();
+    } catch (error) {
+      console.warn('Unable to open location settings', error);
+      setLocationError('Nie udało się otworzyć ustawień systemowych. Wybierz walutę ręcznie.');
+    }
+  }, []);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active' && locationCurrencyEnabled && locationPermissionStatus === 'BLOCKED') {
+        retryLocationCurrency();
+      }
+    });
+    return () => subscription.remove();
+  }, [locationCurrencyEnabled, locationPermissionStatus, retryLocationCurrency]);
 
   useEffect(() => {
     if (!preferencesLoaded || !token || !locationCurrencyEnabled || locationCheckStarted.current) return;
@@ -172,39 +204,68 @@ export function AppPreferencesProvider({token, role, handleForbidden, children}:
     const permission = Platform.OS === 'ios' ? PERMISSIONS.IOS.LOCATION_WHEN_IN_USE : PERMISSIONS.ANDROID.ACCESS_COARSE_LOCATION;
     const resolveCurrency = async () => {
       try {
-        const status = await check(permission);
-        const granted = status === RESULTS.GRANTED || (await request(permission)) === RESULTS.GRANTED;
-        if (!granted) {
+        let status = await check(permission);
+        if (status === RESULTS.DENIED) {
+          status = await request(permission);
+        }
+        if (status === RESULTS.BLOCKED) {
           if (!active) return;
-          locationCheckStarted.current = false;
-          setLocationCurrencyEnabledState(false);
+          setLocationPermissionStatus('BLOCKED');
           setLocationDetectedCurrency(null);
           setPreferredCurrencyState(manualPreferredCurrency);
-          AsyncStorage.setItem(LOCATION_CURRENCY_KEY, 'false')
-            .catch(error => console.warn('Unable to disable location currency preference', error));
-          AsyncStorage.removeItem(LOCATION_CURRENCY_RESULT_KEY)
-            .catch(error => console.warn('Unable to clear location currency result', error));
-          Alert.alert('Błąd', 'Odmowa dostępu do lokalizacji. Proszę wybrać preferowaną walutę ręcznie.');
+          setLocationError('Dostęp do lokalizacji jest zablokowany w ustawieniach systemu. Możesz go tam włączyć albo wybrać walutę ręcznie.');
           return;
         }
+        if (status === RESULTS.UNAVAILABLE) {
+          if (!active) return;
+          setLocationPermissionStatus('UNAVAILABLE');
+          setLocationDetectedCurrency(null);
+          setPreferredCurrencyState(manualPreferredCurrency);
+          setLocationError('Lokalizacja jest niedostępna na tym urządzeniu. Wybierz walutę ręcznie.');
+          return;
+        }
+        if (status !== RESULTS.GRANTED) {
+          if (!active) return;
+          locationCheckStarted.current = false;
+          setLocationPermissionStatus('DENIED');
+          setLocationError('Nie przyznano dostępu do lokalizacji. Możesz wybrać walutę ręcznie.');
+          setLocationDetectedCurrency(null);
+          setLocationCurrencyEnabledState(false);
+          setPreferredCurrencyState(manualPreferredCurrency);
+          AsyncStorage.setItem(LOCATION_CURRENCY_KEY, 'false').catch(error => console.warn('Unable to disable location currency preference', error));
+          AsyncStorage.removeItem(LOCATION_CURRENCY_RESULT_KEY).catch(error => console.warn('Unable to clear location currency result', error));
+          return;
+        }
+        if (active) setLocationPermissionStatus('GRANTED');
         const position = await new Promise<{coords: {latitude: number; longitude: number}}>((resolve, reject) => {
           Geolocation.getCurrentPosition(resolve, reject, {enableHighAccuracy: false, timeout: 15000, maximumAge: 60000});
         });
         const {latitude, longitude} = position.coords;
         const url = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=pl`;
         const response = await fetch(url);
-        if (!response.ok) return;
+        if (!response.ok) throw new Error('Serwis lokalizacji nie odpowiedział poprawnie.');
         const data = await response.json();
         const countryCode = String(data?.countryCode ?? '').toUpperCase();
         const currency = COUNTRY_CURRENCIES[countryCode];
-        if (active && currency) applyLocationCurrency(currency);
+        if (active && currency) {
+          applyLocationCurrency(currency);
+          setLocationError(null);
+        } else if (active) {
+          setLocationError('Nie udało się ustalić waluty dla tej lokalizacji. Wybierz ją ręcznie.');
+        }
       } catch (error) {
         console.warn('Unable to determine location-based currency', error);
+        if (active) {
+          setLocationPermissionStatus('ERROR');
+          setLocationDetectedCurrency(null);
+          setPreferredCurrencyState(manualPreferredCurrency);
+          setLocationError('Nie udało się ustalić waluty na podstawie lokalizacji. Wybierz ją ręcznie lub spróbuj ponownie.');
+        }
       }
     };
-    void resolveCurrency();
+    resolveCurrency();
     return () => { active = false; };
-  }, [preferencesLoaded, token, locationCurrencyEnabled, manualPreferredCurrency, applyLocationCurrency]);
+  }, [preferencesLoaded, token, locationCurrencyEnabled, manualPreferredCurrency, applyLocationCurrency, locationAttempt]);
 
   const refreshProfilePhoto = useCallback(() => setProfilePhotoRevision(current => current + 1), []);
   const value = useMemo(() => ({
@@ -214,15 +275,19 @@ export function AppPreferencesProvider({token, role, handleForbidden, children}:
     preferredCurrency,
     locationCurrencyEnabled,
     locationDetectedCurrency,
+    locationPermissionStatus,
+    locationError,
     profilePhotoRevision,
     profilePhotoDataUri: token && role === 'user' && profilePhoto?.token === token ? profilePhoto.dataUri : null,
     profilePhotoResolved: !token || role === 'analyst' || photoResolvedToken === token,
     setColorScheme: updateColorScheme,
     setPreferredCurrency: updatePreferredCurrency,
     setLocationCurrencyEnabled: updateLocationCurrencyEnabled,
+    openLocationSettings,
+    retryLocationCurrency,
     refreshProfilePhoto,
     handleForbidden,
-  }), [token, role, colorScheme, preferencesLoaded, preferredCurrency, locationCurrencyEnabled, locationDetectedCurrency, profilePhotoRevision, profilePhoto, photoResolvedToken, updateColorScheme, updatePreferredCurrency, updateLocationCurrencyEnabled, refreshProfilePhoto, handleForbidden]);
+  }), [token, role, colorScheme, preferencesLoaded, preferredCurrency, locationCurrencyEnabled, locationDetectedCurrency, locationPermissionStatus, locationError, profilePhotoRevision, profilePhoto, photoResolvedToken, updateColorScheme, updatePreferredCurrency, updateLocationCurrencyEnabled, openLocationSettings, retryLocationCurrency, refreshProfilePhoto, handleForbidden]);
 
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
 }

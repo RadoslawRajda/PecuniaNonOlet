@@ -7,7 +7,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.authorization import require_roles
 from app.database import connect_db
@@ -18,6 +18,7 @@ from app.schemas import (
     TransactionPage,
     User,
 )
+from app.routes.profile_photos import photo_path
 
 router = APIRouter(prefix="/api")
 AuthenticatedUser = Annotated[User, Depends(require_roles("user"))]
@@ -158,4 +159,37 @@ def get_transaction(
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Nie znaleziono transakcji.")
     return transaction_view(row, user.id)
+
+
+@router.get("/transactions/{transaction_id}/counterparty-photo", response_class=Response)
+def get_transaction_counterparty_photo(
+    transaction_id: str,
+    user: AuthenticatedUser,
+) -> Response:
+    """Return the other participant's photo only to a participant in this transaction."""
+    with closing(connect_db()) as db:
+        transaction = db.execute(
+            """SELECT sender_user_id, recipient_user_id FROM transactions
+               WHERE id = ? AND (sender_user_id = ? OR recipient_user_id = ?)""",
+            (transaction_id, user.id, user.id),
+        ).fetchone()
+        if transaction is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Nie znaleziono transakcji.")
+        counterparty_id = (
+            transaction["recipient_user_id"]
+            if transaction["sender_user_id"] == user.id
+            else transaction["sender_user_id"]
+        )
+        if counterparty_id is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Brak zdjęcia kontrahenta.")
+        photo = db.execute(
+            "SELECT storage_key FROM profile_photos WHERE user_id = ?", (counterparty_id,)
+        ).fetchone()
+    if photo is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Brak zdjęcia kontrahenta.")
+    try:
+        content = photo_path(photo["storage_key"]).read_bytes()
+    except FileNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Nie znaleziono zdjęcia kontrahenta.") from exc
+    return Response(content=content, media_type="image/jpeg", headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
