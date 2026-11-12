@@ -75,7 +75,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
 
   const loadData = useCallback(async () => {
     if (!token) {
-      setError('Brak aktywnej sesji. Zaloguj siÄ™ ponownie.');
+      setError('Brak aktywnej sesji. Zaloguj się ponownie.');
       setIsLoading(false);
       goHome();
       return;
@@ -95,7 +95,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
       if (handleForbiddenResponse(rateResponse, handleForbidden) ||
           handleForbiddenResponse(accountResponse, handleForbidden)) return;
       if (!rateResponse.ok || !accountResponse.ok) {
-        throw new Error(rateData?.detail || accountData?.detail || 'Nie udaĹ‚o siÄ™ pobraÄ‡ kursĂłw lub rachunkĂłw.');
+        throw new Error(rateData?.detail || accountData?.detail || 'Nie udało się pobrać kursów lub rachunków.');
       }
       const nextAccounts: Account[] = accountData?.accounts ?? [];
       const nextRates: ExchangeRate[] = Array.isArray(rateData?.rates) ? rateData.rates : [];
@@ -109,7 +109,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
       setSourceAccountId(current => current && nextAccounts.some(account => account.id === current) ? current : defaultSource?.id ?? null);
       setDestinationAccountId(current => current && current !== defaultSource?.id && nextAccounts.some(account => account.id === current) ? current : defaultDestination?.id ?? null);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Nie udaĹ‚o siÄ™ pobraÄ‡ danych wymiany.');
+      setError(loadError instanceof Error ? loadError.message : 'Nie udało się pobrać danych wymiany.');
     } finally {
       setIsLoading(false);
     }
@@ -125,7 +125,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
 
   const requestQuote = async () => {
     if (!canRequestQuote || !sourceAccount || !destinationAccount || !token || sourceAmountMinor === null) {
-      setError('Wybierz dwa rĂłĹĽne rachunki i podaj poprawnÄ… kwotÄ™.');
+      setError('Wybierz dwa różne rachunki i podaj poprawną kwotę.');
       return;
     }
     setIsQuoting(true);
@@ -138,11 +138,11 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
       });
       if (handleForbiddenResponse(response, handleForbidden)) return;
       const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.detail || 'Nie udaĹ‚o siÄ™ pobraÄ‡ wyceny.');
+      if (!response.ok) throw new Error(data?.detail || 'Nie udało się pobrać wyceny.');
       setQuote(data);
       idempotencyKey.current = `exchange-${data.quote_id}`;
     } catch (quoteError) {
-      setError(quoteError instanceof Error ? quoteError.message : 'Nie udaĹ‚o siÄ™ pobraÄ‡ wyceny.');
+      setError(quoteError instanceof Error ? quoteError.message : 'Nie udało się pobrać wyceny.');
     } finally {
       setIsQuoting(false);
     }
@@ -163,7 +163,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
       const data = await response.json().catch(() => null);
       if (!response.ok) {
         if (response.status === 409) invalidateQuote();
-        throw new Error(data?.detail || 'Nie udaĹ‚o siÄ™ wymieniÄ‡ Ĺ›rodkĂłw. Pobierz nowÄ… wycenÄ™.');
+        throw new Error(data?.detail || 'Nie udało się wymienić środków. Pobierz nową wycenę.');
       }
       setQuote(null);
       idempotencyKey.current = null;
@@ -171,7 +171,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
       await loadData();
       setTransactionId(data.transaction_id);
     } catch (exchangeError) {
-      setError(exchangeError instanceof Error ? exchangeError.message : 'Nie udaĹ‚o siÄ™ wymieniÄ‡ Ĺ›rodkĂłw.');
+      setError(exchangeError instanceof Error ? exchangeError.message : 'Nie udało się wymienić środków.');
     } finally {
       exchangeInFlight.current = false;
       setIsExchanging(false);
@@ -199,14 +199,14 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
 
         <View style={styles.ratesCard}>
           <Text style={styles.sectionTitle}>Kursy walut</Text>
-          {provider ? <Text style={styles.muted}>{provider} Â· tabela z {effectiveDate}</Text> : null}
+          {provider ? <Text style={styles.muted}>{provider} · tabela z {effectiveDate}</Text> : null}
           {ratesInPreferredCurrency.filter(rate => rate.currency_code !== preferredCurrency).map(rate => (
             <View key={rate.currency_code} style={styles.rateRow}>
               <Text style={styles.rateCurrency}>1 {rate.currency_code}</Text>
-              <Text style={styles.rateValue}>{rate.value === null ? 'â€”' : `${formatExchangeRate(rate.value)} ${preferredCurrency}`}</Text>
+              <Text style={styles.rateValue}>{rate.value === null ? '—' : `${formatExchangeRate(rate.value)} ${preferredCurrency}`}</Text>
             </View>
           ))}
-          <Text style={styles.muted}>Przeliczenie orientacyjne. KwotÄ™ rozliczenia wylicza serwer.</Text>
+          <Text style={styles.muted}>Przeliczenie orientacyjne. Kwotę rozliczenia wylicza serwer.</Text>
           <Pressable accessibilityRole="link" onPress={() => setSourcePageVisible(true)} style={styles.sourceInfo}>
             <Info size={16} color={COLORS.yellow} />
             <Text style={styles.sourceInfoText}>Kursy oparte na tabeli NBP z {effectiveDate || 'ostatniej aktualizacji'}</Text>
@@ -215,7 +215,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
 
         {quote ? (
           <View style={styles.formCard}>
-            <Text style={styles.sectionTitle}>PotwierdĹş wymianÄ™</Text>
+            <Text style={styles.sectionTitle}>Potwierdź wymianę</Text>
             <View style={styles.quoteAmount}>
               <Text style={styles.muted}>Oddasz</Text>
               <Text style={styles.quoteBig}>{quote.source_amount} {quote.source_currency_code}</Text>
@@ -227,25 +227,25 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
             </View>
             <View style={styles.quoteMeta}>
               <Text style={styles.quoteMetaText}>{formatExchangeRateLabel(quote.source_currency_code, quote.exchange_rate, quote.destination_currency_code)}</Text>
-              <Text style={styles.quoteMetaText}>ĹąrĂłdĹ‚o: {quote.provider} Â· tabela z {quote.effective_date}</Text>
-              <Text style={styles.quoteMetaText}>Wycena waĹĽna do {new Date(quote.expires_at).toLocaleTimeString('pl-PL', {hour: '2-digit', minute: '2-digit'})}</Text>
+              <Text style={styles.quoteMetaText}>Źródło: {quote.provider} · tabela z {quote.effective_date}</Text>
+              <Text style={styles.quoteMetaText}>Wycena ważna do {new Date(quote.expires_at).toLocaleTimeString('pl-PL', {hour: '2-digit', minute: '2-digit'})}</Text>
             </View>
             {error ? <Text style={styles.error}>{error}</Text> : null}
-            {isExchanging ? <ActivityIndicator color={COLORS.yellow} /> : <AppButton title="PotwierdĹş wymianÄ™" onPress={executeExchange} />}
-            <AppButton title="WrĂłÄ‡ i zmieĹ„ dane" onPress={invalidateQuote} secondary />
+            {isExchanging ? <ActivityIndicator color={COLORS.yellow} /> : <AppButton title="Potwierdź wymianę" onPress={executeExchange} />}
+            <AppButton title="Wróć i zmień dane" onPress={invalidateQuote} secondary />
           </View>
         ) : (
           <View style={styles.formCard}>
-            <Text style={styles.sectionTitle}>Przygotuj wymianÄ™</Text>
+            <Text style={styles.sectionTitle}>Przygotuj wymianę</Text>
             <Text style={styles.label}>Z rachunku</Text>
-            <AccountSelector label="Wybierz rachunek ĹşrĂłdĹ‚owy" account={sourceAccount} onPress={() => setPicker('source')} />
+            <AccountSelector label="Wybierz rachunek źródłowy" account={sourceAccount} onPress={() => setPicker('source')} />
             <Text style={styles.label}>Na rachunek</Text>
             <AccountSelector label="Wybierz rachunek docelowy" account={destinationAccount} onPress={() => setPicker('destination')} />
             <FormInput label={`Kwota${sourceAccount ? ` (${sourceAccount.currency_code})` : ''}`} value={amount} onChangeText={value => {setAmount(value); invalidateQuote();}} keyboardType="decimal-pad" placeholder="0,00" />
             {sourceAccount && destinationAccount && sourceAmountMinor !== null ? <Text style={styles.preview}>{estimatedAmount
-              ? `Orientacyjnie otrzymasz okoĹ‚o ${estimatedAmount} ${destinationAccount.currency_code}. DokĹ‚adnÄ… kwotÄ™ pokaĹĽe wycena.`
-              : 'Nie udaĹ‚o siÄ™ obliczyÄ‡ orientacyjnej kwoty. Pobierz wycenÄ™, aby zobaczyÄ‡ dokĹ‚adny wynik.'}</Text> : null}
-            {isQuoting ? <ActivityIndicator color={COLORS.yellow} /> : <AppButton title="Pobierz wycenÄ™" onPress={requestQuote} />}
+              ? `Orientacyjnie otrzymasz około ${estimatedAmount} ${destinationAccount.currency_code}. Dokładną kwotę pokaże wycena.`
+              : 'Nie udało się obliczyć orientacyjnej kwoty. Pobierz wycenę, aby zobaczyć dokładny wynik.'}</Text> : null}
+            {isQuoting ? <ActivityIndicator color={COLORS.yellow} /> : <AppButton title="Pobierz wycenę" onPress={requestQuote} />}
           </View>
         )}
       </ScrollView>
@@ -253,9 +253,9 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
       <RatesWebViewModal visible={isSourcePageVisible} onClose={() => setSourcePageVisible(false)} />
       <Modal visible={picker !== null} transparent animationType="fade" onRequestClose={() => setPicker(null)}>
         <View style={styles.modalBackdrop}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Zamknij wybĂłr rachunku" onPress={() => setPicker(null)} style={StyleSheet.absoluteFill} />
+          <Pressable accessibilityRole="button" accessibilityLabel="Zamknij wybór rachunku" onPress={() => setPicker(null)} style={StyleSheet.absoluteFill} />
           <Animated.View style={[styles.pickerCard, {transform: [{translateY: pickerPosition}]}]}>
-            <Text style={styles.sectionTitle}>{picker === 'source' ? 'Wybierz rachunek ĹşrĂłdĹ‚owy' : 'Wybierz rachunek docelowy'}</Text>
+            <Text style={styles.sectionTitle}>{picker === 'source' ? 'Wybierz rachunek źródłowy' : 'Wybierz rachunek docelowy'}</Text>
             <ScrollView>
               {accounts.filter(account => picker === 'source' || account.id !== sourceAccountId).map(account => (
                 <Pressable key={account.id} accessibilityRole="button" onPress={() => chooseAccount(account)} style={styles.accountOption}>
