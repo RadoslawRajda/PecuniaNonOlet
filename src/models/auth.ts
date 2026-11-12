@@ -7,6 +7,8 @@ export type ScreenName =
   | 'exchangeRates'
   | 'profile'
   | 'qrScanner'
+  | 'qrHub'
+  | 'qrGeneration'
   | 'transactionHistory';
 
 export type LoginData = {

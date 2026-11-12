@@ -7,7 +7,7 @@ import {
 } from 'react-native';
 
 import {BrandLogo} from '../components/Ui';
-import {COLORS} from '../theme';
+import {COLORS, createThemedStyles} from '../theme';
 
 export function Loading() {
   return (
@@ -23,7 +23,7 @@ export function Loading() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyles(() => StyleSheet.create({
   container: {
     flexGrow: 1,
     paddingHorizontal: 24,
@@ -42,4 +42,4 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 30,
   },
-});
+}));

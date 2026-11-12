@@ -1,5 +1,10 @@
 import React from 'react';
-import {StatusBar, StyleSheet} from 'react-native';
+import {BackHandler, Pressable, StatusBar, StyleSheet, Text, View} from 'react-native';
+import Home from 'lucide-react-native/icons/house';
+import History from 'lucide-react-native/icons/rotate-ccw-clock';
+import CircleDollarSign from 'lucide-react-native/icons/circle-dollar-sign';
+import QrCode from 'lucide-react-native/icons/qr-code';
+import UserRound from 'lucide-react-native/icons/user-round';
 import {
   SafeAreaProvider,
   SafeAreaView,
@@ -14,24 +19,43 @@ import {Dashboard} from './src/views/screens/Dashboard';
 import {ExchangeRatesScreen} from './src/views/screens/ExchangeRatesScreen';
 import {ProfileScreen} from './src/views/screens/ProfileScreen';
 import {QrScannerScreen} from './src/views/screens/QrScannerScreen';
+import {QrGenerationScreen} from './src/views/screens/QrGenerationScreen';
 import {TransactionHistoryScreen} from './src/views/screens/TransactionHistoryScreen';
 import {Loading} from './src/views/screens/Loading';
+import {QrHubScreen} from './src/views/screens/QrHubScreen';
 
-import {COLORS} from './src/views/theme';
+import {COLORS, createThemedStyles} from './src/views/theme';
+import {AppPreferencesProvider, useAppPreferences} from './src/context/AppPreferences';
 
-function App() {
-  const controller = useAppController();
+function AppScreens({controller}: {controller: ReturnType<typeof useAppController>}) {
+  const {colorScheme, preferencesLoaded} = useAppPreferences();
+  const goBack = controller.goBack;
+  React.useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', goBack);
+    return () => subscription.remove();
+  }, [goBack]);
+  if (!preferencesLoaded) return null;
+  const tabs = [
+    {screen: 'dashboard', label: 'Pulpit', icon: Home, onPress: controller.goDashboard},
+    {screen: 'transactionHistory', label: 'Historia', icon: History, onPress: controller.goTransactionHistory},
+    {screen: 'exchangeRates', label: 'Wymiana', icon: CircleDollarSign, onPress: controller.goExchangeRates},
+    {screen: 'qrHub', label: 'QR', icon: QrCode, onPress: controller.goQrHub},
+    {screen: 'profile', label: 'Profil', icon: UserRound, onPress: controller.goProfile},
+  ] as const;
+  const showNavigation = ['dashboard', 'transactionHistory', 'exchangeRates', 'qrScanner', 'qrHub', 'profile', 'qrGeneration'].includes(controller.screen);
 
   return (
     <SafeAreaProvider>
       <StatusBar
-        barStyle="light-content"
+        barStyle={colorScheme === 'light' ? 'dark-content' : 'light-content'}
         backgroundColor={COLORS.background}
       />
 
       <SafeAreaView
-        style={styles.container}
+        style={[styles.container, {backgroundColor: COLORS.background}]}
         edges={['top', 'bottom']}>
+
+        <View style={styles.screenContent}>
 
         {controller.screen === 'loading' && <Loading/>}
 
@@ -61,49 +85,96 @@ function App() {
 
         {controller.screen === 'dashboard' && (
           <Dashboard
-            onLogout={controller.logout}
             username={controller.username}
             token={controller.token}
-            onExchangeRates={controller.goExchangeRates}
-            onProfile={controller.goProfile}
-            onQrScanner={controller.goQrScanner}
-            onTransactionHistory={controller.goTransactionHistory}
+            initialTransactionId={controller.pendingTransactionId}
+            onInitialTransactionShown={controller.clearPendingTransaction}
             goHome={controller.goHome}
+            onExchange={controller.goExchangeRates}
+            onQr={controller.goQrHub}
+            onHistory={controller.goTransactionHistory}
           />
         )}
 
         {controller.screen === 'exchangeRates' && (
-          <ExchangeRatesScreen onBack={controller.goDashboard} />
+          <ExchangeRatesScreen
+            token={controller.token}
+            goHome={controller.goHome}
+          />
         )}
 
         {controller.screen === 'profile' && (
           <ProfileScreen
-            onBack={controller.goDashboard}
+            username={controller.username}
+            onLogout={controller.logout}
           />
         )}
 
         {controller.screen === 'qrScanner' && (
-          <QrScannerScreen onBack={controller.goDashboard} />
+          <QrScannerScreen
+            token={controller.token}
+            onTransferCreated={controller.openTransactionOnDashboard}
+          />
+        )}
+
+        {controller.screen === 'qrHub' && (
+          <QrHubScreen onScan={controller.goQrScanner} onCreate={controller.goQrGeneration} />
+        )}
+
+        {controller.screen === 'qrGeneration' && (
+          <QrGenerationScreen
+            username={controller.username}
+            token={controller.token}
+          />
         )}
 
         {controller.screen === 'transactionHistory' && (
           <TransactionHistoryScreen
             token={controller.token}
-            onBack={controller.goDashboard}
             goHome={controller.goHome}
           />
         )}
 
+        </View>
+        {showNavigation && controller.token ? (
+          <View style={styles.navbar}>
+            {tabs.map(tab => {
+              const active = controller.screen === tab.screen || (controller.screen === 'qrGeneration' && tab.screen === 'profile');
+              const Icon = tab.icon;
+              return (
+                <Pressable key={tab.screen} accessibilityRole="button" accessibilityState={{selected: active}} accessibilityLabel={tab.label} onPress={tab.onPress} style={styles.navItem}>
+                  <Icon size={21} color={active ? COLORS.yellow : COLORS.muted} strokeWidth={2.2} />
+                  <Text numberOfLines={1} style={[styles.navLabel, active && styles.navActive]}>{tab.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
       </SafeAreaView>
     </SafeAreaProvider>
   );
 }
 
-const styles = StyleSheet.create({
+function App() {
+  const controller = useAppController();
+  return (
+    <AppPreferencesProvider token={controller.token}>
+      <AppScreens controller={controller} />
+    </AppPreferencesProvider>
+  );
+}
+
+const styles = createThemedStyles(() => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
   },
-});
+  screenContent: {flex: 1},
+  navbar: {minHeight: 64, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', backgroundColor: COLORS.surface, borderTopWidth: 1, borderTopColor: COLORS.border, paddingHorizontal: 4},
+  navItem: {flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 60, gap: 3},
+  navIcon: {color: COLORS.muted, fontSize: 21, fontWeight: '700'},
+  navLabel: {color: COLORS.muted, fontSize: 10, fontWeight: '600'},
+  navActive: {color: COLORS.yellow},
+}));
 
 export default App;

@@ -1,7 +1,10 @@
 import React from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Dimensions,
   Modal,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,7 +14,9 @@ import {API_URL} from '@env';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 
 import {AppButton} from '../components/Ui';
-import {COLORS} from '../theme';
+import {CounterpartyAvatar} from '../components/CounterpartyAvatar';
+import {COLORS, createThemedStyles} from '../theme';
+import {formatExchangeRateLabel} from '../formatters';
 import type {TransactionDetailsData} from '../../types/TransactionDetailsData';
 import type {TransactionDetailsProps} from '../../types/TransactionDetailsProps';
 
@@ -22,6 +27,14 @@ export function TransactionDetails({transactionId, token, onClose, goHome}: Tran
   const [error, setError] = React.useState<string | null>(null);
   const insets = useSafeAreaInsets();
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
+  const sheetHeight = Dimensions.get('window').height;
+  const sheetPosition = React.useRef(new Animated.Value(sheetHeight)).current;
+
+  React.useEffect(() => {
+    if (!transactionId) return;
+    sheetPosition.setValue(sheetHeight);
+    Animated.spring(sheetPosition, {toValue: 0, useNativeDriver: true, speed: 18, bounciness: 2}).start();
+  }, [sheetHeight, sheetPosition, transactionId]);
 
   React.useEffect(() => {
     if (!transactionId) {
@@ -74,7 +87,7 @@ export function TransactionDetails({transactionId, token, onClose, goHome}: Tran
     return () => {
       isCurrent = false;
     };
-  }, [apiBaseUrl, token, transactionId]);
+  }, [apiBaseUrl, goHome, token, transactionId]);
 
   const formatDate = (date: string) => (
     new Intl.DateTimeFormat('pl-PL', {
@@ -87,13 +100,15 @@ export function TransactionDetails({transactionId, token, onClose, goHome}: Tran
     <Modal
       visible={transactionId !== null}
       transparent
-      animationType="slide"
+      animationType="fade"
       onRequestClose={onClose}>
       <View style={styles.backdrop}>
-        <View
+        <Pressable accessibilityRole="button" accessibilityLabel="Zamknij szczegóły" onPress={onClose} style={StyleSheet.absoluteFill} />
+        <Animated.View
           style={[
             styles.card,
             {paddingBottom: Math.max(24, insets.bottom + 16)},
+            {transform: [{translateY: sheetPosition}]},
           ]}>
           <Text style={styles.title}>Szczegóły transakcji</Text>
 
@@ -103,17 +118,25 @@ export function TransactionDetails({transactionId, token, onClose, goHome}: Tran
             <Text style={styles.errorText}>{error}</Text>
           ) : transaction ? (
             <ScrollView contentContainerStyle={styles.details}>
+              {transaction.counterparty_email ? <View style={styles.counterparty}>
+                <CounterpartyAvatar transactionId={transaction.id} token={token} />
+                <View style={styles.counterpartyText}>
+                  <Text style={styles.label}>{transaction.direction === 'incoming' ? 'Nadawca' : 'Odbiorca'}</Text>
+                  <Text style={styles.value}>{transaction.counterparty_email}</Text>
+                </View>
+              </View> : null}
               <Text style={styles.amount}>
                 {transaction.direction === 'outgoing' ? '-' : '+'}
-                {transaction.amount} {transaction.currency_code}
+                {transaction.type === 'exchange'
+                  ? transaction.destination_amount
+                  : transaction.amount}{' '}
+                {transaction.type === 'exchange'
+                  ? transaction.destination_currency_code
+                  : transaction.currency_code}
               </Text>
-              <DetailRow label="Typ" value={transaction.type} />
-              <DetailRow label="Status" value={transaction.status} />
-              <DetailRow label="Kierunek" value={transaction.direction} />
-              <DetailRow
-                label="Odbiorca / nadawca"
-                value={transaction.counterparty_email ?? 'Brak'}
-              />
+              <DetailRow label="Typ" value={TRANSACTION_TYPES[transaction.type] ?? transaction.type} />
+              <DetailRow label="Status" value={TRANSACTION_STATUSES[transaction.status] ?? transaction.status} />
+              <DetailRow label="Kierunek" value={TRANSACTION_DIRECTIONS[transaction.direction] ?? transaction.direction} />
               <DetailRow label="Data" value={formatDate(transaction.created_at)} />
               {transaction.source_amount && transaction.source_currency_code && (
                 <DetailRow
@@ -126,17 +149,26 @@ export function TransactionDetails({transactionId, token, onClose, goHome}: Tran
                 value={`${transaction.destination_amount} ${transaction.destination_currency_code}`}
               />
               {transaction.exchange_rate && (
-                <DetailRow label="Kurs wymiany" value={transaction.exchange_rate} />
+                <DetailRow
+                  label="Kurs wymiany"
+                  value={transaction.source_currency_code && transaction.destination_currency_code
+                    ? formatExchangeRateLabel(transaction.source_currency_code, transaction.exchange_rate, transaction.destination_currency_code)
+                    : transaction.exchange_rate}
+                />
               )}
             </ScrollView>
           ) : null}
 
           <AppButton title="Zamknij" onPress={onClose} secondary />
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
 }
+
+const TRANSACTION_TYPES: Record<string, string> = {transfer: 'Przelew', exchange: 'Wymiana walut', opening: 'Saldo początkowe'};
+const TRANSACTION_STATUSES: Record<string, string> = {completed: 'Zakończona', reversed: 'Cofnięta'};
+const TRANSACTION_DIRECTIONS: Record<string, string> = {incoming: 'Przychodząca', outgoing: 'Wychodząca', internal: 'Wewnętrzna'};
 
 function DetailRow({label, value}: {label: string; value: string}) {
   return (
@@ -147,11 +179,12 @@ function DetailRow({label, value}: {label: string; value: string}) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyles(() => StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.65)',
     justifyContent: 'flex-end',
+    overflow: 'hidden',
   },
   card: {
     backgroundColor: COLORS.surface,
@@ -170,6 +203,8 @@ const styles = StyleSheet.create({
     gap: 14,
     paddingBottom: 4,
   },
+  counterparty: {flexDirection: 'row', alignItems: 'center', gap: 12, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border},
+  counterpartyText: {flex: 1, gap: 3},
   amount: {
     color: COLORS.yellow,
     fontSize: 28,
@@ -194,4 +229,4 @@ const styles = StyleSheet.create({
     color: '#FCA5A5',
     fontSize: 15,
   },
-});
+}));

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Alert } from 'react-native';
 import * as Keychain from 'react-native-keychain';
 
@@ -17,12 +17,38 @@ const TOKEN_STORAGE_KEY = '@app_auth_token';
 
 const KEYCHAIN_OPTIONS = {
   service: TOKEN_STORAGE_KEY,
+  accessible: Keychain.ACCESSIBLE.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
 };
 
 export function useAppController() {
   const [screen, setScreen] = useState<ScreenName>('loading');
+  const screenHistory = useRef<ScreenName[]>([]);
   const [username, setUsername] = useState<string>('test user');
   const [token, setToken] = useState<string | null>(null);
+  const [pendingTransactionId, setPendingTransactionId] = useState<string | null>(null);
+
+  function navigate(nextScreen: ScreenName) {
+    if (nextScreen === screen) return;
+    if (screen !== 'loading') screenHistory.current.push(screen);
+    setScreen(nextScreen);
+  }
+
+  const goBack = useCallback(() => {
+    const previousScreen = screenHistory.current.pop();
+    if (!previousScreen) return false;
+    setScreen(previousScreen);
+    return true;
+  }, []);
+
+  const resetToHome = useCallback(() => {
+    screenHistory.current = [];
+    setScreen('home');
+  }, []);
+
+  function resetToDashboard() {
+    screenHistory.current = [];
+    setScreen('dashboard');
+  }
 
   // Sprawdzanie zapisanego tokena przy starcie aplikacji
   useEffect(() => {
@@ -57,7 +83,7 @@ export function useAppController() {
               if (responseData.email) {
                 setUsername(responseData.email);
               }
-              setScreen('dashboard'); 
+              resetToDashboard();
               wentToDashboard = true;
             } else {
               // Usuwanie nieprawidłowego tokena z Keychain
@@ -66,7 +92,7 @@ export function useAppController() {
             }
           } catch {
             setToken(savedToken);
-            setScreen('dashboard');
+            resetToDashboard();
             wentToDashboard = true;
           }
         }
@@ -76,21 +102,27 @@ export function useAppController() {
 
       if(wentToDashboard === false)
       {
-        setScreen('home'); 
+        resetToHome();
       }
     }
 
     loadStoredToken();
-  }, []);
+  }, [resetToHome]);
 
-  const goHome = () => setScreen('home');
-  const goLogin = () => setScreen('login');
-  const goRegister = () => setScreen('register');
-  const goDashboard = () => setScreen('dashboard');
-  const goExchangeRates = () => setScreen('exchangeRates');
-  const goProfile = () => setScreen('profile');
-  const goQrScanner = () => setScreen('qrScanner');
-  const goTransactionHistory = () => setScreen('transactionHistory');
+  const goHome = resetToHome;
+  const goLogin = () => navigate('login');
+  const goRegister = () => navigate('register');
+  const goDashboard = () => navigate('dashboard');
+  const goExchangeRates = () => navigate('exchangeRates');
+  const goProfile = () => navigate('profile');
+  const goQrScanner = () => navigate('qrScanner');
+  const goQrHub = () => navigate('qrHub');
+  const goQrGeneration = () => navigate('qrGeneration');
+  const goTransactionHistory = () => navigate('transactionHistory');
+  const openTransactionOnDashboard = (transactionId?: string) => {
+    setPendingTransactionId(transactionId ?? null);
+    resetToDashboard();
+  };
 
   async function submitLogin(data: LoginData) {
     const error = validateLogin(data);
@@ -127,7 +159,7 @@ export function useAppController() {
           setUsername(responseData.user.email);
         }
 
-        goDashboard();
+        resetToDashboard();
       } else {
         Alert.alert(
           'Błąd',
@@ -184,7 +216,7 @@ export function useAppController() {
           setUsername(responseData.user.email);
         }
 
-        goDashboard();
+        resetToDashboard();
       } else {
         Alert.alert(
           'Błąd',
@@ -216,17 +248,6 @@ export function useAppController() {
             'Content-Type': 'application/json',
           },
         });
-        Alert.alert("",
-          "Wylogowano",
-          [
-            {
-              text: 'OK',
-              onPress: async () => {
-                  goHome();
-                }
-            }
-          ]
-        );
       }
     } catch (e) {
       console.error('Błąd podczas wylogowywania:', e);
@@ -236,6 +257,7 @@ export function useAppController() {
 
       setToken(null);
       setUsername('test user');
+      resetToHome();
     }
   }
 
@@ -282,6 +304,7 @@ export function useAppController() {
 
   return {
     screen,
+    goBack,
     username,
     token,
     goHome,
@@ -291,7 +314,12 @@ export function useAppController() {
     goExchangeRates,
     goProfile,
     goQrScanner,
+    goQrHub,
+    goQrGeneration,
     goTransactionHistory,
+    pendingTransactionId,
+    clearPendingTransaction: () => setPendingTransactionId(null),
+    openTransactionOnDashboard,
     submitLogin,
     submitRegister,
     loginWithPasskey,
