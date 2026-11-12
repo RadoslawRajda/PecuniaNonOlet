@@ -43,7 +43,7 @@ const PAGES: {id: Page; label: string}[] = [
   {id: 'auditEvents', label: 'Zdarzenia audytu'},
 ];
 
-export function AnalyticsOverviewScreen({token, onLogout}: {token: string | null; onLogout: () => void}) {
+export function AnalyticsOverviewScreen({token}: {token: string | null}) {
   const {handleForbidden} = useAppPreferences();
   const [page, setPage] = useState<Page>('overview');
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -285,9 +285,6 @@ export function AnalyticsOverviewScreen({token, onLogout}: {token: string | null
             </View>
           ) : null}
 
-          <View style={styles.logout}>
-            <AppButton title="Wyloguj się" onPress={onLogout} secondary />
-          </View>
         </View>
       </ScrollView>
     </View>
@@ -394,7 +391,6 @@ const styles = createThemedStyles(() => StyleSheet.create({
   muted: {alignSelf: 'stretch', color: COLORS.muted, fontSize: 13},
   messageCard: {alignSelf: 'stretch', backgroundColor: COLORS.surface, borderRadius: 14, padding: 16, gap: 12},
   error: {color: '#FCA5A5', fontSize: 14},
-  logout: {alignSelf: 'stretch', marginTop: 12},
   pagination: {alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 4},
   pageButton: {borderColor: COLORS.border, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10},
   pageButtonDisabled: {opacity: 0.4},

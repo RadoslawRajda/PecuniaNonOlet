@@ -5,6 +5,7 @@ import History from 'lucide-react-native/icons/rotate-ccw-clock';
 import CircleDollarSign from 'lucide-react-native/icons/circle-dollar-sign';
 import QrCode from 'lucide-react-native/icons/qr-code';
 import UserRound from 'lucide-react-native/icons/user-round';
+import ChartPie from 'lucide-react-native/icons/chart-pie';
 import {
   SafeAreaProvider,
   SafeAreaView,
@@ -36,14 +37,22 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
     return () => subscription.remove();
   }, [goBack]);
   if (!preferencesLoaded) return null;
-  const tabs = [
+  const userTabs = [
     {screen: 'dashboard', label: 'Pulpit', icon: Home, onPress: controller.goDashboard},
     {screen: 'transactionHistory', label: 'Historia', icon: History, onPress: controller.goTransactionHistory},
     {screen: 'exchangeRates', label: 'Wymiana', icon: CircleDollarSign, onPress: controller.goExchangeRates},
     {screen: 'qrHub', label: 'QR', icon: QrCode, onPress: controller.goQrHub},
     {screen: 'profile', label: 'Profil', icon: UserRound, onPress: controller.goProfile},
   ] as const;
-  const showNavigation = controller.role !== 'analyst' && ['dashboard', 'transactionHistory', 'exchangeRates', 'qrScanner', 'qrHub', 'profile', 'qrGeneration'].includes(controller.screen);
+  const analystTabs = [
+    {screen: 'analytics', label: 'Analityka', icon: ChartPie, onPress: controller.goAnalytics},
+    {screen: 'profile', label: 'Profil', icon: UserRound, onPress: controller.goProfile},
+  ] as const;
+  const isAnalyst = controller.role === 'analyst';
+  const tabs = isAnalyst ? analystTabs : userTabs;
+  const showNavigation = isAnalyst
+    ? ['analytics', 'profile'].includes(controller.screen)
+    : ['dashboard', 'transactionHistory', 'exchangeRates', 'qrScanner', 'qrHub', 'profile', 'qrGeneration'].includes(controller.screen);
 
   return (
     <SafeAreaProvider>
@@ -58,8 +67,8 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
 
         <View style={styles.screenContent}>
 
-        {controller.role === 'analyst' ? (
-          <AnalyticsOverviewScreen token={controller.token} onLogout={controller.logout} />
+        {isAnalyst && controller.screen !== 'profile' ? (
+          <AnalyticsOverviewScreen token={controller.token} />
         ) : <>
 
         {controller.screen === 'loading' && <Loading/>}
@@ -111,6 +120,7 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
         {controller.screen === 'profile' && (
           <ProfileScreen
             username={controller.username}
+            role={controller.role}
             onLogout={controller.logout}
           />
         )}

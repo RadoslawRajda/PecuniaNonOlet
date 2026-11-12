@@ -401,6 +401,7 @@ export function useAppController() {
     goLogin,
     goRegister,
     goDashboard,
+    goAnalytics: resetToAnalytics,
     goExchangeRates,
     goProfile,
     goQrScanner,
