@@ -6,6 +6,9 @@ import CircleDollarSign from 'lucide-react-native/icons/circle-dollar-sign';
 import QrCode from 'lucide-react-native/icons/qr-code';
 import UserRound from 'lucide-react-native/icons/user-round';
 import ChartPie from 'lucide-react-native/icons/chart-pie';
+import Users from 'lucide-react-native/icons/users';
+import ArrowLeftRight from 'lucide-react-native/icons/arrow-left-right';
+import ClipboardList from 'lucide-react-native/icons/clipboard-list';
 import {
   SafeAreaProvider,
   SafeAreaView,
@@ -25,6 +28,9 @@ import {TransactionHistoryScreen} from './src/views/screens/TransactionHistorySc
 import {Loading} from './src/views/screens/Loading';
 import {QrHubScreen} from './src/views/screens/QrHubScreen';
 import {AnalyticsOverviewScreen} from './src/views/screens/AnalyticsOverviewScreen';
+import {AnalyticsUsersScreen} from './src/views/screens/AnalyticsUsersScreen';
+import {AnalyticsTransactionsScreen} from './src/views/screens/AnalyticsTransactionsScreen';
+import {AnalyticsAuditEventsScreen} from './src/views/screens/AnalyticsAuditEventsScreen';
 
 import {COLORS, createThemedStyles} from './src/views/theme';
 import {AppPreferencesProvider, useAppPreferences} from './src/context/AppPreferences';
@@ -45,13 +51,16 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
     {screen: 'profile', label: 'Profil', icon: UserRound, onPress: controller.goProfile},
   ] as const;
   const analystTabs = [
-    {screen: 'analytics', label: 'Analityka', icon: ChartPie, onPress: controller.goAnalytics},
+    {screen: 'analytics', label: 'Przegląd', icon: ChartPie, onPress: controller.goAnalytics},
+    {screen: 'analyticsUsers', label: 'Użytk.', icon: Users, onPress: controller.goAnalyticsUsers},
+    {screen: 'analyticsTransactions', label: 'Transakcje', icon: ArrowLeftRight, onPress: controller.goAnalyticsTransactions},
+    {screen: 'analyticsAuditEvents', label: 'Audyt', icon: ClipboardList, onPress: controller.goAnalyticsAuditEvents},
     {screen: 'profile', label: 'Profil', icon: UserRound, onPress: controller.goProfile},
   ] as const;
   const isAnalyst = controller.role === 'analyst';
   const tabs = isAnalyst ? analystTabs : userTabs;
   const showNavigation = isAnalyst
-    ? ['analytics', 'profile'].includes(controller.screen)
+    ? ['analytics', 'analyticsUsers', 'analyticsTransactions', 'analyticsAuditEvents', 'profile'].includes(controller.screen)
     : ['dashboard', 'transactionHistory', 'exchangeRates', 'qrScanner', 'qrHub', 'profile', 'qrGeneration'].includes(controller.screen);
 
   return (
@@ -68,7 +77,15 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
         <View style={styles.screenContent}>
 
         {isAnalyst && controller.screen !== 'profile' ? (
-          <AnalyticsOverviewScreen token={controller.token} />
+          controller.screen === 'analyticsUsers' ? (
+            <AnalyticsUsersScreen key={controller.screen} token={controller.token} />
+          ) : controller.screen === 'analyticsTransactions' ? (
+            <AnalyticsTransactionsScreen key={controller.screen} token={controller.token} />
+          ) : controller.screen === 'analyticsAuditEvents' ? (
+            <AnalyticsAuditEventsScreen key={controller.screen} token={controller.token} />
+          ) : (
+            <AnalyticsOverviewScreen key={controller.screen} token={controller.token} />
+          )
         ) : <>
 
         {controller.screen === 'loading' && <Loading/>}

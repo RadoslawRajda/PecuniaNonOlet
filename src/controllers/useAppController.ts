@@ -68,6 +68,21 @@ export function useAppController() {
     setScreen('analytics');
   }
 
+  function resetToAnalyticsUsers() {
+    screenHistory.current = [];
+    setScreen('analyticsUsers');
+  }
+
+  function resetToAnalyticsTransactions() {
+    screenHistory.current = [];
+    setScreen('analyticsTransactions');
+  }
+
+  function resetToAnalyticsAuditEvents() {
+    screenHistory.current = [];
+    setScreen('analyticsAuditEvents');
+  }
+
   const handleForbidden = useCallback(() => {
     if (forbiddenAlertPending.current) return;
     forbiddenAlertPending.current = true;
@@ -402,6 +417,9 @@ export function useAppController() {
     goRegister,
     goDashboard,
     goAnalytics: resetToAnalytics,
+    goAnalyticsUsers: resetToAnalyticsUsers,
+    goAnalyticsTransactions: resetToAnalyticsTransactions,
+    goAnalyticsAuditEvents: resetToAnalyticsAuditEvents,
     goExchangeRates,
     goProfile,
     goQrScanner,
