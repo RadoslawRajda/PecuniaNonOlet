@@ -11,17 +11,20 @@ import {API_URL} from '@env';
 
 import {AppButton, BrandLogo} from '../components/Ui';
 import {COLORS, createThemedStyles, type ColorScheme} from '../theme';
-import {useAppPreferences} from '../../context/AppPreferences';
+import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
 import type {Account} from '../../types/Account';
+import type {UserRole} from '../../models/auth';
 
 type ProfilePage = 'main' | 'currency' | 'appearance' | 'account' | 'help';
 
-export function ProfileScreen({username = 'Twoje konto', onLogout}: {username?: string; onLogout: () => void}) {
+export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {username?: string; role: UserRole | null; onLogout: () => void}) {
+  const isAnalyst = role === 'analyst';
   const {
     token, colorScheme, setColorScheme, preferredCurrency, setPreferredCurrency,
     locationCurrencyEnabled, locationDetectedCurrency, setLocationCurrencyEnabled,
     locationPermissionStatus, locationError, openLocationSettings, refreshProfilePhoto,
     retryLocationCurrency,
+    handleForbidden,
   } = useAppPreferences();
   const [page, setPage] = React.useState<ProfilePage>('main');
   const [accounts, setAccounts] = React.useState<Account[]>([]);
@@ -30,17 +33,18 @@ export function ProfileScreen({username = 'Twoje konto', onLogout}: {username?: 
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
 
   React.useEffect(() => {
-    if (!token) return;
+    if (!token || isAnalyst) return;
     let active = true;
     fetch(`${apiBaseUrl}/api/accounts`, {headers: {Authorization: `Bearer ${token}`}})
       .then(async response => {
+        if (handleForbiddenResponse(response, handleForbidden)) return;
         const data = await response.json().catch(() => null);
         if (!response.ok) throw new Error(data?.detail || 'Nie udało się pobrać rachunków.');
         if (active) setAccounts(data?.accounts ?? []);
       })
       .catch(error => console.warn('Unable to load accounts for profile settings', error));
     return () => { active = false; };
-  }, [apiBaseUrl, token]);
+  }, [apiBaseUrl, token, isAnalyst, handleForbidden]);
 
   async function changeProfileImage() {
     try {
@@ -66,6 +70,8 @@ export function ProfileScreen({username = 'Twoje konto', onLogout}: {username?: 
       const response = await fetch(`${apiBaseUrl}/api/profile/photo`, {
         method: 'PUT', headers: {Authorization: `Bearer ${token}`}, body: form,
       });
+      if (handleForbiddenResponse(response, handleForbidden)) return;
+      console.info('Profile photo upload response', response.status);
       if (!response.ok) {
         const data = await response.json().catch(() => null);
         throw new Error(data?.detail || `Serwer odrzucił zdjęcie (HTTP ${response.status}).`);
@@ -101,20 +107,20 @@ export function ProfileScreen({username = 'Twoje konto', onLogout}: {username?: 
       </View>
       {page === 'main' ? (
         <>
-          <View style={styles.userCard}>
+          {!isAnalyst ? <View style={styles.userCard}>
             <BrandLogo size={64} showProfilePhoto />
             <View style={styles.userCardText}>
               <Text style={styles.userTitle}>{username}</Text>
               <Text style={styles.description}>Twoje konto i preferencje</Text>
             </View>
-          </View>
+          </View> : null}
 
-          <Text style={styles.groupTitle}>Preferencje</Text>
-          <MenuRow icon={MapPin} title="Waluta i lokalizacja" subtitle={preferredCurrency ?? 'Wybierz preferencje'} onPress={() => setPage('currency')} />
+          {!isAnalyst ? <Text style={styles.groupTitle}>Preferencje</Text> : null}
+          {!isAnalyst ? <MenuRow icon={MapPin} title="Waluta i lokalizacja" subtitle={preferredCurrency ?? 'Wybierz preferencje'} onPress={() => setPage('currency')} /> : null}
           <MenuRow icon={Palette} title="Wygląd aplikacji" subtitle={THEME_LABELS[colorScheme]} onPress={() => setPage('appearance')} />
 
-          <Text style={styles.groupTitle}>Konto i bezpieczeństwo</Text>
-          <MenuRow icon={Shield} title="Dane profilu" subtitle="Zdjęcie profilowe" onPress={() => setPage('account')} />
+          {!isAnalyst ? <Text style={styles.groupTitle}>Konto i bezpieczeństwo</Text> : null}
+          {!isAnalyst ? <MenuRow icon={Shield} title="Dane profilu" subtitle="Zdjęcie profilowe" onPress={() => setPage('account')} /> : null}
 
           <Text style={styles.groupTitle}>Inne</Text>
           <MenuRow icon={CircleHelp} title="Pomoc i informacje" onPress={() => setPage('help')} />

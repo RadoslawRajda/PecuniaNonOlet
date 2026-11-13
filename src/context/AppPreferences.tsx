@@ -6,6 +6,8 @@ import {check, PERMISSIONS, request, RESULTS} from 'react-native-permissions';
 import {API_URL} from '@env';
 import type {PropsWithChildren} from 'react';
 import {setColorScheme, type ColorScheme} from '../views/theme';
+import { Alert } from 'react-native';
+import type {UserRole} from '../models/auth';
 
 const THEME_KEY = '@app_theme';
 const CURRENCY_KEY = '@app_preferred_currency';
@@ -37,11 +39,12 @@ type Preferences = {
   openLocationSettings: () => Promise<void>;
   retryLocationCurrency: () => void;
   refreshProfilePhoto: () => void;
+  handleForbidden: () => void;
 };
 
 const PreferencesContext = createContext<Preferences | null>(null);
 
-export function AppPreferencesProvider({token, children}: PropsWithChildren<{token: string | null}>) {
+export function AppPreferencesProvider({token, role, handleForbidden, children}: PropsWithChildren<{token: string | null; role: UserRole | null; handleForbidden: () => void}>) {
   const [colorScheme, setColorSchemeState] = useState<ColorScheme>('dark');
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [preferredCurrency, setPreferredCurrencyState] = useState<string | null>(null);
@@ -66,9 +69,9 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
   }, [token]);
 
   useEffect(() => {
-    if (!token) {
+    if (!token || role !== 'user') {
       setProfilePhoto(null);
-      setPhotoResolvedToken(null);
+      setPhotoResolvedToken(role === 'analyst' ? token : null);
       return;
     }
 
@@ -78,6 +81,7 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
       headers: {Authorization: `Bearer ${token}`},
     })
       .then(async response => {
+        if (handleForbiddenResponse(response, handleForbidden)) return null;
         if (response.status === 404) return null;
         if (!response.ok) throw new Error(`Photo request failed (${response.status})`);
         const blob = await response.blob();
@@ -100,7 +104,7 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
       });
 
     return () => { active = false; };
-  }, [token, profilePhotoRevision]);
+  }, [token, role, profilePhotoRevision]);
 
   useEffect(() => {
     let active = true;
@@ -274,17 +278,24 @@ export function AppPreferencesProvider({token, children}: PropsWithChildren<{tok
     locationPermissionStatus,
     locationError,
     profilePhotoRevision,
-    profilePhotoDataUri: token && profilePhoto?.token === token ? profilePhoto.dataUri : null,
-    profilePhotoResolved: !token || photoResolvedToken === token,
+    profilePhotoDataUri: token && role === 'user' && profilePhoto?.token === token ? profilePhoto.dataUri : null,
+    profilePhotoResolved: !token || role === 'analyst' || photoResolvedToken === token,
     setColorScheme: updateColorScheme,
     setPreferredCurrency: updatePreferredCurrency,
     setLocationCurrencyEnabled: updateLocationCurrencyEnabled,
     openLocationSettings,
     retryLocationCurrency,
     refreshProfilePhoto,
-  }), [token, colorScheme, preferencesLoaded, preferredCurrency, locationCurrencyEnabled, locationDetectedCurrency, locationPermissionStatus, locationError, profilePhotoRevision, profilePhoto, photoResolvedToken, updateColorScheme, updatePreferredCurrency, updateLocationCurrencyEnabled, openLocationSettings, retryLocationCurrency, refreshProfilePhoto]);
+    handleForbidden,
+  }), [token, role, colorScheme, preferencesLoaded, preferredCurrency, locationCurrencyEnabled, locationDetectedCurrency, locationPermissionStatus, locationError, profilePhotoRevision, profilePhoto, photoResolvedToken, updateColorScheme, updatePreferredCurrency, updateLocationCurrencyEnabled, openLocationSettings, retryLocationCurrency, refreshProfilePhoto, handleForbidden]);
 
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
+}
+
+export function handleForbiddenResponse(response: Response, onForbidden: () => void) {
+  if (response.status !== 403) return false;
+  onForbidden();
+  return true;
 }
 
 export function useAppPreferences() {
