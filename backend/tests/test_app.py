@@ -29,10 +29,23 @@ def test_diagnostics_and_health(client):
     assert client.get("/health").json() == {"status": "ok"}
     page = client.get("/")
     assert page.status_code == 200
-    assert "192.168.1.45" in page.text
-    assert "_pecunianonolet._tcp.local." in page.text
-    assert "SQLite" in page.text
+    assert "/local-root-ca.cer" in page.text
+    assert "SHA-256" in page.text
+    assert "zaufania" in page.text
+    assert "VPN i urządzenia zarządzane" in page.text
+    assert "https://pecunianonolet.local:8000/" in page.text
+    assert "pecunianonolet.local" in page.text
+    assert "https://pecunianonolet.local:8000/docs" in page.text
+    assert "HTTPS — bezpieczne połączenie aplikacji" in page.text
     assert "<style" not in page.text
+    assert page.headers["Cache-Control"] == "no-store"
+    certificate = client.get("/local-root-ca.cer")
+    assert certificate.status_code == 200
+    assert certificate.headers["content-type"] == "application/pkix-cert"
+    assert certificate.headers["content-disposition"].endswith(
+        'filename="pecunianonolet-local-root-ca.cer"'
+    )
+    assert certificate.content
 
 
 def test_register_login_logout_and_persistence(client, tmp_path):
