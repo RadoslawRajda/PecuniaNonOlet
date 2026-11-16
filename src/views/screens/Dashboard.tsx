@@ -20,7 +20,7 @@ import {TransactionCreation} from './TransactionCreation';
 import type {Account} from '../../types/Account';
 import type {Transaction} from '../../types/Transaction';
 import type {DashboardProps} from '../../types/DashboardProps';
-import {useAppPreferences} from '../../context/AppPreferences';
+import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
 
 export function Dashboard({
   username,
@@ -32,7 +32,7 @@ export function Dashboard({
   initialTransactionId,
   onInitialTransactionShown,
 }: DashboardProps) {
-  const {preferredCurrency} = useAppPreferences();
+  const {preferredCurrency, handleForbidden} = useAppPreferences();
   const [accounts, setAccounts] = React.useState<Account[]>([]);
   const [transactions, setTransactions] = React.useState<Transaction[]>([]);
   const [selectedCurrency, setSelectedCurrency] = React.useState<string | null>(null);
@@ -66,6 +66,8 @@ export function Dashboard({
         fetch(`${apiBaseUrl}/api/accounts`, {headers}),
         fetch(`${apiBaseUrl}/api/transactions?limit=10`, {headers}),
       ]);
+      if (handleForbiddenResponse(accountsResponse, handleForbidden) ||
+          handleForbiddenResponse(transactionsResponse, handleForbidden)) return;
 
       const accountsData = await accountsResponse.json().catch(() => null);
       const transactionsData = await transactionsResponse.json().catch(() => null);
@@ -93,7 +95,7 @@ export function Dashboard({
     } finally {
       setIsLoading(false);
     }
-  }, [apiBaseUrl, goHome, preferredCurrency, token]);
+  }, [apiBaseUrl, goHome, preferredCurrency, token, handleForbidden]);
 
   React.useEffect(() => {
     loadDashboardData();

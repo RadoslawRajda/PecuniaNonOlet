@@ -4,12 +4,18 @@ export type ScreenName =
   | 'login'
   | 'register'
   | 'dashboard'
+  | 'analytics'
+  | 'analyticsUsers'
+  | 'analyticsTransactions'
+  | 'analyticsAuditEvents'
   | 'exchangeRates'
   | 'profile'
   | 'qrScanner'
   | 'qrHub'
   | 'qrGeneration'
   | 'transactionHistory';
+
+export type UserRole = 'user' | 'analyst';
 
 export type LoginData = {
   email: string;

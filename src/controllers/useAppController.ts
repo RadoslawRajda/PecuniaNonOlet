@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Alert } from 'react-native';
 import * as Keychain from 'react-native-keychain';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { API_URL } from '@env';
 
@@ -11,9 +12,15 @@ import {
   validateLogin,
   validateRegister,
 } from '../models/auth';
+import type {UserRole} from '../models/auth';
 
 const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
 const TOKEN_STORAGE_KEY = '@app_auth_token';
+const ROLE_STORAGE_KEY = '@app_user_role';
+
+function isUserRole(value: unknown): value is UserRole {
+  return value === 'user' || value === 'analyst';
+}
 
 const KEYCHAIN_OPTIONS = {
   service: TOKEN_STORAGE_KEY,
@@ -21,11 +28,36 @@ const KEYCHAIN_OPTIONS = {
 };
 
 export function useAppController() {
-  const [screen, setScreen] = useState<ScreenName>('loading');
+  const [storedScreen, setScreen] = useState<ScreenName>('loading');
   const screenHistory = useRef<ScreenName[]>([]);
   const [username, setUsername] = useState<string>('test user');
   const [token, setToken] = useState<string | null>(null);
+  const [role, setRole] = useState<UserRole | null>(null);
+  const tokenRef = useRef(token);
+  const roleRef = useRef(role);
+  const forbiddenAlertPending = useRef(false);
+  tokenRef.current = token;
+  roleRef.current = role;
   const [pendingTransactionId, setPendingTransactionId] = useState<string | null>(null);
+
+  const roleHomeScreen: ScreenName = role === 'analyst' ? 'analytics' : 'dashboard';
+  const allowedScreens: readonly ScreenName[] = role === 'analyst'
+    ? ['home', 'login', 'register', 'analytics', 'analyticsUsers', 'analyticsTransactions', 'analyticsAuditEvents', 'profile']
+    : ['home', 'login', 'register', 'dashboard', 'transactionHistory', 'exchangeRates', 'qrScanner', 'qrHub', 'profile', 'qrGeneration'];
+  const screen = token && role && storedScreen !== 'loading' && !allowedScreens.includes(storedScreen)
+    ? roleHomeScreen
+    : storedScreen;
+
+  useEffect(() => {
+    if (screen !== storedScreen) {
+      screenHistory.current = [];
+      Alert.alert(
+        'Brak dostępu',
+        `${role === 'analyst' ? 'Analityk' : 'Użytkownik'} nie ma uprawnień do wyświetlenia tej strony.`,
+      );
+      setScreen(screen);
+    }
+  }, [screen, storedScreen, role]);
 
   function navigate(nextScreen: ScreenName) {
     if (nextScreen === screen) return;
@@ -50,6 +82,68 @@ export function useAppController() {
     setScreen('dashboard');
   }
 
+  function resetToAnalytics() {
+    screenHistory.current = [];
+    setScreen('analytics');
+  }
+
+  function resetToAnalyticsUsers() {
+    screenHistory.current = [];
+    setScreen('analyticsUsers');
+  }
+
+  function resetToAnalyticsTransactions() {
+    screenHistory.current = [];
+    setScreen('analyticsTransactions');
+  }
+
+  function resetToAnalyticsAuditEvents() {
+    screenHistory.current = [];
+    setScreen('analyticsAuditEvents');
+  }
+
+  const handleForbidden = useCallback(() => {
+    if (forbiddenAlertPending.current) return;
+    forbiddenAlertPending.current = true;
+    void (async () => {
+      let actualRole = roleRef.current;
+      const activeToken = tokenRef.current;
+      if (activeToken) {
+        try {
+          const response = await fetch(`${apiBaseUrl}/api/me`, {
+            headers: {Authorization: `Bearer ${activeToken}`},
+          });
+          const data = await response.json().catch(() => null);
+          if (response.ok && isUserRole(data?.role)) actualRole = data.role;
+          else if (response.status === 401) actualRole = null;
+        } catch (error) {
+          console.warn('Unable to verify role after access denial', error);
+        }
+      }
+      if (isUserRole(actualRole)) {
+        setRole(actualRole);
+        void AsyncStorage.setItem(ROLE_STORAGE_KEY, actualRole)
+          .catch(error => console.warn('Unable to save verified user role', error));
+      }
+      Alert.alert('Brak dostępu', 'Nie masz uprawnień do wyświetlenia tej strony.', [{
+        text: 'OK',
+        onPress: () => {
+          forbiddenAlertPending.current = false;
+          if (!activeToken || !isUserRole(actualRole)) {
+            setToken(null);
+            setRole(null);
+            void Keychain.resetGenericPassword(KEYCHAIN_OPTIONS);
+            void AsyncStorage.removeItem(ROLE_STORAGE_KEY);
+            resetToHome();
+          } else {
+            if (actualRole === 'analyst') resetToAnalytics();
+            else resetToDashboard();
+          }
+        },
+      }]);
+    })();
+  }, []);
+
   // Sprawdzanie zapisanego tokena przy starcie aplikacji
   useEffect(() => {
     async function loadStoredToken() {
@@ -64,10 +158,9 @@ export function useAppController() {
         const savedToken = credentials
           ? credentials.password
           : null;
+        const savedRole = await AsyncStorage.getItem(ROLE_STORAGE_KEY);
 
         if (savedToken) {
-          setToken(savedToken);
-
           try {
             const response = await fetch(`${apiBaseUrl}/api/me`, {
               method: 'GET',
@@ -80,21 +173,37 @@ export function useAppController() {
             const responseData = await response.json().catch(() => null);
 
             if (response.ok && responseData) {
+              const verifiedRole: UserRole = isUserRole(responseData.role)
+                ? responseData.role
+                : isUserRole(savedRole) ? savedRole : 'user';
+              setRole(verifiedRole);
+              void AsyncStorage.setItem(ROLE_STORAGE_KEY, verifiedRole)
+                .catch(error => console.warn('Unable to save user role', error));
+              setToken(savedToken);
               if (responseData.email) {
                 setUsername(responseData.email);
               }
-              resetToDashboard();
+              if (verifiedRole === 'analyst') resetToAnalytics();
+              else resetToDashboard();
               wentToDashboard = true;
             } else {
               // Usuwanie nieprawidłowego tokena z Keychain
               await Keychain.resetGenericPassword(KEYCHAIN_OPTIONS);
+              await AsyncStorage.removeItem(ROLE_STORAGE_KEY);
+              setRole(null);
               setToken(null);
             }
           } catch {
+            const cachedRole: UserRole = isUserRole(savedRole) ? savedRole : 'user';
+            setRole(cachedRole);
             setToken(savedToken);
-            resetToDashboard();
+            if (cachedRole === 'analyst') resetToAnalytics();
+            else resetToDashboard();
             wentToDashboard = true;
           }
+        } else {
+          setRole(null);
+          await AsyncStorage.removeItem(ROLE_STORAGE_KEY);
         }
       } catch (e) {
         console.error('Błąd podczas odczytu tokena z pamięci:', e);
@@ -145,6 +254,10 @@ export function useAppController() {
 
       if (response.ok && responseData) {
         if (responseData.token) {
+          const loginRole: UserRole = isUserRole(responseData.user?.role) ? responseData.user.role : 'user';
+          setRole(loginRole);
+          void AsyncStorage.setItem(ROLE_STORAGE_KEY, loginRole)
+            .catch(error => console.warn('Unable to save user role', error));
           setToken(responseData.token);
 
           // Bezpieczne zapisanie tokena w Keychain
@@ -159,7 +272,9 @@ export function useAppController() {
           setUsername(responseData.user.email);
         }
 
-        resetToDashboard();
+        // The selected home page is based on the role returned by login.
+        if (responseData.user?.role === 'analyst') resetToAnalytics();
+        else resetToDashboard();
       } else {
         Alert.alert(
           'Błąd',
@@ -202,6 +317,10 @@ export function useAppController() {
 
       if (response.ok && responseData) {
         if (responseData.token) {
+          const registeredRole: UserRole = isUserRole(responseData.user?.role) ? responseData.user.role : 'user';
+          setRole(registeredRole);
+          void AsyncStorage.setItem(ROLE_STORAGE_KEY, registeredRole)
+            .catch(error => console.warn('Unable to save user role', error));
           setToken(responseData.token);
 
           // Bezpieczne zapisanie tokena w Keychain
@@ -216,7 +335,8 @@ export function useAppController() {
           setUsername(responseData.user.email);
         }
 
-        resetToDashboard();
+        if (responseData.user?.role === 'analyst') resetToAnalytics();
+        else resetToDashboard();
       } else {
         Alert.alert(
           'Błąd',
@@ -256,6 +376,8 @@ export function useAppController() {
       await Keychain.resetGenericPassword(KEYCHAIN_OPTIONS);
 
       setToken(null);
+      setRole(null);
+      await AsyncStorage.removeItem(ROLE_STORAGE_KEY);
       setUsername('test user');
       resetToHome();
     }
@@ -307,10 +429,16 @@ export function useAppController() {
     goBack,
     username,
     token,
+    role,
+    handleForbidden,
     goHome,
     goLogin,
     goRegister,
     goDashboard,
+    goAnalytics: resetToAnalytics,
+    goAnalyticsUsers: resetToAnalyticsUsers,
+    goAnalyticsTransactions: resetToAnalyticsTransactions,
+    goAnalyticsAuditEvents: resetToAnalyticsAuditEvents,
     goExchangeRates,
     goProfile,
     goQrScanner,
