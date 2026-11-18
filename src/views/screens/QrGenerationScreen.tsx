@@ -6,7 +6,7 @@ import {API_URL} from '@env';
 import {AppButton, BrandLogo} from '../components/Ui';
 import {COLORS, createThemedStyles} from '../theme';
 import type {Account} from '../../types/Account';
-import {useAppPreferences} from '../../context/AppPreferences';
+import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
 
 type QrPaymentProps = {
   username: string;
@@ -14,7 +14,7 @@ type QrPaymentProps = {
 };
 
 export function QrGenerationScreen({username, token}: QrPaymentProps) {
-  const {preferredCurrency} = useAppPreferences();
+  const {preferredCurrency, handleForbidden} = useAppPreferences();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedCurrency, setSelectedCurrency] = useState('');
   const [loading, setLoading] = useState(true);
@@ -40,15 +40,19 @@ export function QrGenerationScreen({username, token}: QrPaymentProps) {
     fetch(`${(API_URL ?? '').trim().replace(/\/+$/, '')}/api/accounts`, {
       headers: {Authorization: `Bearer ${token}`},
     })
-      .then(response => response.json())
+      .then(response => {
+        if (handleForbiddenResponse(response, handleForbidden)) return null;
+        return response.json();
+      })
       .then(data => {
+        if (!data) return;
         const userAccounts = data?.accounts ?? [];
         setAccounts(userAccounts);
         setSelectedCurrency(userAccounts.find((account: Account) => account.currency_code === preferredCurrency)?.currency_code ?? userAccounts[0]?.currency_code ?? '');
       })
       .catch(error => console.error('Nie udało się pobrać kont:', error))
       .finally(() => setLoading(false));
-  }, [preferredCurrency, token]);
+  }, [preferredCurrency, token, handleForbidden]);
 
   return (
     <ScrollView contentContainerStyle={styles.container}>

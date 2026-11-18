@@ -12,7 +12,7 @@ import {AppButton, FormInput, ScreenHeader} from '../components/Ui';
 import {COLORS, createThemedStyles} from '../theme';
 import type {Account} from '../../types/Account';
 import {TransactionDetails} from './TransactionDetails';
-import {useAppPreferences} from '../../context/AppPreferences';
+import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
 import {formatExchangeRate, formatExchangeRateLabel} from '../formatters';
 import {estimateExchangeAmount, parseExchangeAmountMinor} from '../exchange';
 
@@ -31,7 +31,7 @@ type Quote = {
 };
 
 export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
-  const {preferredCurrency} = useAppPreferences();
+  const {preferredCurrency, handleForbidden} = useAppPreferences();
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [rates, setRates] = useState<ExchangeRate[]>([]);
@@ -88,8 +88,15 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
         fetch(`${apiBaseUrl}/api/exchange-rates`, {headers}),
         fetch(`${apiBaseUrl}/api/accounts`, {headers}),
       ]);
-      const [rateData, accountData] = await Promise.all([rateResponse.json().catch(() => null), accountResponse.json().catch(() => null)]);
-      if (!rateResponse.ok || !accountResponse.ok) throw new Error(rateData?.detail || accountData?.detail || 'Nie udało się pobrać kursów lub rachunków.');
+      const [rateData, accountData] = await Promise.all([
+        rateResponse.json().catch(() => null),
+        accountResponse.json().catch(() => null),
+      ]);
+      if (handleForbiddenResponse(rateResponse, handleForbidden) ||
+          handleForbiddenResponse(accountResponse, handleForbidden)) return;
+      if (!rateResponse.ok || !accountResponse.ok) {
+        throw new Error(rateData?.detail || accountData?.detail || 'Nie udało się pobrać kursów lub rachunków.');
+      }
       const nextAccounts: Account[] = accountData?.accounts ?? [];
       const nextRates: ExchangeRate[] = Array.isArray(rateData?.rates) ? rateData.rates : [];
       setRates(nextRates);
@@ -106,7 +113,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [apiBaseUrl, goHome, preferredCurrency, token]);
+  }, [apiBaseUrl, goHome, preferredCurrency, token, handleForbidden]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -129,6 +136,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
         method: 'POST', headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
         body: JSON.stringify({source_account_id: sourceAccount.id, destination_account_id: destinationAccount.id, source_amount_minor: sourceAmountMinor}),
       });
+      if (handleForbiddenResponse(response, handleForbidden)) return;
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(data?.detail || 'Nie udało się pobrać wyceny.');
       setQuote(data);
@@ -151,6 +159,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
         headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey.current ?? `exchange-${quote.quote_id}`},
         body: JSON.stringify({quote_id: quote.quote_id}),
       });
+      if (handleForbiddenResponse(response, handleForbidden)) return;
       const data = await response.json().catch(() => null);
       if (!response.ok) {
         if (response.status === 409) invalidateQuote();
