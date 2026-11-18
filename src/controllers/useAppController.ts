@@ -33,6 +33,7 @@ export function useAppController() {
   const [username, setUsername] = useState<string>('test user');
   const [token, setToken] = useState<string | null>(null);
   const [role, setRole] = useState<UserRole | null>(null);
+  const [mfaChallenge, setMfaChallenge] = useState<string | null>(null);
   const tokenRef = useRef(token);
   const roleRef = useRef(role);
   const forbiddenAlertPending = useRef(false);
@@ -253,12 +254,17 @@ export function useAppController() {
       const responseData = await response.json().catch(() => null);
 
       if (response.ok && responseData) {
+        if (responseData.mfa_required && typeof responseData.challenge_token === 'string') {
+          setMfaChallenge(responseData.challenge_token);
+          return;
+        }
         if (responseData.token) {
           const loginRole: UserRole = isUserRole(responseData.user?.role) ? responseData.user.role : 'user';
           setRole(loginRole);
           void AsyncStorage.setItem(ROLE_STORAGE_KEY, loginRole)
             .catch(error => console.warn('Unable to save user role', error));
           setToken(responseData.token);
+          setMfaChallenge(null);
 
           // Bezpieczne zapisanie tokena w Keychain
           await Keychain.setGenericPassword(
@@ -293,6 +299,31 @@ export function useAppController() {
         'Błąd sieci',
         `${e?.message || 'Nie udało się połączyć z serwerem.'}\nAdres: ${apiBaseUrl}/api/login`,
       );
+    }
+  }
+
+  async function submitMfaLogin(code: string) {
+    if (!mfaChallenge) return;
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/login/mfa`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({challenge_token: mfaChallenge, code: code.trim()}),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.token) {
+        Alert.alert('Błąd', data?.detail || 'Nie udało się potwierdzić kodu.');
+        return;
+      }
+      const loginRole: UserRole = isUserRole(data.user?.role) ? data.user.role : 'user';
+      setRole(loginRole);
+      setToken(data.token);
+      setMfaChallenge(null);
+      void AsyncStorage.setItem(ROLE_STORAGE_KEY, loginRole).catch(error => console.warn('Unable to save user role', error));
+      await Keychain.setGenericPassword('app-auth-token', data.token, KEYCHAIN_OPTIONS);
+      if (data.user?.email) setUsername(data.user.email);
+      if (loginRole === 'analyst') resetToAnalytics(); else resetToDashboard();
+    } catch (error: any) {
+      Alert.alert('Błąd sieci', error?.message || 'Nie udało się połączyć z serwerem.');
     }
   }
 
@@ -449,6 +480,9 @@ export function useAppController() {
     clearPendingTransaction: () => setPendingTransactionId(null),
     openTransactionOnDashboard,
     submitLogin,
+    mfaChallenge,
+    submitMfaLogin,
+    cancelMfaLogin: () => setMfaChallenge(null),
     submitRegister,
     loginWithPasskey,
     logout,

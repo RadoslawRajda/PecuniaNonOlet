@@ -5,4 +5,7 @@ export type LoginScreenProps = {
   onRegister: () => void;
   onSubmit: (data: LoginData) => void;
   onPasskey: () => void;
+  mfaRequired?: boolean;
+  onSubmitMfa?: (code: string) => void;
+  onCancelMfa?: () => void;
 };
