@@ -341,7 +341,11 @@ export function useAppController() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({email: data.email.trim(), password: data.password}),
+        body: JSON.stringify({
+          email: data.email.trim(),
+          password: data.password,
+          captcha_token: data.captchaToken,
+        }),
       });
 
       const responseData = await response.json().catch(() => null);

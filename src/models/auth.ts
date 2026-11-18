@@ -26,6 +26,7 @@ export type RegisterData = {
   email: string;
   password: string;
   confirmPassword: string;
+  captchaToken: string;
 };
 
 export function validateLogin(data: LoginData): string | null {
@@ -53,6 +54,10 @@ export function validateRegister(
 
   if (data.password !== data.confirmPassword) {
     return 'Hasła nie są identyczne.';
+  }
+
+  if (!data.captchaToken) {
+    return 'Potwierdź, że nie jesteś botem.';
   }
 
   return null;

@@ -1,5 +1,5 @@
 import React from 'react';
-import {Alert, BackHandler, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {Alert, BackHandler, Linking, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import ChevronRight from 'lucide-react-native/icons/chevron-right';
 import MapPin from 'lucide-react-native/icons/map-pin';
 import Palette from 'lucide-react-native/icons/palette';
@@ -71,6 +71,15 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
       setTotpUri(data.provisioning_uri); setTotpSecret(data.secret);
       setTotpMessage('Zeskanuj kod lub wpisz sekret w aplikacji Authenticator.');
     } catch (error) { setTotpMessage(error instanceof Error ? error.message : 'Nie udało się rozpocząć konfiguracji.'); }
+  }
+
+  async function openAuthenticator() {
+    try {
+      await Linking.openURL(totpUri);
+      setTotpMessage('Dokończ dodawanie konta w aplikacji Authenticator.');
+    } catch {
+      setTotpMessage('Brak aplikacji obsługującej ten link. Zeskanuj kod QR lub wpisz sekret ręcznie.');
+    }
   }
 
   async function confirmTotp() {
@@ -249,6 +258,9 @@ ${(data.recovery_codes ?? []).join('\n')}`,
           {!totpEnabled && !totpUri ? <AppButton title="Rozpocznij konfigurację TOTP" onPress={beginTotpSetup} /> : null}
           {totpUri ? <>
             <QRCode value={totpUri} size={210} />
+            <Pressable accessibilityRole="link" onPress={openAuthenticator} style={({pressed}) => [styles.authenticatorLink, pressed && styles.pressed]}>
+              <Text style={styles.authenticatorLinkText}>Otwórz w aplikacji Authenticator</Text>
+            </Pressable>
             <Text selectable style={styles.description}>Sekret do wpisania ręcznie: {totpSecret}</Text>
             <FormInput label="Kod z Authenticatora" value={totpCode} onChangeText={setTotpCode} keyboardType="number-pad" maxLength={6} />
             <AppButton title="Potwierdź i włącz TOTP" onPress={confirmTotp} />
@@ -341,6 +353,8 @@ const styles = createThemedStyles(() => StyleSheet.create({
   statusText: {color: COLORS.muted, fontSize: 13},
   locationMessage: {color: COLORS.muted, fontSize: 14, lineHeight: 20},
   infoCard: {backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 14, padding: 16, gap: 8},
+  authenticatorLink: {alignSelf: 'center', paddingVertical: 6, paddingHorizontal: 10},
+  authenticatorLinkText: {color: COLORS.yellow, fontSize: 14, fontWeight: '700', textDecorationLine: 'underline'},
   logoutRow: {minHeight: 58, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 16, marginTop: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 14},
   logoutText: {color: '#F87171', fontSize: 15, fontWeight: '700'},
   pressed: {opacity: 0.78},

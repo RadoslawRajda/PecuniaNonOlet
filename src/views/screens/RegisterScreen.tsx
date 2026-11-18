@@ -1,6 +1,7 @@
-import React, {useState} from 'react';
+import React, {useCallback, useRef, useState} from 'react';
 import {
   KeyboardAvoidingView,
+  Keyboard,
   Platform,
   Pressable,
   ScrollView,
@@ -10,8 +11,10 @@ import {
 } from 'react-native';
 
 import {AppButton, FormInput} from '../components/Ui';
+import {TurnstileCaptcha} from '../components/TurnstileCaptcha';
 import {COLORS, createThemedStyles} from '../theme';
 import type {RegisterScreenProps} from '../../types/RegisterScreenProps';
+import {validateRegister} from '../../models/auth';
 
 export function RegisterScreen({
   onBack,
@@ -21,14 +24,40 @@ export function RegisterScreen({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
+  const scrollView = useRef<ScrollView>(null);
+  const handleCaptchaToken = useCallback((token: string) => setCaptchaToken(token), []);
+
+  const revealFocusedInput = (nativeEvent: {target: number}) => {
+    scrollView.current?.scrollResponderScrollNativeHandleToKeyboard(
+      nativeEvent.target,
+      24,
+      true,
+    );
+  };
+
+  const submit = () => {
+    const data = {email, password, confirmPassword, captchaToken};
+    if (!captchaToken) return;
+    if (validateRegister(data)) {
+      onSubmit(data);
+      return;
+    }
+    onSubmit(data);
+    setCaptchaToken('');
+    setCaptchaResetKey(key => key + 1);
+  };
 
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
 
       <ScrollView
+        ref={scrollView}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
         contentContainerStyle={styles.scroll}>
 
         <Pressable
@@ -54,6 +83,9 @@ export function RegisterScreen({
             autoCapitalize="none"
             autoCorrect={false}
             autoComplete="email"
+            returnKeyType="next"
+            onFocus={event => revealFocusedInput(event.nativeEvent)}
+            onSubmitEditing={() => Keyboard.dismiss()}
           />
 
           <FormInput
@@ -63,6 +95,9 @@ export function RegisterScreen({
             onChangeText={setPassword}
             secureTextEntry
             autoComplete="new-password"
+            returnKeyType="next"
+            onFocus={event => revealFocusedInput(event.nativeEvent)}
+            onSubmitEditing={() => Keyboard.dismiss()}
           />
 
           <FormInput
@@ -72,17 +107,16 @@ export function RegisterScreen({
             onChangeText={setConfirmPassword}
             secureTextEntry
             autoComplete="new-password"
+            returnKeyType="done"
+            onFocus={event => revealFocusedInput(event.nativeEvent)}
+            onSubmitEditing={() => Keyboard.dismiss()}
           />
 
+          <TurnstileCaptcha onToken={handleCaptchaToken} resetKey={captchaResetKey} />
+
           <AppButton
-            title="Utwórz konto"
-            onPress={() =>
-              onSubmit({
-                email,
-                password,
-                confirmPassword,
-              })
-            }
+            title={captchaToken ? 'Utwórz konto' : 'Potwierdź CAPTCHA'}
+            onPress={submit}
           />
         </View>
 
@@ -110,12 +144,12 @@ const styles = createThemedStyles(() => StyleSheet.create({
   scroll: {
     flexGrow: 1,
     paddingHorizontal: 24,
-    paddingTop: 20,
-    paddingBottom: 50,
+    paddingTop: 8,
+    paddingBottom: 24,
   },
   backButton: {
     alignSelf: 'flex-start',
-    paddingVertical: 12,
+    paddingVertical: 8,
   },
   backText: {
     color: COLORS.white,
@@ -125,22 +159,22 @@ const styles = createThemedStyles(() => StyleSheet.create({
     color: COLORS.white,
     fontSize: 36,
     fontWeight: '800',
-    marginTop: 45,
+    marginTop: 15,
   },
   subtitle: {
     color: COLORS.muted,
     fontSize: 16,
     marginTop: 12,
-    marginBottom: 38,
+    marginBottom: 18,
   },
   form: {
-    gap: 20,
+    gap: 12,
   },
   footer: {
     flexDirection: 'row',
     justifyContent: 'center',
     flexWrap: 'wrap',
-    marginTop: 42,
+    marginTop: 20,
   },
   footerText: {
     color: COLORS.muted,

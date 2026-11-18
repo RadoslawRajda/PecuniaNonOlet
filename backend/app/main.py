@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import html
+import logging
 import os
 import sqlite3
 import time
 from contextlib import asynccontextmanager, closing
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pwdlib import PasswordHash
@@ -34,12 +36,56 @@ from app.schemas import (
     ChangePasswordResponse,
     LoginCredentials,
     LoginResponse,
-    RegisterCredentials,
+    PublicRegisterRequest,
     User,
 )
 
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
 password_hasher = PasswordHash.recommended()
 DUMMY_PASSWORD_HASH = password_hasher.hash("invalid-account-password")
+logger = logging.getLogger(__name__)
+
+
+def verify_turnstile_token(token: str, remote_ip: str | None = None) -> None:
+    secret = os.getenv("TURNSTILE_SECRET_KEY", "").strip()
+    if not secret:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Weryfikacja CAPTCHA jest chwilowo niedostępna.",
+        )
+
+    try:
+        import httpx
+
+        response = httpx.post(
+            "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+            data={"secret": secret, "response": token, **({"remoteip": remote_ip} if remote_ip else {})},
+            timeout=5.0,
+        )
+        response.raise_for_status()
+        result = response.json()
+    except (httpx.HTTPError, ValueError):
+        logger.warning("Turnstile verification service unavailable")
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Weryfikacja CAPTCHA jest chwilowo niedostępna.",
+        ) from None
+
+    if not isinstance(result, dict) or result.get("success") is not True:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Weryfikacja CAPTCHA nie powiodła się.")
+
+    expected_hostname = os.getenv("TURNSTILE_EXPECTED_HOSTNAME", "").strip().lower()
+    hostname = result.get("hostname")
+    if expected_hostname and (
+        not isinstance(hostname, str) or hostname.lower() != expected_hostname
+    ):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Weryfikacja CAPTCHA nie powiodła się.")
+
+    # Cloudflare's published test secret intentionally omits action and hostname claims.
+    is_test_secret = secret == "1x0000000000000000000000000000000AA"
+    if not is_test_secret and result.get("action") != "register":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Weryfikacja CAPTCHA nie powiodła się.")
 
 
 @asynccontextmanager
@@ -143,7 +189,11 @@ def download_local_ca() -> FileResponse:
 
 
 @app.post("/api/register", response_model=AuthResponse, status_code=201)
-def register(payload: RegisterCredentials) -> AuthResponse:
+def register(payload: PublicRegisterRequest, request: Request) -> AuthResponse:
+    verify_turnstile_token(
+        payload.captcha_token,
+        request.client.host if request.client else None,
+    )
     password_hash = password_hasher.hash(payload.password)
     with closing(connect_db()) as db:
         try:
