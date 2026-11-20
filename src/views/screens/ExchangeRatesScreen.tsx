@@ -1,3 +1,4 @@
+import {authenticatedFetch} from '../../auth/session';
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {ActivityIndicator, Animated, Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {API_URL} from '@env';
@@ -85,8 +86,8 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
     try {
       const headers = {Authorization: `Bearer ${token}`};
       const [rateResponse, accountResponse] = await Promise.all([
-        fetch(`${apiBaseUrl}/api/exchange-rates`, {headers}),
-        fetch(`${apiBaseUrl}/api/accounts`, {headers}),
+        authenticatedFetch(`${apiBaseUrl}/api/exchange-rates`, {headers}),
+        authenticatedFetch(`${apiBaseUrl}/api/accounts`, {headers}),
       ]);
       const [rateData, accountData] = await Promise.all([
         rateResponse.json().catch(() => null),
@@ -132,7 +133,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
     setError(null);
     setQuote(null);
     try {
-      const response = await fetch(`${apiBaseUrl}/api/exchange/quote`, {
+      const response = await authenticatedFetch(`${apiBaseUrl}/api/exchange/quote`, {
         method: 'POST', headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
         body: JSON.stringify({source_account_id: sourceAccount.id, destination_account_id: destinationAccount.id, source_amount_minor: sourceAmountMinor}),
       });
@@ -154,7 +155,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
     setIsExchanging(true);
     setError(null);
     try {
-      const response = await fetch(`${apiBaseUrl}/api/exchange`, {
+      const response = await authenticatedFetch(`${apiBaseUrl}/api/exchange`, {
         method: 'POST',
         headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey.current ?? `exchange-${quote.quote_id}`},
         body: JSON.stringify({quote_id: quote.quote_id}),

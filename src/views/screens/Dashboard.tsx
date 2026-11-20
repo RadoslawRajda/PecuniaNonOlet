@@ -1,3 +1,4 @@
+import {authenticatedFetch} from '../../auth/session';
 import React from 'react';
 import {
   ActivityIndicator,
@@ -63,8 +64,8 @@ export function Dashboard({
     try {
       const headers = {Authorization: `Bearer ${token}`};
       const [accountsResponse, transactionsResponse] = await Promise.all([
-        fetch(`${apiBaseUrl}/api/accounts`, {headers}),
-        fetch(`${apiBaseUrl}/api/transactions?limit=10`, {headers}),
+        authenticatedFetch(`${apiBaseUrl}/api/accounts`, {headers}),
+        authenticatedFetch(`${apiBaseUrl}/api/transactions?limit=10`, {headers}),
       ]);
       if (handleForbiddenResponse(accountsResponse, handleForbidden) ||
           handleForbiddenResponse(transactionsResponse, handleForbidden)) return;

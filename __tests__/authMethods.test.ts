@@ -21,7 +21,11 @@ describe('native authentication methods', () => {
       usePKCE: true,
       useNonce: false,
       scopes: ['openid', 'email', 'profile'],
-      additionalParameters: {nonce, prompt: 'select_account'},
+      additionalParameters: {
+        nonce,
+        prompt: 'select_account',
+        claims: JSON.stringify({id_token: {auth_time: {essential: true}}}),
+      },
     });
   });
 
@@ -36,9 +40,14 @@ describe('native authentication methods', () => {
 
     await signInWithPasskey();
 
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/passkeys/authentication/options',
+      expect.objectContaining({method: 'POST'}),
+    );
     expect(passkeyGetMock).toHaveBeenCalledWith(options);
     expect(fetchMock).toHaveBeenNthCalledWith(2,
-      'https://pecunianonolet.local:8000/api/passkeys/authentication/verify',
+      '/api/passkeys/authentication/verify',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({credential}),

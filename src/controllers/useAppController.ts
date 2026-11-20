@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Alert } from 'react-native';
-import * as Keychain from 'react-native-keychain';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {signInWithGoogle, signInWithPasskey} from '../auth/authMethods';
+import {authenticatedFetch, clearSessionTokens, loadSessionTokens, logoutRemoteSession, saveSessionTokens, subscribeAccessToken} from '../auth/session';
 
 import { API_URL } from '@env';
 
@@ -16,17 +16,11 @@ import {
 import type {UserRole} from '../models/auth';
 
 const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
-const TOKEN_STORAGE_KEY = '@app_auth_token';
 const ROLE_STORAGE_KEY = '@app_user_role';
 
 function isUserRole(value: unknown): value is UserRole {
   return value === 'user' || value === 'analyst';
 }
-
-const KEYCHAIN_OPTIONS = {
-  service: TOKEN_STORAGE_KEY,
-  accessible: Keychain.ACCESSIBLE.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-};
 
 export function useAppController() {
   const [storedScreen, setScreen] = useState<ScreenName>('loading');
@@ -47,14 +41,14 @@ export function useAppController() {
       setMfaChallenge(responseData.challenge_token);
       return;
     }
-    if (!responseData?.token || !responseData?.user) throw new Error('Serwer nie zwrócił poprawnej sesji.');
+    if (!responseData?.access_token || !responseData?.refresh_token || !responseData?.user) throw new Error('Serwer nie zwrócił poprawnej sesji.');
     const loginRole: UserRole = isUserRole(responseData.user.role) ? responseData.user.role : 'user';
     setRole(loginRole);
-    setToken(responseData.token);
+    setToken(responseData.access_token);
     setUsername(responseData.user.email ?? '');
     setMfaChallenge(null);
     await AsyncStorage.setItem(ROLE_STORAGE_KEY, loginRole);
-    await Keychain.setGenericPassword('app-auth-token', responseData.token, KEYCHAIN_OPTIONS);
+    await saveSessionTokens(responseData);
     if (loginRole === 'analyst') resetToAnalytics(); else resetToDashboard();
   }
 
@@ -95,6 +89,15 @@ export function useAppController() {
     setScreen('home');
   }, []);
 
+  useEffect(() => subscribeAccessToken(nextToken => {
+    setToken(nextToken);
+    if (nextToken === null) {
+      setRole(null);
+      void AsyncStorage.removeItem(ROLE_STORAGE_KEY);
+      resetToHome();
+    }
+  }), [resetToHome]);
+
   function resetToDashboard() {
     screenHistory.current = [];
     setScreen('dashboard');
@@ -128,9 +131,7 @@ export function useAppController() {
       const activeToken = tokenRef.current;
       if (activeToken) {
         try {
-          const response = await fetch(`${apiBaseUrl}/api/me`, {
-            headers: {Authorization: `Bearer ${activeToken}`},
-          });
+          const response = await authenticatedFetch(`${apiBaseUrl}/api/me`, {accessToken: activeToken});
           const data = await response.json().catch(() => null);
           if (response.ok && isUserRole(data?.role)) actualRole = data.role;
           else if (response.status === 401) actualRole = null;
@@ -150,17 +151,17 @@ export function useAppController() {
           if (!activeToken || !isUserRole(actualRole)) {
             setToken(null);
             setRole(null);
-            void Keychain.resetGenericPassword(KEYCHAIN_OPTIONS);
+            void clearSessionTokens();
             void AsyncStorage.removeItem(ROLE_STORAGE_KEY);
             resetToHome();
           } else {
-            if (actualRole === 'analyst') resetToAnalytics();
-            else resetToDashboard();
+            screenHistory.current = [];
+            setScreen(actualRole === 'analyst' ? 'analytics' : 'dashboard');
           }
         },
       }]);
     })();
-  }, []);
+  }, [resetToHome]);
 
   // Sprawdzanie zapisanego tokena przy starcie aplikacji
   useEffect(() => {
@@ -169,23 +170,16 @@ export function useAppController() {
 
       try {
         // Pobieranie tokena z Keychain
-        const credentials = await Keychain.getGenericPassword(
-          KEYCHAIN_OPTIONS
-        );
-
-        const savedToken = credentials
-          ? credentials.password
-          : null;
+        const savedSession = await loadSessionTokens();
+        const savedToken = savedSession?.access_token ?? null;
         const savedRole = await AsyncStorage.getItem(ROLE_STORAGE_KEY);
 
         if (savedToken) {
           try {
-            const response = await fetch(`${apiBaseUrl}/api/me`, {
+            const response = await authenticatedFetch(`${apiBaseUrl}/api/me`, {
               method: 'GET',
-              headers: {
-                'Authorization': `Bearer ${savedToken}`,
-                'Content-Type': 'application/json',
-              },
+              headers: {'Content-Type': 'application/json'},
+              accessToken: savedToken,
             });
 
             const responseData = await response.json().catch(() => null);
@@ -206,7 +200,7 @@ export function useAppController() {
               wentToDashboard = true;
             } else {
               // Usuwanie nieprawidłowego tokena z Keychain
-              await Keychain.resetGenericPassword(KEYCHAIN_OPTIONS);
+              await clearSessionTokens();
               await AsyncStorage.removeItem(ROLE_STORAGE_KEY);
               setRole(null);
               setToken(null);
@@ -275,20 +269,16 @@ export function useAppController() {
           setMfaChallenge(responseData.challenge_token);
           return;
         }
-        if (responseData.token) {
+        if (responseData.access_token && responseData.refresh_token) {
           const loginRole: UserRole = isUserRole(responseData.user?.role) ? responseData.user.role : 'user';
           setRole(loginRole);
           void AsyncStorage.setItem(ROLE_STORAGE_KEY, loginRole)
             .catch(error => console.warn('Unable to save user role', error));
-          setToken(responseData.token);
+          setToken(responseData.access_token);
           setMfaChallenge(null);
 
           // Bezpieczne zapisanie tokena w Keychain
-          await Keychain.setGenericPassword(
-            'app-auth-token',
-            responseData.token,
-            KEYCHAIN_OPTIONS
-          );
+          await saveSessionTokens(responseData);
         }
 
         if (responseData.user && responseData.user.email) {
@@ -327,16 +317,16 @@ export function useAppController() {
         body: JSON.stringify({challenge_token: mfaChallenge, code: code.trim()}),
       });
       const data = await response.json().catch(() => null);
-      if (!response.ok || !data?.token) {
+      if (!response.ok || !data?.access_token || !data?.refresh_token) {
         Alert.alert('Błąd', data?.detail || 'Nie udało się potwierdzić kodu.');
         return;
       }
       const loginRole: UserRole = isUserRole(data.user?.role) ? data.user.role : 'user';
       setRole(loginRole);
-      setToken(data.token);
+      setToken(data.access_token);
       setMfaChallenge(null);
       void AsyncStorage.setItem(ROLE_STORAGE_KEY, loginRole).catch(error => console.warn('Unable to save user role', error));
-      await Keychain.setGenericPassword('app-auth-token', data.token, KEYCHAIN_OPTIONS);
+      await saveSessionTokens(data);
       if (data.user?.email) setUsername(data.user.email);
       if (loginRole === 'analyst') resetToAnalytics(); else resetToDashboard();
     } catch (error: any) {
@@ -368,19 +358,15 @@ export function useAppController() {
       const responseData = await response.json().catch(() => null);
 
       if (response.ok && responseData) {
-        if (responseData.token) {
+        if (responseData.access_token && responseData.refresh_token) {
           const registeredRole: UserRole = isUserRole(responseData.user?.role) ? responseData.user.role : 'user';
           setRole(registeredRole);
           void AsyncStorage.setItem(ROLE_STORAGE_KEY, registeredRole)
             .catch(error => console.warn('Unable to save user role', error));
-          setToken(responseData.token);
+          setToken(responseData.access_token);
 
           // Bezpieczne zapisanie tokena w Keychain
-          await Keychain.setGenericPassword(
-            'app-auth-token',
-            responseData.token,
-            KEYCHAIN_OPTIONS
-          );
+          await saveSessionTokens(responseData);
         }
 
         if (responseData.user && responseData.user.email) {
@@ -412,20 +398,12 @@ export function useAppController() {
 
   async function logout() {
     try {
-      if (token) {
-        await fetch(`${apiBaseUrl}/api/logout`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
-      }
+      await logoutRemoteSession();
     } catch (e) {
       console.error('Błąd podczas wylogowywania:', e);
     } finally {
       // Usuwanie tokena z Keychain
-      await Keychain.resetGenericPassword(KEYCHAIN_OPTIONS);
+      await clearSessionTokens();
 
       setToken(null);
       setRole(null);
@@ -443,12 +421,10 @@ export function useAppController() {
     }
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/me`, {
+      const response = await authenticatedFetch(`${apiBaseUrl}/api/me`, {
         method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+        headers: {'Content-Type': 'application/json'},
+        accessToken: token,
       });
 
       const responseData = await response.json().catch(() => null);

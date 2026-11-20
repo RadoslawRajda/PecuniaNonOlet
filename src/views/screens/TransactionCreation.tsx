@@ -1,3 +1,4 @@
+import {authenticatedFetch} from '../../auth/session';
 import React from 'react';
 import {
   ActivityIndicator,
@@ -93,7 +94,7 @@ export function TransactionCreation({
     setIsSubmitting(true);
     setError(null);
     try {
-      const response = await fetch(`${apiBaseUrl}/api/transfers`, {
+      const response = await authenticatedFetch(`${apiBaseUrl}/api/transfers`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -124,7 +125,7 @@ export function TransactionCreation({
     } finally {
       setIsSubmitting(false);
     }
-  }, [apiBaseUrl, onClose, onCreated, token, values]);
+  }, [apiBaseUrl, handleForbidden, onClose, onCreated, token, values]);
 
   const swipePosition = React.useRef(new Animated.Value(0)).current;
   const swipeScale = React.useRef(new Animated.Value(1)).current;

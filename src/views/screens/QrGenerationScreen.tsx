@@ -1,3 +1,4 @@
+import {authenticatedFetch} from '../../auth/session';
 import React, {useEffect, useState} from 'react';
 import {ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
@@ -37,7 +38,7 @@ export function QrGenerationScreen({username, token}: QrPaymentProps) {
       setLoading(false);
       return;
     }
-    fetch(`${(API_URL ?? '').trim().replace(/\/+$/, '')}/api/accounts`, {
+    authenticatedFetch(`${(API_URL ?? '').trim().replace(/\/+$/, '')}/api/accounts`, {
       headers: {Authorization: `Bearer ${token}`},
     })
       .then(response => {

@@ -1,3 +1,4 @@
+import {authenticatedFetch} from '../../auth/session';
 import React from 'react';
 import {Alert, BackHandler, Linking, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import ChevronRight from 'lucide-react-native/icons/chevron-right';
@@ -53,7 +54,7 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
 
   React.useEffect(() => {
     if (!token) return;
-    fetch(`${apiBaseUrl}/api/mfa`, {headers: {Authorization: `Bearer ${token}`}})
+    authenticatedFetch(`${apiBaseUrl}/api/mfa`, {headers: {Authorization: `Bearer ${token}`}})
       .then(response => response.json()).then(data => setTotpEnabled(Boolean(data?.totp_enabled)))
       .catch(() => setTotpMessage('Nie udało się pobrać statusu TOTP.'));
   }, [apiBaseUrl, token]);
@@ -102,7 +103,7 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
   }
 
   async function requestTotp(path: string, body: object) {
-    const response = await fetch(`${apiBaseUrl}/api/${path}`, {
+    const response = await authenticatedFetch(`${apiBaseUrl}/api/${path}`, {
       method: 'POST', headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
       body: JSON.stringify(body),
     });
@@ -161,7 +162,7 @@ ${(data.recovery_codes ?? []).join('\n')}`,
   React.useEffect(() => {
     if (!token || isAnalyst) return;
     let active = true;
-    fetch(`${apiBaseUrl}/api/accounts`, {headers: {Authorization: `Bearer ${token}`}})
+    authenticatedFetch(`${apiBaseUrl}/api/accounts`, {headers: {Authorization: `Bearer ${token}`}})
       .then(async response => {
         if (handleForbiddenResponse(response, handleForbidden)) return;
         const data = await response.json().catch(() => null);
@@ -193,7 +194,7 @@ ${(data.recovery_codes ?? []).join('\n')}`,
       } as any);
       setIsUploading(true);
       setPhotoStatus('Wysyłam zdjęcie na serwer…');
-      const response = await fetch(`${apiBaseUrl}/api/profile/photo`, {
+      const response = await authenticatedFetch(`${apiBaseUrl}/api/profile/photo`, {
         method: 'PUT', headers: {Authorization: `Bearer ${token}`}, body: form,
       });
       if (handleForbiddenResponse(response, handleForbidden)) return;
