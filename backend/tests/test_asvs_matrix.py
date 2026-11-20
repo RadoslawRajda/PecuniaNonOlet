@@ -32,3 +32,8 @@ def test_asvs_matrix_has_every_l1_and_l2_requirement_once():
         status in {"Potwierdzone", "Częściowo", "Brak", "N/D", "Nieocenione"} and evidence.strip()
         for _, _, status, evidence in rows
     )
+    source_by_id = {row["req_id"]: row for row in source}
+    assert all(
+        source_by_id[identifier]["req_description"].strip() in evidence
+        for identifier, _, _, evidence in rows
+    )
