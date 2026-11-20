@@ -43,12 +43,13 @@ export function useAppController() {
     }
     if (!responseData?.access_token || !responseData?.refresh_token || !responseData?.user) throw new Error('Serwer nie zwrócił poprawnej sesji.');
     const loginRole: UserRole = isUserRole(responseData.user.role) ? responseData.user.role : 'user';
+    await saveSessionTokens(responseData);
     setRole(loginRole);
     setToken(responseData.access_token);
     setUsername(responseData.user.email ?? '');
     setMfaChallenge(null);
-    await AsyncStorage.setItem(ROLE_STORAGE_KEY, loginRole);
-    await saveSessionTokens(responseData);
+    void AsyncStorage.setItem(ROLE_STORAGE_KEY, loginRole)
+      .catch(error => console.warn('Unable to save user role', error));
     if (loginRole === 'analyst') resetToAnalytics(); else resetToDashboard();
   }
 
@@ -271,14 +272,13 @@ export function useAppController() {
         }
         if (responseData.access_token && responseData.refresh_token) {
           const loginRole: UserRole = isUserRole(responseData.user?.role) ? responseData.user.role : 'user';
+          await saveSessionTokens(responseData);
           setRole(loginRole);
           void AsyncStorage.setItem(ROLE_STORAGE_KEY, loginRole)
             .catch(error => console.warn('Unable to save user role', error));
           setToken(responseData.access_token);
           setMfaChallenge(null);
 
-          // Bezpieczne zapisanie tokena w Keychain
-          await saveSessionTokens(responseData);
         }
 
         if (responseData.user && responseData.user.email) {
@@ -322,11 +322,11 @@ export function useAppController() {
         return;
       }
       const loginRole: UserRole = isUserRole(data.user?.role) ? data.user.role : 'user';
+      await saveSessionTokens(data);
       setRole(loginRole);
       setToken(data.access_token);
       setMfaChallenge(null);
       void AsyncStorage.setItem(ROLE_STORAGE_KEY, loginRole).catch(error => console.warn('Unable to save user role', error));
-      await saveSessionTokens(data);
       if (data.user?.email) setUsername(data.user.email);
       if (loginRole === 'analyst') resetToAnalytics(); else resetToDashboard();
     } catch (error: any) {
@@ -360,13 +360,12 @@ export function useAppController() {
       if (response.ok && responseData) {
         if (responseData.access_token && responseData.refresh_token) {
           const registeredRole: UserRole = isUserRole(responseData.user?.role) ? responseData.user.role : 'user';
+          await saveSessionTokens(responseData);
           setRole(registeredRole);
           void AsyncStorage.setItem(ROLE_STORAGE_KEY, registeredRole)
             .catch(error => console.warn('Unable to save user role', error));
           setToken(responseData.access_token);
 
-          // Bezpieczne zapisanie tokena w Keychain
-          await saveSessionTokens(responseData);
         }
 
         if (responseData.user && responseData.user.email) {
@@ -402,8 +401,11 @@ export function useAppController() {
     } catch (e) {
       console.error('Błąd podczas wylogowywania:', e);
     } finally {
-      // Usuwanie tokena z Keychain
-      await clearSessionTokens();
+      try {
+        await clearSessionTokens();
+      } catch (error) {
+        console.warn('Unable to clear saved session', error);
+      }
 
       setToken(null);
       setRole(null);

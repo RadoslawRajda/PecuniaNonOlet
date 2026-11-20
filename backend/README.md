@@ -111,6 +111,13 @@ Rejestracja przyjmuje JSON `{"email":"test@example.com","password":"haslo1234","
 
 Odświeżanie: `POST /api/refresh` z JSON `{"refresh_token":"..."}` zwraca nową parę. Każde odświeżenie unieważnia poprzednią parę. Ponowne użycie zużytego refresh tokenu unieważnia całą rodzinę sesji. Wylogowanie: `POST /api/logout` z JSON `{"refresh_token":"..."}` unieważnia sesję bez potrzeby ważnego access tokenu. Zmiana hasła, włączenie/wyłączenie MFA oraz wykrycie ponownego użycia refresh tokenu unieważniają aktywne sesje. Jedno konto może mieć maksymalnie pięć aktywnych sesji; utworzenie kolejnej unieważnia najstarszą. Migracja do nowego modelu wymaga jednorazowego ponownego logowania; zachowuje konta i dane finansowe, ale unieważnia dotychczasowe sesje.
 
+Klient zachowuje tokeny przy 429, 503, błędzie sieci i timeoutcie odświeżania,
+uwzględnia `Retry-After` (maksymalnie 60 sekund) i nie wysyła równoległych
+żądań rotacji dla jednej sesji. Potwierdzone 401 lub niepoprawna odpowiedź 200
+kończy sesję lokalną. Jeśli serwer wykonał rotację, ale odpowiedź zginęła w sieci,
+klient nie może odzyskać nowego refresh tokenu: kolejna próba starym tokenem
+zostanie potraktowana jako replay, a użytkownik zaloguje się ponownie.
+
 Migracja 0015 oznacza stare konta połączone z Google jako konta o nieustalonym
 pochodzeniu hasła. Nie usuwa ich hashy ani metod MFA. Użytkownik, który nie zna
 historycznego hasła, może ustanowić nowe przez `POST /api/change-password` bez
