@@ -74,7 +74,7 @@ def test_migrates_existing_users_and_revokes_legacy_sessions(database_path):
         assert "sessions" not in tables
         assert db.execute("SELECT count(*) FROM auth_sessions").fetchone() == (0,)
         assert db.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0014_security_events",
+            "0015_legacy_password_origin",
         )
         assert "consumed_transaction_id" in {
             row[1] for row in db.execute("PRAGMA table_info(exchange_quotes)")
@@ -154,7 +154,7 @@ def test_failed_migration_rolls_back_ddl_and_can_be_retried(database_path):
     migrate_database()
     with sqlite3.connect(database_path) as db:
         assert db.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0014_security_events",
+            "0015_legacy_password_origin",
         )
         assert db.execute("SELECT count(*) FROM currencies").fetchone()[0] == 5
 
@@ -181,7 +181,7 @@ def test_migration_resumes_legacy_partial_currency_setup(database_path):
             ("USD",),
         ]
         assert db.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0014_security_events",
+            "0015_legacy_password_origin",
         )
 
 

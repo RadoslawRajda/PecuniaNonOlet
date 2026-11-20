@@ -27,7 +27,10 @@ from app.schemas import (
     RefreshTokenRequest,
     User,
 )
-from app.services.authentication import assert_recent_authentication, create_login_challenge
+from app.services.authentication import (
+    assert_password_or_recent_federated_identity,
+    create_login_challenge,
+)
 from app.sessions import issue_session, revoke_user_sessions, rotate_refresh_token
 
 router = APIRouter(tags=["authentication"])
@@ -165,14 +168,19 @@ def change_password(
     user = session.user
     with closing(connect_db()) as read_db:
         row = read_db.execute(
-            "SELECT password_hash,has_local_password FROM users WHERE id = ?", (user.id,)
+            "SELECT password_hash,has_local_password,password_origin FROM users WHERE id = ?",
+            (user.id,),
         ).fetchone()
-        if row is not None and not row["has_local_password"]:
-            assert_recent_authentication(read_db, session.session_id, user.id, now=int(time.time()))
-    if row is None or (
-        row["has_local_password"]
-        and not password_hasher.verify(payload.current_password or "", row["password_hash"])
-    ):
+        if row is not None:
+            assert_password_or_recent_federated_identity(
+                read_db,
+                row,
+                payload.current_password,
+                session_id=session.session_id,
+                user_id=user.id,
+                now=int(time.time()),
+            )
+    if row is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Obecne hasło jest nieprawidłowe.")
     if row["has_local_password"] and password_hasher.verify(
         payload.new_password, row["password_hash"]
@@ -197,21 +205,30 @@ def change_password(
         if active_session is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesja jest nieważna lub wygasła.")
         current = db.execute(
-            "SELECT password_hash,has_local_password FROM users WHERE id = ?", (user.id,)
+            "SELECT password_hash,has_local_password,password_origin FROM users WHERE id = ?",
+            (user.id,),
         ).fetchone()
         if (
             current is None
             or current["password_hash"] != expected_hash
             or current["has_local_password"] != row["has_local_password"]
+            or current["password_origin"] != row["password_origin"]
         ):
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Hasło zostało już zmienione. Zaloguj się ponownie."
             )
-        if not current["has_local_password"]:
-            assert_recent_authentication(db, session.session_id, user.id, now=int(time.time()))
+        if not payload.current_password:
+            assert_password_or_recent_federated_identity(
+                db,
+                current,
+                None,
+                session_id=session.session_id,
+                user_id=user.id,
+                now=int(time.time()),
+            )
         revoke_user_sessions(db, user.id, now=int(time.time()))
         db.execute(
-            "UPDATE users SET password_hash = ?,has_local_password=1 WHERE id = ?",
+            "UPDATE users SET password_hash = ?,has_local_password=1,password_origin='local' WHERE id = ?",
             (new_hash, user.id),
         )
         db.execute("DELETE FROM totp_login_challenges WHERE user_id = ?", (user.id,))

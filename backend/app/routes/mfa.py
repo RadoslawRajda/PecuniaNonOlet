@@ -23,14 +23,15 @@ from app.schemas import (
     MfaStatusResponse,
     MfaTotpCodeRequest,
 )
-from app.services.authentication import assert_recent_authentication
+from app.services.authentication import (
+    assert_password_or_recent_federated_identity,
+)
 from app.services.mfa import (
     _assert_live_session,
     _assert_not_locked,
     _record_failed_attempt,
     _reset_failed_attempts,
     _unavailable,
-    _verify_password,
     _wrong_code,
     complete_mfa_login,
 )
@@ -68,14 +69,19 @@ def setup_totp(payload: MfaSetupRequest, session: Authenticated) -> MfaSetupResp
     user = session.user
     with closing(connect_db()) as read_db:
         password_row = read_db.execute(
-            "SELECT password_hash,has_local_password FROM users WHERE id = ?", (user.id,)
+            "SELECT password_hash,has_local_password,password_origin FROM users WHERE id = ?",
+            (user.id,),
         ).fetchone()
-        if password_row is not None and not password_row["has_local_password"]:
-            assert_recent_authentication(read_db, session.session_id, user.id, now=unix_time())
-    if password_row is None or (
-        password_row["has_local_password"]
-        and not _verify_password(payload.current_password, password_row["password_hash"])
-    ):
+        if password_row is not None:
+            assert_password_or_recent_federated_identity(
+                read_db,
+                password_row,
+                payload.current_password,
+                session_id=session.session_id,
+                user_id=user.id,
+                now=unix_time(),
+            )
+    if password_row is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Obecne hasło jest nieprawidłowe.")
 
     secret = create_totp_secret()
@@ -89,18 +95,27 @@ def setup_totp(payload: MfaSetupRequest, session: Authenticated) -> MfaSetupResp
         db.execute("BEGIN IMMEDIATE")
         _assert_live_session(db, session.session_id, user.id, now)
         current = db.execute(
-            "SELECT password_hash,has_local_password FROM users WHERE id = ?", (user.id,)
+            "SELECT password_hash,has_local_password,password_origin FROM users WHERE id = ?",
+            (user.id,),
         ).fetchone()
         if (
             current is None
             or current["password_hash"] != password_row["password_hash"]
             or current["has_local_password"] != password_row["has_local_password"]
+            or current["password_origin"] != password_row["password_origin"]
         ):
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Hasło zostało zmienione. Zaloguj się ponownie."
             )
-        if not current["has_local_password"]:
-            assert_recent_authentication(db, session.session_id, user.id, now=now)
+        if not payload.current_password:
+            assert_password_or_recent_federated_identity(
+                db,
+                current,
+                None,
+                session_id=session.session_id,
+                user_id=user.id,
+                now=now,
+            )
         credential = db.execute(
             "SELECT enabled_at FROM user_totp WHERE user_id = ?", (user.id,)
         ).fetchone()
@@ -198,14 +213,19 @@ def disable_totp(payload: MfaDisableRequest, session: Authenticated) -> MfaDisab
     user = session.user
     with closing(connect_db()) as read_db:
         password_row = read_db.execute(
-            "SELECT password_hash,has_local_password FROM users WHERE id = ?", (user.id,)
+            "SELECT password_hash,has_local_password,password_origin FROM users WHERE id = ?",
+            (user.id,),
         ).fetchone()
-        if password_row is not None and not password_row["has_local_password"]:
-            assert_recent_authentication(read_db, session.session_id, user.id, now=unix_time())
-    if password_row is None or (
-        password_row["has_local_password"]
-        and not _verify_password(payload.current_password, password_row["password_hash"])
-    ):
+        if password_row is not None:
+            assert_password_or_recent_federated_identity(
+                read_db,
+                password_row,
+                payload.current_password,
+                session_id=session.session_id,
+                user_id=user.id,
+                now=unix_time(),
+            )
+    if password_row is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Obecne hasło jest nieprawidłowe.")
 
     now = unix_time()
@@ -215,18 +235,27 @@ def disable_totp(payload: MfaDisableRequest, session: Authenticated) -> MfaDisab
             db.execute("BEGIN IMMEDIATE")
             _assert_live_session(db, session.session_id, user.id, now)
             current = db.execute(
-                "SELECT password_hash,has_local_password FROM users WHERE id = ?", (user.id,)
+                "SELECT password_hash,has_local_password,password_origin FROM users WHERE id = ?",
+                (user.id,),
             ).fetchone()
             if (
                 current is None
                 or current["password_hash"] != password_row["password_hash"]
                 or current["has_local_password"] != password_row["has_local_password"]
+                or current["password_origin"] != password_row["password_origin"]
             ):
                 raise HTTPException(
                     status.HTTP_409_CONFLICT, "Hasło zostało zmienione. Zaloguj się ponownie."
                 )
-            if not current["has_local_password"]:
-                assert_recent_authentication(db, session.session_id, user.id, now=now)
+            if not payload.current_password:
+                assert_password_or_recent_federated_identity(
+                    db,
+                    current,
+                    None,
+                    session_id=session.session_id,
+                    user_id=user.id,
+                    now=now,
+                )
             credential = db.execute(
                 "SELECT * FROM user_totp WHERE user_id = ? AND enabled_at IS NOT NULL",
                 (user.id,),

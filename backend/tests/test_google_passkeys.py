@@ -383,10 +383,11 @@ def test_google_only_account_has_undisclosed_local_credential_and_cannot_passwor
     assert response.status_code == 200
     with connect_db() as db:
         row = db.execute(
-            "SELECT password_hash,webauthn_user_handle,has_local_password FROM users WHERE email='person@gmail.com'"
+            "SELECT password_hash,webauthn_user_handle,has_local_password,password_origin FROM users WHERE email='person@gmail.com'"
         ).fetchone()
         assert row["password_hash"]
         assert row["has_local_password"] == 0
+        assert row["password_origin"] == "google_generated"
         assert len(row["webauthn_user_handle"]) == 32
     password_login = client.post(
         "/api/login", json={"email": "person@gmail.com", "password": "anything"}

@@ -114,7 +114,7 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
 
   async function beginTotpSetup() {
     try {
-      const data = await requestTotp('mfa/totp/setup', {current_password: totpPassword});
+      const data = await requestTotp('mfa/totp/setup', {current_password: totpPassword || undefined});
       setTotpUri(data.provisioning_uri); setTotpSecret(data.secret);
       setTotpMessage('Zeskanuj kod lub wpisz sekret w aplikacji Authenticator.');
     } catch (error) { setTotpMessage(error instanceof Error ? error.message : 'Nie udało się rozpocząć konfiguracji.'); }
@@ -151,7 +151,7 @@ ${(data.recovery_codes ?? []).join('\n')}`,
 
   async function disableTotp() {
     try {
-      await requestTotp('mfa/totp/disable', {current_password: totpPassword, code: totpCode});
+      await requestTotp('mfa/totp/disable', {current_password: totpPassword || undefined, code: totpCode});
       setTotpEnabled(false); setTotpCode('');
       Alert.alert('TOTP wyłączone', 'Ze względów bezpieczeństwa nastąpi wylogowanie.', [
         {text: 'Zaloguj się ponownie', onPress: onLogout},
@@ -311,6 +311,7 @@ ${(data.recovery_codes ?? []).join('\n')}`,
           <Text style={styles.groupTitle}>TOTP / Authenticator</Text>
           <Text style={styles.description}>{totpEnabled ? 'TOTP jest włączone dla Twojego konta.' : 'Zabezpiecz logowanie kodem z aplikacji Authenticator.'}</Text>
           <FormInput label="Obecne hasło" value={totpPassword} onChangeText={setTotpPassword} secureTextEntry />
+          <Text style={styles.description}>Nie masz hasła do konta utworzonego przez Google? Zaloguj się ponownie przez Google i pozostaw to pole puste.</Text>
           {!totpEnabled && !totpUri ? <AppButton title="Rozpocznij konfigurację TOTP" onPress={beginTotpSetup} /> : null}
           {totpUri ? <>
             <QRCode value={totpUri} size={210} />

@@ -291,8 +291,15 @@ def google_login(payload: GoogleTokenRequest, request: Request) -> LoginResponse
             )
         created = int(time.time())
         cursor = db.execute(
-            "INSERT INTO users(email,password_hash,webauthn_user_handle,has_local_password,created_at) VALUES (?,?,?,?,?)",
-            (identity.email, random_password_hash, secrets.token_bytes(32), False, created),
+            "INSERT INTO users(email,password_hash,webauthn_user_handle,has_local_password,password_origin,created_at) VALUES (?,?,?,?,?,?)",
+            (
+                identity.email,
+                random_password_hash,
+                secrets.token_bytes(32),
+                False,
+                "google_generated",
+                created,
+            ),
         )
         if cursor.lastrowid is None:
             raise RuntimeError("The inserted user did not receive a database id.")

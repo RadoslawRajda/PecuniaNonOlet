@@ -52,6 +52,39 @@ def assert_recent_authentication(
         )
 
 
+def assert_password_or_recent_federated_identity(
+    db: sqlite3.Connection,
+    row: sqlite3.Row,
+    current_password: str | None,
+    *,
+    session_id: str,
+    user_id: int,
+    now: int,
+) -> None:
+    """Authorize a credential change without guessing a historical password's origin.
+
+    Known local passwords require the current password. A legacy Google-linked
+    password of unknown origin can be recovered only with a fresh Google login,
+    and only when the caller deliberately omits the current password.
+    """
+    from app.passwords import password_hasher
+
+    if row["has_local_password"] and current_password:
+        if password_hasher.verify(current_password, row["password_hash"]):
+            return
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Obecne hasło jest nieprawidłowe.")
+    if row["has_local_password"] and row["password_origin"] != "legacy_unknown":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Obecne hasło jest nieprawidłowe.")
+    if row["has_local_password"]:
+        method = db.execute(
+            "SELECT authentication_method FROM auth_sessions WHERE session_id=? AND user_id=?",
+            (session_id, user_id),
+        ).fetchone()
+        if method is None or method["authentication_method"] != "google":
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Obecne hasło jest nieprawidłowe.")
+    assert_recent_authentication(db, session_id, user_id, now=now)
+
+
 def claim_auth_challenge_attempt(
     db: sqlite3.Connection,
     kind: str,

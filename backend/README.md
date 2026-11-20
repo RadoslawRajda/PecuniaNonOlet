@@ -109,6 +109,13 @@ Rejestracja przyjmuje JSON `{"email":"test@example.com","password":"haslo1234","
 
 Odświeżanie: `POST /api/refresh` z JSON `{"refresh_token":"..."}` zwraca nową parę. Każde odświeżenie unieważnia poprzednią parę. Ponowne użycie zużytego refresh tokenu unieważnia całą rodzinę sesji. Wylogowanie: `POST /api/logout` z JSON `{"refresh_token":"..."}` unieważnia sesję bez potrzeby ważnego access tokenu. Zmiana hasła, włączenie/wyłączenie MFA oraz wykrycie ponownego użycia refresh tokenu unieważniają aktywne sesje. Jedno konto może mieć maksymalnie pięć aktywnych sesji; utworzenie kolejnej unieważnia najstarszą. Migracja do nowego modelu wymaga jednorazowego ponownego logowania; zachowuje konta i dane finansowe, ale unieważnia dotychczasowe sesje.
 
+Migracja 0015 oznacza stare konta połączone z Google jako konta o nieustalonym
+pochodzeniu hasła. Nie usuwa ich hashy ani metod MFA. Użytkownik, który nie zna
+historycznego hasła, może ustanowić nowe przez `POST /api/change-password` bez
+`current_password` albo rozpocząć konfigurację TOTP po świeżym logowaniu Google
+(nie starszym niż 5 minut). Podanie błędnego starego hasła nadal kończy się 401.
+Po ustawieniu nowego hasła konto przechodzi na zwykłą politykę hasła lokalnego.
+
 Gdy użytkownik ma włączone MFA, `/api/login` zamiast tokenów zwraca `mfa_required: true`, `challenge_token` i `expires_in`. Frontend kończy logowanie przez `POST /api/login/mfa`, który wydaje parę access/refresh. Szczegółowy przepływ konfiguracji, przykładowe żądania i odpowiedzi opisuje [dokumentacja MFA TOTP](docs/TOTP_MFA.md).
 
 ## Google OIDC i passkeys — lokalny development
