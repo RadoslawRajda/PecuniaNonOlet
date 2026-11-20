@@ -70,7 +70,7 @@ Macierz zawiera indywidualny status wszystkich 253 wymagań L1+L2 z przypiętego
 
 ## Weryfikacja wykonana w tej iteracji
 
-- Bieżące drzewo po zmianie Google `/reauth`: **216 testów zaliczonych** na Pythonie 3.11.0, 3.12.2 i 3.13.7; Ruff lint/format i mypy zaliczone na Pythonie 3.12.2. Klient mobilny: Jest 28 passed oraz `tsc --noEmit` zaliczone. Zależności Node użyto z istniejącej instalacji w głównym checkoutcie.
+- Bieżące drzewo po zmianie walidacji konfiguracji produkcyjnej: **221 testów zaliczonych** na Pythonie 3.11.0, 3.12.2 i 3.13.7; Ruff lint/format i mypy zaliczone na Pythonie 3.12.2. Klient mobilny po zmianie Google `/reauth`: Jest 28 passed oraz `tsc --noEmit` zaliczone. Zależności Node użyto z istniejącej instalacji w głównym checkoutcie.
 - Historyczny baseline z SHA review na Pythonie 3.11, 3.12 i 3.13: **188 testów zaliczonych** na każdej wersji. Nie jest to wynik końcowego kodu.
 - Pełny `pip-audit -r requirements.lock.txt` na niezmienionym lockfile zakończył się wynikiem `No known vulnerabilities found` (z lokalnym `--cache-dir`; bez `--no-deps`). Wynik zależy od stanu bazy podatności w dniu wykonania.
 - Testy obejmują aktywne sesje, cofanie sesji, świeże uwierzytelnienie, limity body, nagłówki, politykę haseł, prywatność pliku bazy, brak sekretów w logach, limity prób, rate limiting, migracje, transakcje i regresje finansowe.

@@ -23,6 +23,9 @@ DEBUG_ANDROID_FINGERPRINT = (
 DEBUG_ANDROID_ORIGIN = "android:apk-key-hash:-sYXRdwJA3hvue3mKpYrOZ9zSPC7b4mbgzJmdZEDO5w"
 _FINGERPRINT = re.compile(r"(?:[0-9A-F]{2}:){31}[0-9A-F]{2}\Z")
 _DOMAIN = re.compile(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\Z")
+_APPLE_TEAM_ID = re.compile(r"[A-Z0-9]{10}\Z")
+_IOS_BUNDLE_ID = re.compile(r"[A-Za-z][A-Za-z0-9-]*(?:\.[A-Za-z][A-Za-z0-9-]*)+\Z")
+_ANDROID_PACKAGE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+\Z")
 
 
 def _list_items(value: str) -> list[str]:
@@ -137,6 +140,11 @@ class Settings(BaseSettings):
     def normalize_rp_id(cls, value: object) -> object:
         return value.strip().lower() if isinstance(value, str) else value
 
+    @field_validator("trusted_hosts", mode="after")
+    @classmethod
+    def normalize_trusted_hosts(cls, value: str) -> str:
+        return ",".join(dict.fromkeys(host.lower() for host in _list_items(value)))
+
     @field_validator("android_sha256_cert_fingerprints", mode="after")
     @classmethod
     def normalize_fingerprints(cls, value: str) -> str:
@@ -170,6 +178,8 @@ class Settings(BaseSettings):
             errors.append("TRUSTED_HOSTS must list explicit production hostnames")
         if not _public_domain(self.webauthn_rp_id):
             errors.append("WEBAUTHN_RP_ID must be a public production domain")
+        if self.webauthn_rp_id not in {host.lower() for host in trusted_hosts}:
+            errors.append("TRUSTED_HOSTS must include WEBAUTHN_RP_ID for association documents")
         origins = _list_items(self.webauthn_allowed_origins)
         if not origins or any(
             not (
@@ -179,18 +189,22 @@ class Settings(BaseSettings):
             for item in origins
         ):
             errors.append("WEBAUTHN_ALLOWED_ORIGINS must contain valid production origins")
+        if f"https://{self.webauthn_rp_id}" not in origins:
+            errors.append("WEBAUTHN_ALLOWED_ORIGINS must include the RP's HTTPS origin")
         fingerprints = _list_items(self.android_sha256_cert_fingerprints)
         if any(item == DEBUG_ANDROID_FINGERPRINT for item in fingerprints):
             errors.append("ANDROID_SHA256_CERT_FINGERPRINTS must not use the debug certificate")
         if any(not _FINGERPRINT.fullmatch(item) for item in fingerprints):
             errors.append("ANDROID_SHA256_CERT_FINGERPRINTS must contain SHA-256 fingerprints")
-        if not self.apple_team_id.strip() or not self.ios_bundle_id.strip():
-            errors.append("APPLE_TEAM_ID and IOS_BUNDLE_ID must be configured")
+        if not _APPLE_TEAM_ID.fullmatch(self.apple_team_id):
+            errors.append("APPLE_TEAM_ID must be a 10-character Apple team identifier")
+        if not _IOS_BUNDLE_ID.fullmatch(self.ios_bundle_id):
+            errors.append("IOS_BUNDLE_ID must be a valid reverse-DNS bundle identifier")
         if (
-            not self.android_package_name.strip()
+            not _ANDROID_PACKAGE_NAME.fullmatch(self.android_package_name)
             or not self.android_sha256_cert_fingerprints.strip()
         ):
-            errors.append("Android app id and signing fingerprints must be configured")
+            errors.append("Android package name and signing fingerprints must be valid")
         if errors:
             raise ValueError("Invalid production configuration: " + "; ".join(errors))
         return self
