@@ -27,7 +27,7 @@ from app.schemas import (
     ExchangeResponse,
     User,
 )
-from app.services.exchanges import execute_exchange_transaction
+from app.services.exchanges import ExchangeExecution, execute_exchange_transaction
 
 router = APIRouter(prefix="/api")
 AuthenticatedUser = Annotated[User, Depends(require_roles("user"))]
@@ -134,22 +134,22 @@ def quote_response(row: sqlite3.Row) -> ExchangeQuoteResponse:
     )
 
 
-def exchange_response(row: sqlite3.Row, *, replay: bool) -> ExchangeResponse:
+def exchange_response(result: ExchangeExecution) -> ExchangeResponse:
     return ExchangeResponse(
-        transaction_id=row["id"],
-        quote_id=row["quote_id"],
+        transaction_id=result.transaction_id,
+        quote_id=result.quote_id,
         status="completed",
-        source_amount_minor=row["source_amount_minor"],
-        source_amount=format_minor_units(row["source_amount_minor"], row["source_minor_unit"]),
-        destination_amount_minor=row["destination_amount_minor"],
+        source_amount_minor=result.source_amount_minor,
+        source_amount=format_minor_units(result.source_amount_minor, result.source_minor_unit),
+        destination_amount_minor=result.destination_amount_minor,
         destination_amount=format_minor_units(
-            row["destination_amount_minor"], row["destination_minor_unit"]
+            result.destination_amount_minor, result.destination_minor_unit
         ),
-        source_currency_code=row["source_currency_code"],
-        destination_currency_code=row["destination_currency_code"],
-        exchange_rate=row["exchange_rate"],
-        created_at=timestamp(row["created_at"]),
-        idempotent_replay=replay,
+        source_currency_code=result.source_currency_code,
+        destination_currency_code=result.destination_currency_code,
+        exchange_rate=result.exchange_rate,
+        created_at=timestamp(result.created_at),
+        idempotent_replay=result.replay,
     )
 
 
@@ -288,5 +288,5 @@ def execute_exchange(
         [ip_bucket("exchange_execute", address), identity_bucket("exchange_execute", str(user.id))],
         limits=[60, 30],
     )
-    row, replay = execute_exchange_transaction(payload, user, session.session_id, idempotency_key)
-    return exchange_response(row, replay=replay)
+    result = execute_exchange_transaction(payload, user, session.session_id, idempotency_key)
+    return exchange_response(result)
