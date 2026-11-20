@@ -21,6 +21,7 @@ def test_migrates_empty_database(database_path):
             "users",
             "auth_sessions",
             "consumed_refresh_tokens",
+            "security_events",
             "currencies",
             "accounts",
             "transactions",
@@ -73,7 +74,7 @@ def test_migrates_existing_users_and_revokes_legacy_sessions(database_path):
         assert "sessions" not in tables
         assert db.execute("SELECT count(*) FROM auth_sessions").fetchone() == (0,)
         assert db.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0013_opaque_refresh_sessions",
+            "0014_security_events",
         )
         assert "consumed_transaction_id" in {
             row[1] for row in db.execute("PRAGMA table_info(exchange_quotes)")
@@ -153,7 +154,7 @@ def test_failed_migration_rolls_back_ddl_and_can_be_retried(database_path):
     migrate_database()
     with sqlite3.connect(database_path) as db:
         assert db.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0013_opaque_refresh_sessions",
+            "0014_security_events",
         )
         assert db.execute("SELECT count(*) FROM currencies").fetchone()[0] == 5
 
@@ -180,8 +181,22 @@ def test_migration_resumes_legacy_partial_currency_setup(database_path):
             ("USD",),
         ]
         assert db.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0013_opaque_refresh_sessions",
+            "0014_security_events",
         )
+
+
+def test_security_event_records_are_append_only(database_path):
+    migrate_database()
+    with sqlite3.connect(database_path) as db:
+        db.execute(
+            """INSERT INTO security_events(
+                   event_type,outcome,authentication_method,endpoint,occurred_at
+               ) VALUES ('authentication','failure','password','/api/login',1)"""
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            db.execute("UPDATE security_events SET outcome='success' WHERE id=1")
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            db.execute("DELETE FROM security_events WHERE id=1")
 
 
 def test_constraints_reject_duplicate_accounts_negative_balance_and_unknown_currency(database_path):

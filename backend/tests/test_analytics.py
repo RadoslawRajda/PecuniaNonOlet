@@ -19,7 +19,7 @@ def client(tmp_path, monkeypatch):
 def register(client, email):
     return client.post(
         "/api/register",
-        json={"email": email, "password": "strong-password", "captcha_token": "test-token"},
+        json={"email": email, "password": "violet-bridge-2026!", "captcha_token": "test-token"},
     ).json()
 
 
@@ -68,9 +68,9 @@ def insert_extra_user(database):
 
 
 def analyst_headers(client):
-    create_analyst("analyst@example.com", "analyst-password")
+    create_analyst("analyst@example.com", "violet-bridge-2026!")
     login = client.post(
-        "/api/login", json={"email": "analyst@example.com", "password": "analyst-password"}
+        "/api/login", json={"email": "analyst@example.com", "password": "violet-bridge-2026!"}
     ).json()
     return authorization(login["access_token"])
 
@@ -78,15 +78,17 @@ def analyst_headers(client):
 def test_analytics_requires_analyst_role(client):
     user = register(client, "user@example.com")
     for endpoint in ("overview", "users", "transactions"):
-        response = client.get(f"/api/analytics/{endpoint}", headers=authorization(user["access_token"]))
+        response = client.get(
+            f"/api/analytics/{endpoint}", headers=authorization(user["access_token"])
+        )
         assert response.status_code == 403
     assert client.get("/api/analytics/overview").status_code == 401
 
 
 def test_analyst_can_read_aggregates_and_paginated_users_without_secrets(client, tmp_path):
-    analyst_id = create_analyst("analyst@example.com", "analyst-password")
+    analyst_id = create_analyst("analyst@example.com", "violet-bridge-2026!")
     analyst = client.post(
-        "/api/login", json={"email": "analyst@example.com", "password": "analyst-password"}
+        "/api/login", json={"email": "analyst@example.com", "password": "violet-bridge-2026!"}
     ).json()
     register(client, "customer@example.com")
     headers = authorization(analyst["access_token"])
@@ -108,17 +110,17 @@ def test_analyst_can_read_aggregates_and_paginated_users_without_secrets(client,
     assert "token" not in serialized
     with sqlite3.connect(tmp_path / "analytics.db") as db:
         assert (
-            db.execute("SELECT count(*) FROM auth_sessions WHERE user_id = ?", (analyst_id,)).fetchone()[
-                0
-            ]
+            db.execute(
+                "SELECT count(*) FROM auth_sessions WHERE user_id = ?", (analyst_id,)
+            ).fetchone()[0]
             == 1
         )
 
 
 def test_analyst_transaction_listing_supports_bound_filters(client):
-    create_analyst("analyst@example.com", "analyst-password")
+    create_analyst("analyst@example.com", "violet-bridge-2026!")
     analyst = client.post(
-        "/api/login", json={"email": "analyst@example.com", "password": "analyst-password"}
+        "/api/login", json={"email": "analyst@example.com", "password": "violet-bridge-2026!"}
     ).json()
     customer = register(client, "customer@example.com")
     headers = authorization(analyst["access_token"])
@@ -143,9 +145,9 @@ def test_analyst_transaction_listing_supports_bound_filters(client):
 
 
 def test_analytics_pagination_is_bounded(client):
-    create_analyst("analyst@example.com", "analyst-password")
+    create_analyst("analyst@example.com", "violet-bridge-2026!")
     analyst = client.post(
-        "/api/login", json={"email": "analyst@example.com", "password": "analyst-password"}
+        "/api/login", json={"email": "analyst@example.com", "password": "violet-bridge-2026!"}
     ).json()
     headers = authorization(analyst["access_token"])
     assert client.get("/api/analytics/users?limit=101", headers=headers).status_code == 422

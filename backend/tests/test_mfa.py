@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 TEST_KEY = base64.urlsafe_b64encode(b"test-only-totp-key-material-32b!").decode()
 NOW = 1_700_000_000
-PASSWORD = "correct-password-123"
+PASSWORD = "correct-violet-bridge-2026!"
 
 
 @pytest.fixture
@@ -233,7 +233,7 @@ def test_password_change_invalidates_pre_authentication_challenges(client, monke
     changed = client.post(
         "/api/change-password",
         headers=auth(first_login["access_token"]),
-        json={"current_password": PASSWORD, "new_password": "changed-password-456"},
+        json={"current_password": PASSWORD, "new_password": "amber-river-2027#"},
     )
     assert changed.status_code == 200
     assert (
@@ -245,7 +245,7 @@ def test_password_change_invalidates_pre_authentication_challenges(client, monke
     )
     assert (
         client.post(
-            "/api/login", json={"email": "mfa@example.com", "password": "changed-password-456"}
+            "/api/login", json={"email": "mfa@example.com", "password": "amber-river-2027#"}
         ).json()["mfa_required"]
         is True
     )

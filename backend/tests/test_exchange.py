@@ -45,7 +45,7 @@ def auth(token):
 def create_user(client, email):
     return client.post(
         "/api/register",
-        json={"email": email, "password": "test-password", "captcha_token": "test-token"},
+        json={"email": email, "password": "violet-bridge-2026!", "captcha_token": "test-token"},
     ).json()
 
 
@@ -330,7 +330,9 @@ def test_exchange_is_atomic_records_rate_and_replays_idempotently(client, tmp_pa
         == 409
     )
 
-    history = client.get("/api/transactions", headers=auth(user["access_token"])).json()["transactions"]
+    history = client.get("/api/transactions", headers=auth(user["access_token"])).json()[
+        "transactions"
+    ]
     transaction = next(item for item in history if item["id"] == body["transaction_id"])
     assert transaction["type"] == "exchange"
     assert transaction["source_amount_minor"] == 10_000
@@ -753,10 +755,10 @@ def test_exchange_rolls_back_both_balances_when_ledger_insert_fails(client, tmp_
 def test_analyst_cannot_quote_or_exchange(client):
     from app.admin import create_analyst
 
-    analyst_id = create_analyst("analyst-fx@example.com", "analyst-password")
+    analyst_id = create_analyst("analyst-fx@example.com", "violet-bridge-2026!")
     assert analyst_id > 0
     login = client.post(
-        "/api/login", json={"email": "analyst-fx@example.com", "password": "analyst-password"}
+        "/api/login", json={"email": "analyst-fx@example.com", "password": "violet-bridge-2026!"}
     ).json()
     assert client.get("/api/exchange-rates", headers=auth(login["access_token"])).status_code == 403
     assert (

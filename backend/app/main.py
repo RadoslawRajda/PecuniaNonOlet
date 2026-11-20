@@ -23,7 +23,9 @@ from app.routes.google_auth import router as google_auth_router
 from app.routes.mfa import router as mfa_router
 from app.routes.passkeys import router as passkeys_router
 from app.routes.profile_photos import router as profile_photos_router
+from app.routes.sessions import router as sessions_router
 from app.routes.transfers import router as transfers_router
+from app.security_events import log_security_event
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,30 @@ async def handle_sqlite_operational_error(request: Request, exc: Exception):
 
 async def prevent_api_response_caching(request: Request, call_next):
     response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    content_security_policy = (
+        "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; "
+        "form-action 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; "
+        "connect-src 'self'"
+    )
+    if request.url.path in {"/docs", "/redoc"}:
+        # FastAPI's development documentation embeds its UI bootstrap script and
+        # loads the bundled Swagger assets from jsDelivr. Production disables docs.
+        content_security_policy = (
+            "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; "
+            "form-action 'self'; img-src 'self' data: https://cdn.jsdelivr.net; "
+            "style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
+            "script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; connect-src 'self'"
+        )
+    response.headers["Content-Security-Policy"] = content_security_policy
     if request.url.path.startswith("/api/"):
         if "no-store" not in response.headers.get("Cache-Control", "").lower():
             response.headers["Cache-Control"] = "no-store"
@@ -90,6 +116,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
     for api_router in (
         auth_router,
+        sessions_router,
         diagnostics_router,
         finance_router,
         transfers_router,
@@ -115,6 +142,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             reset_settings(token)
 
     application.middleware("http")(prevent_api_response_caching)
+    application.middleware("http")(log_security_event)
     return application
 
 

@@ -1,6 +1,10 @@
+from __future__ import annotations
+
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+
+from app.password_policy import validate_password
 
 MAX_SQLITE_INTEGER = 9_223_372_036_854_775_807
 CurrencyCode = Literal["PLN", "EUR", "USD", "GBP", "CZK"]
@@ -21,6 +25,11 @@ class LoginCredentials(BaseModel):
 
 class RegisterCredentials(LoginCredentials):
     password: str = Field(min_length=8, max_length=128)
+
+    @model_validator(mode="after")
+    def reject_common_or_contextual_password(self) -> RegisterCredentials:
+        validate_password(self.password, email=str(self.email))
+        return self
 
 
 class PublicRegisterRequest(RegisterCredentials):
@@ -54,6 +63,23 @@ class LogoutRequest(BaseModel):
     refresh_token: str | None = Field(
         default=None, min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]{43}$"
     )
+
+
+class SessionSummary(BaseModel):
+    session_id: str
+    authentication_method: Literal["legacy", "password", "google", "passkey"]
+    created_at: int
+    authenticated_at: int
+    current: bool
+
+
+class SessionListResponse(BaseModel):
+    current_session_id: str
+    sessions: list[SessionSummary]
+
+
+class RevokeSessionsResponse(BaseModel):
+    revoked_count: int
 
 
 class MfaLoginChallengeResponse(BaseModel):
@@ -117,6 +143,11 @@ class ChangePasswordRequest(BaseModel):
 
     current_password: str | None = Field(default=None, min_length=1, max_length=128)
     new_password: str = Field(min_length=8, max_length=128)
+
+    @model_validator(mode="after")
+    def reject_common_password(self) -> ChangePasswordRequest:
+        validate_password(self.new_password)
+        return self
 
 
 class ChangePasswordResponse(BaseModel):

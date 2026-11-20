@@ -419,12 +419,13 @@ def test_google_only_account_has_undisclosed_local_credential_and_cannot_passwor
     first_password = client.post(
         "/api/change-password",
         headers=headers,
-        json={"new_password": "new-local-password-123"},
+        json={"new_password": "new-local-violet-bridge-2026!"},
     )
     assert first_password.status_code == 200, first_password.text
     assert (
         client.post(
-            "/api/login", json={"email": "person@gmail.com", "password": "new-local-password-123"}
+            "/api/login",
+            json={"email": "person@gmail.com", "password": "new-local-violet-bridge-2026!"},
         ).status_code
         == 200
     )
@@ -457,7 +458,7 @@ def test_google_only_management_rejects_session_without_recent_provider_auth_tim
         client.post(
             "/api/change-password",
             headers=headers,
-            json={"new_password": "new-local-password-123"},
+            json={"new_password": "new-local-violet-bridge-2026!"},
         ).status_code
         == 401
     )
@@ -523,7 +524,8 @@ def test_google_link_requires_fresh_session_and_binds_verified_subject(client, m
             == "auth.google_linked"
         )
         db.execute(
-            "UPDATE auth_sessions SET authenticated_at=1 WHERE access_token_hash=?", (token_hash(token),)
+            "UPDATE auth_sessions SET authenticated_at=1 WHERE access_token_hash=?",
+            (token_hash(token),),
         )
     assert client.post("/api/auth/google/link/nonce", headers=headers).status_code == 401
 
@@ -803,7 +805,8 @@ def test_passkey_registration_options_require_fresh_auth_and_set_uv_rk(client, m
         ).fetchone()
         assert challenge["challenge_value"] == options["challenge"]
         db.execute(
-            "UPDATE auth_sessions SET authenticated_at=1 WHERE access_token_hash=?", (token_hash(token),)
+            "UPDATE auth_sessions SET authenticated_at=1 WHERE access_token_hash=?",
+            (token_hash(token),),
         )
     stale = client.post(
         "/api/passkeys/registration/options", headers={"Authorization": f"Bearer {token}"}
@@ -950,7 +953,8 @@ def test_passkey_delete_is_owner_scoped_and_requires_recent_auth(client):
             ("stale-key", owner_id, b"pub", 0, "Device", "[]", 1),
         )
         db.execute(
-            "UPDATE auth_sessions SET authenticated_at=1 WHERE access_token_hash=?", (token_hash(owner_token),)
+            "UPDATE auth_sessions SET authenticated_at=1 WHERE access_token_hash=?",
+            (token_hash(owner_token),),
         )
     assert (
         client.delete(

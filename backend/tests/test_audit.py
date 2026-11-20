@@ -17,7 +17,7 @@ def client(tmp_path, monkeypatch):
 def register(client, email):
     return client.post(
         "/api/register",
-        json={"email": email, "password": "strong-password", "captcha_token": "test-token"},
+        json={"email": email, "password": "violet-bridge-2026!", "captcha_token": "test-token"},
     ).json()
 
 
@@ -26,9 +26,9 @@ def auth(token):
 
 
 def analyst_login(client):
-    create_analyst("analyst@example.com", "analyst-password")
+    create_analyst("analyst@example.com", "violet-bridge-2026!")
     response = client.post(
-        "/api/login", json={"email": "analyst@example.com", "password": "analyst-password"}
+        "/api/login", json={"email": "analyst@example.com", "password": "violet-bridge-2026!"}
     )
     return auth(response.json()["access_token"])
 
@@ -89,7 +89,10 @@ def test_records_opening_financial_and_local_admin_events(client, tmp_path):
 
 def test_regular_user_cannot_read_audit_events(client):
     user = register(client, "user@example.com")
-    assert client.get("/api/analytics/audit-events", headers=auth(user["access_token"])).status_code == 403
+    assert (
+        client.get("/api/analytics/audit-events", headers=auth(user["access_token"])).status_code
+        == 403
+    )
     assert client.get("/api/analytics/audit-events").status_code == 401
 
 

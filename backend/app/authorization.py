@@ -8,7 +8,7 @@ from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import SecretStr
 
@@ -33,6 +33,7 @@ class AuthenticatedSession:
 
 
 def current_session(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),  # noqa: B008
 ) -> AuthenticatedSession:
     """Resolve an active, unexpired opaque access token to its session family."""
@@ -54,6 +55,7 @@ def current_session(
         ).fetchone()
     if row is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesja jest nieważna lub wygasła.")
+    request.state.security_user_id = row["id"]
     return AuthenticatedSession(
         session_id=row["session_id"],
         user=User(id=row["id"], email=row["email"], role=row["role_name"]),

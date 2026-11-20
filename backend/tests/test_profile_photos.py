@@ -25,7 +25,7 @@ def auth(token):
 def create_user(client, email):
     return client.post(
         "/api/register",
-        json={"email": email, "password": "test-password", "captcha_token": "test-token"},
+        json={"email": email, "password": "violet-bridge-2026!", "captcha_token": "test-token"},
     ).json()
 
 

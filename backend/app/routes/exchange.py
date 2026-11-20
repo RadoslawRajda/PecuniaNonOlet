@@ -10,12 +10,13 @@ from datetime import date, datetime, timezone
 from decimal import ROUND_HALF_EVEN, Decimal, localcontext
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
 from app.adapters.nbp_rates import NBPRateProvider, RateProvider, RateProviderUnavailable, RateTable
 from app.authorization import AuthenticatedSession, current_session, require_roles
 from app.database import connect_db
 from app.money import format_minor_units
+from app.rate_limits import client_ip, enforce_rate_limit, identity_bucket, ip_bucket
 from app.schemas import (
     CurrencyCode,
     ExchangeQuoteRequest,
@@ -154,9 +155,15 @@ def exchange_response(row: sqlite3.Row, *, replay: bool) -> ExchangeResponse:
 
 @router.get("/exchange-rates", response_model=ExchangeRatesResponse)
 def get_exchange_rates(
-    _: AuthenticatedUser,
+    user: AuthenticatedUser,
+    request: Request,
     provider: Annotated[RateProvider, Depends(get_rate_provider)],
 ) -> ExchangeRatesResponse:
+    address = client_ip(request.client.host if request.client else None)
+    enforce_rate_limit(
+        [ip_bucket("exchange_rates", address), identity_bucket("exchange_rates", str(user.id))],
+        limits=[60, 30],
+    )
     return provider_response(require_rate_table(provider))
 
 
@@ -164,8 +171,14 @@ def get_exchange_rates(
 def create_exchange_quote(
     payload: ExchangeQuoteRequest,
     user: AuthenticatedUser,
+    request: Request,
     provider: Annotated[RateProvider, Depends(get_rate_provider)],
 ) -> ExchangeQuoteResponse:
+    address = client_ip(request.client.host if request.client else None)
+    enforce_rate_limit(
+        [ip_bucket("exchange_quote", address), identity_bucket("exchange_quote", str(user.id))],
+        limits=[60, 30],
+    )
     table = require_rate_table(provider)
     with closing(connect_db()) as db, db:
         source = db.execute(
@@ -267,9 +280,13 @@ def execute_exchange(
     payload: ExchangeRequest,
     user: AuthenticatedUser,
     session: ActiveSession,
+    request: Request,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
 ) -> ExchangeResponse:
-    row, replay = execute_exchange_transaction(
-        payload, user, session.session_id, idempotency_key
+    address = client_ip(request.client.host if request.client else None)
+    enforce_rate_limit(
+        [ip_bucket("exchange_execute", address), identity_bucket("exchange_execute", str(user.id))],
+        limits=[60, 30],
     )
+    row, replay = execute_exchange_transaction(payload, user, session.session_id, idempotency_key)
     return exchange_response(row, replay=replay)

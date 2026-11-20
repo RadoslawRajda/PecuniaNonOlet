@@ -38,6 +38,11 @@ def test_diagnostics_and_health(client):
     assert "HTTPS — bezpieczne połączenie aplikacji" in page.text
     assert "<style" not in page.text
     assert page.headers["Cache-Control"] == "no-store"
+    assert page.headers["X-Content-Type-Options"] == "nosniff"
+    assert page.headers["Referrer-Policy"] == "no-referrer"
+    assert page.headers["X-Frame-Options"] == "DENY"
+    assert page.headers["Content-Security-Policy"].startswith("default-src 'none'")
+    assert "unsafe-inline" not in page.headers["Content-Security-Policy"]
     certificate = client.get("/local-root-ca.cer")
     assert certificate.status_code == 200
     assert certificate.headers["content-type"] == "application/pkix-cert"
@@ -45,6 +50,55 @@ def test_diagnostics_and_health(client):
         'filename="pecunianonolet-local-root-ca.cer"'
     )
     assert certificate.content
+
+
+def test_security_headers_are_applied_to_api_docs_and_https_responses(client):
+    api_response = client.get("/health")
+    assert api_response.headers["X-Content-Type-Options"] == "nosniff"
+    assert api_response.headers["Content-Security-Policy"].startswith("default-src 'none'")
+    assert "Strict-Transport-Security" not in api_response.headers
+
+    docs = client.get("/docs")
+    assert docs.status_code == 200
+    assert "Content-Security-Policy" in docs.headers
+    assert "object-src 'none'" in docs.headers["Content-Security-Policy"]
+    assert "frame-ancestors 'none'" in docs.headers["Content-Security-Policy"]
+
+    with TestClient(app, base_url="https://pecunianonolet.local") as https_client:
+        secure_response = https_client.get("/health")
+    assert secure_response.headers["Strict-Transport-Security"] == (
+        "max-age=31536000; includeSubDomains"
+    )
+
+
+def test_security_events_record_auth_and_access_failures_without_credentials(client, tmp_path):
+    assert (
+        client.post(
+            "/api/login",
+            json={"email": "unknown@example.com", "password": "do-not-log-this-password"},
+        ).status_code
+        == 401
+    )
+    registered = client.post(
+        "/api/register",
+        json={
+            "email": "security-events@example.com",
+            "password": "violet-bridge-2026!",
+            "captcha_token": "test-token",
+        },
+    )
+    assert registered.status_code == 201
+    assert client.get("/api/accounts").status_code == 401
+
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        events = db.execute(
+            """SELECT event_type,outcome,authentication_method,endpoint
+               FROM security_events ORDER BY id"""
+        ).fetchall()
+    assert ("authentication", "failure", "password", "/api/login") in events
+    assert ("authentication", "success", "password", "/api/register") in events
+    assert ("authorization", "failure", "bearer", "/api/accounts") in events
+    assert "do-not-log-this-password" not in repr(events)
 
 
 def test_local_domain_association_documents_match_development_apps(client):
@@ -60,7 +114,7 @@ def test_local_domain_association_documents_match_development_apps(client):
 
 
 def test_register_login_logout_and_persistence(client, tmp_path):
-    payload = {"email": "TEST@example.com", "password": "test12345"}
+    payload = {"email": "TEST@example.com", "password": "violet-bridge-2026!"}
     registered = client.post("/api/register", json={**payload, "captcha_token": "test-token"})
     assert registered.status_code == 201
     assert registered.headers["Cache-Control"] == "no-store"
@@ -90,9 +144,7 @@ def test_register_login_logout_and_persistence(client, tmp_path):
     other_token = logged_in.json()["access_token"]
     assert other_token != token
 
-    assert (
-        client.post("/api/logout", json={"refresh_token": refresh_token}).status_code == 204
-    )
+    assert client.post("/api/logout", json={"refresh_token": refresh_token}).status_code == 204
     assert client.get("/api/me", headers=auth(token)).status_code == 401
     assert client.get("/api/me", headers=auth(other_token)).status_code == 200
 
@@ -100,7 +152,11 @@ def test_register_login_logout_and_persistence(client, tmp_path):
 def test_refresh_rotates_both_tokens_and_replay_revokes_the_session_family(client):
     registered = client.post(
         "/api/register",
-        json={"email": "refresh@example.com", "password": "test12345", "captcha_token": "test-token"},
+        json={
+            "email": "refresh@example.com",
+            "password": "violet-bridge-2026!",
+            "captcha_token": "test-token",
+        },
     ).json()
     original_access = registered["access_token"]
     original_refresh = registered["refresh_token"]
@@ -123,20 +179,110 @@ def test_refresh_rotates_both_tokens_and_replay_revokes_the_session_family(clien
 def test_refresh_rejects_expired_token_and_logout_revokes_rotated_family(client, tmp_path):
     registered = client.post(
         "/api/register",
-        json={"email": "logout@example.com", "password": "test12345", "captcha_token": "test-token"},
+        json={
+            "email": "logout@example.com",
+            "password": "violet-bridge-2026!",
+            "captcha_token": "test-token",
+        },
     ).json()
-    rotated = client.post("/api/refresh", json={"refresh_token": registered["refresh_token"]}).json()
-    assert client.post("/api/logout", json={"refresh_token": rotated["refresh_token"]}).status_code == 204
+    rotated = client.post(
+        "/api/refresh", json={"refresh_token": registered["refresh_token"]}
+    ).json()
+    assert (
+        client.post("/api/logout", json={"refresh_token": rotated["refresh_token"]}).status_code
+        == 204
+    )
     assert client.get("/api/me", headers=auth(rotated["access_token"])).status_code == 401
-    assert client.post("/api/logout", json={"refresh_token": rotated["refresh_token"]}).status_code == 204
+    assert (
+        client.post("/api/logout", json={"refresh_token": rotated["refresh_token"]}).status_code
+        == 204
+    )
 
     expired = client.post(
         "/api/register",
-        json={"email": "expired-refresh@example.com", "password": "test12345", "captcha_token": "test-token"},
+        json={
+            "email": "expired-refresh@example.com",
+            "password": "violet-bridge-2026!",
+            "captcha_token": "test-token",
+        },
     ).json()
     with sqlite3.connect(tmp_path / "test.db") as db:
         db.execute("UPDATE auth_sessions SET refresh_expires_at = 1 WHERE refresh_token_hash != ''")
-    assert client.post("/api/refresh", json={"refresh_token": expired["refresh_token"]}).status_code == 401
+    assert (
+        client.post("/api/refresh", json={"refresh_token": expired["refresh_token"]}).status_code
+        == 401
+    )
+
+
+def test_sessions_can_be_listed_and_other_sessions_revoked_after_recent_auth(client):
+    credentials = {"email": "session-list@example.com", "password": "violet-bridge-2026!"}
+    first = client.post("/api/register", json={**credentials, "captcha_token": "test-token"}).json()
+    second = client.post("/api/login", json=credentials).json()
+    first_auth = auth(first["access_token"])
+
+    listed = client.get("/api/sessions", headers=first_auth)
+    assert listed.status_code == 200
+    assert len(listed.json()["sessions"]) == 2
+    assert sum(item["current"] for item in listed.json()["sessions"]) == 1
+    assert listed.headers["Cache-Control"] == "no-store"
+    second_session_id = next(
+        item["session_id"] for item in listed.json()["sessions"] if not item["current"]
+    )
+
+    revoked = client.delete(f"/api/sessions/{second_session_id}", headers=first_auth)
+    assert revoked.status_code == 204
+    assert client.get("/api/me", headers=auth(second["access_token"])).status_code == 401
+    assert client.get("/api/me", headers=first_auth).status_code == 200
+
+    client.post("/api/login", json=credentials)
+    revoke_response = client.post("/api/sessions/revoke-others", headers=first_auth)
+    assert revoke_response.status_code == 200
+    assert revoke_response.json()["revoked_count"] == 1
+    assert len(client.get("/api/sessions", headers=first_auth).json()["sessions"]) == 1
+
+
+def test_session_revocation_requires_recent_authentication_and_is_owner_scoped(client, tmp_path):
+    first = client.post(
+        "/api/register",
+        json={
+            "email": "session-owner@example.com",
+            "password": "violet-bridge-2026!",
+            "captcha_token": "test-token",
+        },
+    ).json()
+    other = client.post(
+        "/api/register",
+        json={
+            "email": "session-other@example.com",
+            "password": "violet-bridge-2026!",
+            "captcha_token": "test-token",
+        },
+    ).json()
+    other_session_id = client.get("/api/sessions", headers=auth(other["access_token"])).json()[
+        "current_session_id"
+    ]
+    first_session_id = client.get("/api/sessions", headers=auth(first["access_token"])).json()[
+        "current_session_id"
+    ]
+
+    # A fresh session cannot revoke another user's session or use IDs as an oracle.
+    response = client.delete(
+        f"/api/sessions/{other_session_id}", headers=auth(first["access_token"])
+    )
+    assert response.status_code == 404
+    assert client.get("/api/me", headers=auth(other["access_token"])).status_code == 200
+
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        db.execute(
+            "UPDATE auth_sessions SET authenticated_at=1 WHERE session_id=?",
+            (first_session_id,),
+        )
+
+    response = client.delete(
+        f"/api/sessions/{other_session_id}", headers=auth(first["access_token"])
+    )
+    assert response.status_code == 401
+    assert client.get("/api/me", headers=auth(other["access_token"])).status_code == 200
 
 
 def test_missing_expired_and_invalid_token(client, tmp_path):
@@ -146,7 +292,11 @@ def test_missing_expired_and_invalid_token(client, tmp_path):
 
     token = client.post(
         "/api/register",
-        json={"email": "user@example.com", "password": "test12345", "captcha_token": "test-token"},
+        json={
+            "email": "user@example.com",
+            "password": "violet-bridge-2026!",
+            "captcha_token": "test-token",
+        },
     ).json()["access_token"]
     with sqlite3.connect(tmp_path / "test.db") as db:
         db.execute("UPDATE auth_sessions SET access_expires_at = 1")
@@ -156,12 +306,14 @@ def test_missing_expired_and_invalid_token(client, tmp_path):
 def test_registration_validation(client):
     assert (
         client.request(
-            "POST", "/api/register", json={"email": "ok@example.com", "password": "test12345"}
+            "POST",
+            "/api/register",
+            json={"email": "ok@example.com", "password": "violet-bridge-2026!"},
         ).status_code
         == 422
     )
     for payload in (
-        {"email": "not-an-email", "password": "test12345"},
+        {"email": "not-an-email", "password": "violet-bridge-2026!"},
         {"email": "ok@example.com", "password": "short"},
     ):
         assert (
@@ -172,12 +324,50 @@ def test_registration_validation(client):
         )
 
 
+def test_password_policy_rejects_common_and_application_specific_passwords(client):
+    common = client.post(
+        "/api/register",
+        json={
+            "email": "common@example.com",
+            "password": "Password!",
+            "captcha_token": "test-token",
+        },
+    )
+    contextual = client.post(
+        "/api/register",
+        json={
+            "email": "context@example.com",
+            "password": "Pecunia2026!",
+            "captcha_token": "test-token",
+        },
+    )
+    assert common.status_code == 422
+    assert contextual.status_code == 422
+
+    registered = client.post(
+        "/api/register",
+        json={
+            "email": "change-policy@example.com",
+            "password": "violet-bridge-2026!",
+            "captcha_token": "test-token",
+        },
+    ).json()
+    assert (
+        client.post(
+            "/api/change-password",
+            headers=auth(registered["access_token"]),
+            json={"current_password": "violet-bridge-2026!", "new_password": "Password!"},
+        ).status_code
+        == 422
+    )
+
+
 def test_user_role_is_default_and_cannot_be_selected_by_registration(client, tmp_path):
     registered = client.post(
         "/api/register",
         json={
             "email": "role@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "role": "analyst",
             "captcha_token": "test-token",
         },
@@ -185,7 +375,11 @@ def test_user_role_is_default_and_cannot_be_selected_by_registration(client, tmp
     assert registered.status_code == 422
     registered = client.post(
         "/api/register",
-        json={"email": "role@example.com", "password": "test12345", "captcha_token": "test-token"},
+        json={
+            "email": "role@example.com",
+            "password": "violet-bridge-2026!",
+            "captcha_token": "test-token",
+        },
     )
     assert registered.status_code == 201
     assert registered.json()["user"]["role"] == "user"
@@ -203,18 +397,19 @@ def test_user_role_is_default_and_cannot_be_selected_by_registration(client, tmp
 
 
 def test_analyst_accounts_are_created_by_trusted_local_process(client, tmp_path):
-    analyst_id = create_analyst("analyst@example.com", "analyst-password")
+    analyst_id = create_analyst("analyst@example.com", "violet-bridge-2026!")
     with sqlite3.connect(tmp_path / "test.db") as db:
         assert db.execute(
             "SELECT role_name FROM user_roles WHERE user_id = ?", (analyst_id,)
         ).fetchone() == ("analyst",)
     logged_in = client.post(
-        "/api/login", json={"email": "analyst@example.com", "password": "analyst-password"}
+        "/api/login", json={"email": "analyst@example.com", "password": "violet-bridge-2026!"}
     )
     assert logged_in.status_code == 200
     assert logged_in.json()["user"]["role"] == "analyst"
     assert (
-        client.get("/api/me", headers=auth(logged_in.json()["access_token"])).json()["role"] == "analyst"
+        client.get("/api/me", headers=auth(logged_in.json()["access_token"])).json()["role"]
+        == "analyst"
     )
 
 
@@ -236,13 +431,13 @@ def test_role_dependency_denies_users_from_analyst_operations():
 def test_analyst_creation_rejects_invalid_password_and_duplicate_email(client):
     with pytest.raises(ValueError):
         create_analyst("weak@example.com", "short")
-    create_analyst("existing@example.com", "password-123")
+    create_analyst("existing@example.com", "violet-bridge-2026!")
     with pytest.raises(ValueError, match="już istnieje"):
-        create_analyst("existing@example.com", "password-123")
+        create_analyst("existing@example.com", "violet-bridge-2026!")
 
 
 def test_change_password_revokes_all_sessions_and_requires_reauthentication(client):
-    payload = {"email": "password@example.com", "password": "old-password"}
+    payload = {"email": "password@example.com", "password": "violet-bridge-2026!"}
     first = client.post("/api/register", json={**payload, "captcha_token": "test-token"}).json()
     second = client.post("/api/login", json=payload).json()
     other = client.post(
@@ -257,7 +452,7 @@ def test_change_password_revokes_all_sessions_and_requires_reauthentication(clie
     response = client.post(
         "/api/change-password",
         headers=auth(first["access_token"]),
-        json={"current_password": "old-password", "new_password": "new-password"},
+        json={"current_password": "violet-bridge-2026!", "new_password": "amber-river-2027#"},
     )
     assert response.status_code == 200
     assert response.json() == {
@@ -269,7 +464,7 @@ def test_change_password_revokes_all_sessions_and_requires_reauthentication(clie
     assert client.get("/api/me", headers=auth(other["access_token"])).status_code == 200
     assert client.post("/api/login", json=payload).status_code == 401
     new_login = client.post(
-        "/api/login", json={"email": "password@example.com", "password": "new-password"}
+        "/api/login", json={"email": "password@example.com", "password": "amber-river-2027#"}
     )
     assert new_login.status_code == 200
 
@@ -277,7 +472,7 @@ def test_change_password_revokes_all_sessions_and_requires_reauthentication(clie
 def test_login_racing_password_change_does_not_issue_a_stale_session(client, monkeypatch):
     from app.routes import auth as auth_routes
 
-    credentials = {"email": "racing-password@example.com", "password": "old-password"}
+    credentials = {"email": "racing-password@example.com", "password": "violet-bridge-2026!"}
     registered = client.post(
         "/api/register", json={**credentials, "captcha_token": "test-token"}
     ).json()
@@ -303,7 +498,7 @@ def test_login_racing_password_change_does_not_issue_a_stale_session(client, mon
         changed = client.post(
             "/api/change-password",
             headers=auth(registered["access_token"]),
-            json={"current_password": "old-password", "new_password": "new-password"},
+            json={"current_password": "violet-bridge-2026!", "new_password": "amber-river-2027#"},
         )
         assert changed.status_code == 200
         resume_login.set()
@@ -313,7 +508,7 @@ def test_login_racing_password_change_does_not_issue_a_stale_session(client, mon
     assert (
         client.post(
             "/api/login",
-            json={"email": credentials["email"], "password": "new-password"},
+            json={"email": credentials["email"], "password": "amber-river-2027#"},
         ).status_code
         == 200
     )
@@ -326,7 +521,7 @@ def test_database_write_contention_returns_retryable_503(client, tmp_path, monke
         "/api/register",
         json={
             "email": "busy-sender@example.com",
-            "password": "password-123",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     ).json()
@@ -334,7 +529,7 @@ def test_database_write_contention_returns_retryable_503(client, tmp_path, monke
         "/api/register",
         json={
             "email": "busy-recipient@example.com",
-            "password": "password-123",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     )
@@ -364,18 +559,18 @@ def test_change_password_requires_session_and_current_password(client):
     assert (
         client.post(
             "/api/change-password",
-            json={"current_password": "old-password", "new_password": "new-password"},
+            json={"current_password": "violet-bridge-2026!", "new_password": "amber-river-2027#"},
         ).status_code
         == 401
     )
-    credentials = {"email": "wrong-current@example.com", "password": "old-password"}
+    credentials = {"email": "wrong-current@example.com", "password": "violet-bridge-2026!"}
     token = client.post(
         "/api/register", json={**credentials, "captcha_token": "test-token"}
     ).json()["access_token"]
     response = client.post(
         "/api/change-password",
         headers=auth(token),
-        json={"current_password": "wrong-password", "new_password": "new-password"},
+        json={"current_password": "wrong-password", "new_password": "amber-river-2027#"},
     )
     assert response.status_code == 401
     assert client.get("/api/me", headers=auth(token)).status_code == 200
@@ -383,7 +578,7 @@ def test_change_password_requires_session_and_current_password(client):
 
 
 def test_change_password_validates_new_password_and_rejects_reuse(client):
-    credentials = {"email": "validation@example.com", "password": "old-password"}
+    credentials = {"email": "validation@example.com", "password": "violet-bridge-2026!"}
     token = client.post(
         "/api/register", json={**credentials, "captcha_token": "test-token"}
     ).json()["access_token"]
@@ -392,20 +587,20 @@ def test_change_password_validates_new_password_and_rejects_reuse(client):
         response = client.post(
             "/api/change-password",
             headers=headers,
-            json={"current_password": "old-password", "new_password": password},
+            json={"current_password": "violet-bridge-2026!", "new_password": password},
         )
         assert response.status_code == 422
     same_password = client.post(
         "/api/change-password",
         headers=headers,
-        json={"current_password": "old-password", "new_password": "old-password"},
+        json={"current_password": "violet-bridge-2026!", "new_password": "violet-bridge-2026!"},
     )
     assert same_password.status_code == 400
     assert client.get("/api/me", headers=headers).status_code == 200
 
 
 def test_change_password_rolls_back_session_revocation_if_password_update_fails(client, tmp_path):
-    credentials = {"email": "atomic@example.com", "password": "old-password"}
+    credentials = {"email": "atomic@example.com", "password": "violet-bridge-2026!"}
     token = client.post(
         "/api/register", json={**credentials, "captcha_token": "test-token"}
     ).json()["access_token"]
@@ -420,7 +615,7 @@ def test_change_password_rolls_back_session_revocation_if_password_update_fails(
         client.post(
             "/api/change-password",
             headers=auth(token),
-            json={"current_password": "old-password", "new_password": "new-password"},
+            json={"current_password": "violet-bridge-2026!", "new_password": "amber-river-2027#"},
         )
     assert client.get("/api/me", headers=auth(token)).status_code == 200
     assert client.post("/api/login", json=credentials).status_code == 200
@@ -431,7 +626,7 @@ def test_registration_creates_independent_currency_accounts_and_initial_ledger(c
         "/api/register",
         json={
             "email": "accounts@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     )
@@ -459,7 +654,7 @@ def test_initial_account_provisioning_is_idempotent(client, tmp_path):
         "/api/register",
         json={
             "email": "idempotent@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     )
@@ -504,7 +699,7 @@ def test_registration_rolls_back_user_accounts_and_grant_on_ledger_failure(clien
             "/api/register",
             json={
                 "email": "rollback@example.com",
-                "password": "test12345",
+                "password": "violet-bridge-2026!",
                 "captcha_token": "test-token",
             },
         )
@@ -580,7 +775,7 @@ def test_accounts_endpoint_returns_each_currency_for_the_authenticated_owner(cli
         "/api/register",
         json={
             "email": "first-account@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     ).json()
@@ -588,7 +783,7 @@ def test_accounts_endpoint_returns_each_currency_for_the_authenticated_owner(cli
         "/api/register",
         json={
             "email": "second-account@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     ).json()
@@ -605,17 +800,21 @@ def test_accounts_endpoint_returns_each_currency_for_the_authenticated_owner(cli
     assert all(isinstance(row["balance_minor"], int) for row in accounts)
     second_account_ids = {
         row["id"]
-        for row in client.get("/api/accounts", headers=auth(second["access_token"])).json()["accounts"]
+        for row in client.get("/api/accounts", headers=auth(second["access_token"])).json()[
+            "accounts"
+        ]
     }
     assert not ({row["id"] for row in accounts} & second_account_ids)
     assert client.get("/api/accounts").status_code == 401
-    analyst_id = create_analyst("read-only-analyst@example.com", "analyst-password")
+    analyst_id = create_analyst("read-only-analyst@example.com", "violet-bridge-2026!")
     assert analyst_id > 0
     analyst_login = client.post(
         "/api/login",
-        json={"email": "read-only-analyst@example.com", "password": "analyst-password"},
+        json={"email": "read-only-analyst@example.com", "password": "violet-bridge-2026!"},
     ).json()
-    assert client.get("/api/accounts", headers=auth(analyst_login["access_token"])).status_code == 403
+    assert (
+        client.get("/api/accounts", headers=auth(analyst_login["access_token"])).status_code == 403
+    )
 
 
 def test_transaction_history_is_paginated_sorted_and_shows_both_transfer_sides(client, tmp_path):
@@ -623,7 +822,7 @@ def test_transaction_history_is_paginated_sorted_and_shows_both_transfer_sides(c
         "/api/register",
         json={
             "email": "sender@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     ).json()
@@ -631,7 +830,7 @@ def test_transaction_history_is_paginated_sorted_and_shows_both_transfer_sides(c
         "/api/register",
         json={
             "email": "recipient@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     ).json()
@@ -735,7 +934,8 @@ def test_transaction_history_is_paginated_sorted_and_shows_both_transfer_sides(c
     assert all(item["counterparty_email"] == "sender@example.com" for item in transfer_records)
     assert (
         client.get(
-            f"/api/transactions/{incoming['transactions'][-1]['id']}", headers=auth(sender["access_token"])
+            f"/api/transactions/{incoming['transactions'][-1]['id']}",
+            headers=auth(sender["access_token"]),
         ).status_code
         == 404
     )
@@ -746,7 +946,7 @@ def test_transaction_details_are_owner_scoped_and_pagination_is_validated(client
         "/api/register",
         json={
             "email": "detail-sender@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     ).json()
@@ -754,7 +954,7 @@ def test_transaction_details_are_owner_scoped_and_pagination_is_validated(client
         "/api/register",
         json={
             "email": "detail-recipient@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     ).json()
@@ -784,12 +984,16 @@ def test_transaction_details_are_owner_scoped_and_pagination_is_validated(client
             idempotency_key="visible-transfer",
             created_at=123,
         )
-    detail = client.get("/api/transactions/visible-transfer", headers=auth(recipient["access_token"]))
+    detail = client.get(
+        "/api/transactions/visible-transfer", headers=auth(recipient["access_token"])
+    )
     assert detail.status_code == 200
     assert detail.json()["direction"] == "incoming"
     assert detail.json()["amount"] == "20.00"
     assert (
-        client.get("/api/transactions/visible-transfer", headers=auth(sender["access_token"])).status_code
+        client.get(
+            "/api/transactions/visible-transfer", headers=auth(sender["access_token"])
+        ).status_code
         == 200
     )
     assert (
@@ -805,7 +1009,8 @@ def test_transaction_details_are_owner_scoped_and_pagination_is_validated(client
         == 422
     )
     assert (
-        client.get("/api/transactions?offset=-1", headers=auth(sender["access_token"])).status_code == 422
+        client.get("/api/transactions?offset=-1", headers=auth(sender["access_token"])).status_code
+        == 422
     )
 
 
@@ -814,7 +1019,7 @@ def test_transfer_moves_same_currency_atomically_and_replays_idempotently(client
         "/api/register",
         json={
             "email": "transfer-sender@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     ).json()
@@ -822,13 +1027,15 @@ def test_transfer_moves_same_currency_atomically_and_replays_idempotently(client
         "/api/register",
         json={
             "email": "transfer-recipient@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     ).json()
     source_id = next(
         account["id"]
-        for account in client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
+        for account in client.get("/api/accounts", headers=auth(sender["access_token"])).json()[
+            "accounts"
+        ]
         if account["currency_code"] == "PLN"
     )
     payload = {
@@ -847,10 +1054,12 @@ def test_transfer_moves_same_currency_atomically_and_replays_idempotently(client
     assert body["recipient_email"] == "transfer-recipient@example.com"
     assert body["idempotent_replay"] is False
 
-    sender_accounts = client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
-    recipient_accounts = client.get("/api/accounts", headers=auth(recipient["access_token"])).json()[
+    sender_accounts = client.get("/api/accounts", headers=auth(sender["access_token"])).json()[
         "accounts"
     ]
+    recipient_accounts = client.get(
+        "/api/accounts", headers=auth(recipient["access_token"])
+    ).json()["accounts"]
     assert (
         next(a["balance_minor"] for a in sender_accounts if a["currency_code"] == "PLN") == 98_000
     )
@@ -880,7 +1089,9 @@ def test_transfer_moves_same_currency_atomically_and_replays_idempotently(client
         assert sum(row[0] for row in entries) == 0
 
     sender_history = client.get("/api/transactions", headers=auth(sender["access_token"])).json()
-    recipient_history = client.get("/api/transactions", headers=auth(recipient["access_token"])).json()
+    recipient_history = client.get(
+        "/api/transactions", headers=auth(recipient["access_token"])
+    ).json()
     sent = next(
         item for item in sender_history["transactions"] if item["id"] == body["transaction_id"]
     )
@@ -896,7 +1107,7 @@ def test_transfer_rejects_invalid_targets_currency_and_insufficient_funds(client
         "/api/register",
         json={
             "email": "validation-sender@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     ).json()
@@ -904,14 +1115,16 @@ def test_transfer_rejects_invalid_targets_currency_and_insufficient_funds(client
         "/api/register",
         json={
             "email": "validation-recipient@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     ).json()
-    sender_accounts = client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
-    recipient_accounts = client.get("/api/accounts", headers=auth(recipient["access_token"])).json()[
+    sender_accounts = client.get("/api/accounts", headers=auth(sender["access_token"])).json()[
         "accounts"
     ]
+    recipient_accounts = client.get(
+        "/api/accounts", headers=auth(recipient["access_token"])
+    ).json()["accounts"]
     pln_id = next(a["id"] for a in sender_accounts if a["currency_code"] == "PLN")
     eur_id = next(a["id"] for a in sender_accounts if a["currency_code"] == "EUR")
     recipient_pln_id = next(a["id"] for a in recipient_accounts if a["currency_code"] == "PLN")
@@ -979,10 +1192,11 @@ def test_transfer_rejects_invalid_targets_currency_and_insufficient_funds(client
     assert no_eur_fallback.status_code == 409
     after = client.get("/api/accounts", headers=headers).json()["accounts"]
     assert next(a["balance_minor"] for a in after if a["currency_code"] == "PLN") == 100_000
-    analyst_id = create_analyst("transfer-analyst@example.com", "analyst-password")
+    analyst_id = create_analyst("transfer-analyst@example.com", "violet-bridge-2026!")
     assert analyst_id > 0
     analyst = client.post(
-        "/api/login", json={"email": "transfer-analyst@example.com", "password": "analyst-password"}
+        "/api/login",
+        json={"email": "transfer-analyst@example.com", "password": "violet-bridge-2026!"},
     ).json()
     assert (
         client.post(
@@ -999,7 +1213,7 @@ def test_transfer_rejects_recipient_balance_overflow(client, tmp_path):
         "/api/register",
         json={
             "email": "overflow-sender@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     ).json()
@@ -1007,13 +1221,15 @@ def test_transfer_rejects_recipient_balance_overflow(client, tmp_path):
         "/api/register",
         json={
             "email": "overflow-recipient@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     ).json()
     source_id = next(
         a["id"]
-        for a in client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
+        for a in client.get("/api/accounts", headers=auth(sender["access_token"])).json()[
+            "accounts"
+        ]
         if a["currency_code"] == "PLN"
     )
     with sqlite3.connect(tmp_path / "test.db") as db:
@@ -1032,7 +1248,9 @@ def test_transfer_rejects_recipient_balance_overflow(client, tmp_path):
         },
     )
     assert response.status_code == 409
-    sender_after = client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
+    sender_after = client.get("/api/accounts", headers=auth(sender["access_token"])).json()[
+        "accounts"
+    ]
     assert next(a["balance_minor"] for a in sender_after if a["currency_code"] == "PLN") == 100_000
 
 
@@ -1041,7 +1259,7 @@ def test_concurrent_transfers_cannot_overdraw_source_account(client):
         "/api/register",
         json={
             "email": "race-sender@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     ).json()
@@ -1050,7 +1268,7 @@ def test_concurrent_transfers_cannot_overdraw_source_account(client):
             "/api/register",
             json={
                 "email": f"race-{index}@example.com",
-                "password": "test12345",
+                "password": "violet-bridge-2026!",
                 "captcha_token": "test-token",
             },
         ).json()
@@ -1058,7 +1276,9 @@ def test_concurrent_transfers_cannot_overdraw_source_account(client):
     ]
     pln_id = next(
         a["id"]
-        for a in client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
+        for a in client.get("/api/accounts", headers=auth(sender["access_token"])).json()[
+            "accounts"
+        ]
         if a["currency_code"] == "PLN"
     )
 
@@ -1077,7 +1297,9 @@ def test_concurrent_transfers_cannot_overdraw_source_account(client):
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(send, range(2)))
     assert sorted(response.status_code for response in results) == [201, 409]
-    sender_accounts = client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
+    sender_accounts = client.get("/api/accounts", headers=auth(sender["access_token"])).json()[
+        "accounts"
+    ]
     assert (
         next(a["balance_minor"] for a in sender_accounts if a["currency_code"] == "PLN") == 30_000
     )
@@ -1100,7 +1322,7 @@ def test_transfer_failure_after_balance_updates_rolls_back_everything(client, tm
         "/api/register",
         json={
             "email": "rollback-sender@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     ).json()
@@ -1108,13 +1330,15 @@ def test_transfer_failure_after_balance_updates_rolls_back_everything(client, tm
         "/api/register",
         json={
             "email": "rollback-recipient@example.com",
-            "password": "test12345",
+            "password": "violet-bridge-2026!",
             "captcha_token": "test-token",
         },
     ).json()
     pln_id = next(
         a["id"]
-        for a in client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
+        for a in client.get("/api/accounts", headers=auth(sender["access_token"])).json()[
+            "accounts"
+        ]
         if a["currency_code"] == "PLN"
     )
     with sqlite3.connect(tmp_path / "test.db") as db:
@@ -1136,7 +1360,9 @@ def test_transfer_failure_after_balance_updates_rolls_back_everything(client, tm
                 "amount_minor": 1_000,
             },
         )
-    sender_after = client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
+    sender_after = client.get("/api/accounts", headers=auth(sender["access_token"])).json()[
+        "accounts"
+    ]
     recipient_after = client.get("/api/accounts", headers=auth(recipient["access_token"])).json()[
         "accounts"
     ]
@@ -1144,4 +1370,6 @@ def test_transfer_failure_after_balance_updates_rolls_back_everything(client, tm
     assert (
         next(a["balance_minor"] for a in recipient_after if a["currency_code"] == "PLN") == 100_000
     )
-    assert client.get("/api/transactions", headers=auth(sender["access_token"])).json()["total"] == 1
+    assert (
+        client.get("/api/transactions", headers=auth(sender["access_token"])).json()["total"] == 1
+    )

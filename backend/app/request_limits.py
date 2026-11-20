@@ -8,6 +8,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 MAX_PROFILE_PHOTO_REQUEST_BYTES = 2 * 1024 * 1024 + 64 * 1024
 MAX_WEBAUTHN_REQUEST_BYTES = 32 * 1024
 MAX_GOOGLE_AUTH_REQUEST_BYTES = 10 * 1024
+MAX_AUTH_REQUEST_BYTES = 16 * 1024
+MAX_GENERAL_REQUEST_BYTES = 1024 * 1024
 
 
 class RequestBodyLimitMiddleware:
@@ -28,7 +30,16 @@ class RequestBodyLimitMiddleware:
             return MAX_WEBAUTHN_REQUEST_BYTES, "Żądanie passkey przekracza dozwolony rozmiar."
         if method == "POST" and path.startswith("/api/auth/google/"):
             return MAX_GOOGLE_AUTH_REQUEST_BYTES, "Żądanie logowania Google jest zbyt duże."
-        return None
+        if path in {
+            "/api/register",
+            "/api/login",
+            "/api/login/mfa",
+            "/api/refresh",
+            "/api/logout",
+            "/api/change-password",
+        } or path.startswith("/api/mfa/"):
+            return MAX_AUTH_REQUEST_BYTES, "Żądanie uwierzytelnienia jest zbyt duże."
+        return MAX_GENERAL_REQUEST_BYTES, "Żądanie przekracza dozwolony rozmiar."
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         policy = self._policy(scope)

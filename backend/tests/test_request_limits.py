@@ -2,7 +2,12 @@ import json
 
 import pytest
 from app.main import app
-from app.request_limits import MAX_WEBAUTHN_REQUEST_BYTES, RequestBodyLimitMiddleware
+from app.request_limits import (
+    MAX_AUTH_REQUEST_BYTES,
+    MAX_GENERAL_REQUEST_BYTES,
+    MAX_WEBAUTHN_REQUEST_BYTES,
+    RequestBodyLimitMiddleware,
+)
 from fastapi.testclient import TestClient
 
 
@@ -23,6 +28,8 @@ def client(tmp_path, monkeypatch):
     [
         ("/api/passkeys/authentication/verify", MAX_WEBAUTHN_REQUEST_BYTES + 1),
         ("/api/auth/google/login", 10 * 1024 + 1),
+        ("/api/login", MAX_AUTH_REQUEST_BYTES + 1),
+        ("/api/transfers", MAX_GENERAL_REQUEST_BYTES + 1),
     ],
 )
 def test_auth_endpoints_reject_oversized_content_length(client, path, size):
