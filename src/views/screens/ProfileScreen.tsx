@@ -1,6 +1,6 @@
 import {authenticatedFetch} from '../../auth/session';
 import React from 'react';
-import {Alert, BackHandler, Linking, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {Alert, BackHandler, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import ChevronRight from 'lucide-react-native/icons/chevron-right';
 import MapPin from 'lucide-react-native/icons/map-pin';
 import Palette from 'lucide-react-native/icons/palette';
@@ -11,7 +11,7 @@ import QRCode from 'react-native-qrcode-svg';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {launchImageLibrary, type ImageLibraryOptions} from 'react-native-image-picker';
 import {API_URL} from '@env';
-import {createPasskey, getPasskeys, reauthenticateWithGoogle, removePasskey, signInWithGoogle} from '../../auth/authMethods';
+import {createPasskey, getGoogleConnectionStatus, getPasskeys, reauthenticateWithGoogle, removePasskey, signInWithGoogle} from '../../auth/authMethods';
 
 import {AppButton, BrandLogo, FormInput} from '../components/Ui';
 import {COLORS, createThemedStyles, type ColorScheme} from '../theme';
@@ -41,6 +41,7 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
   const [totpCode, setTotpCode] = React.useState('');
   const [totpMessage, setTotpMessage] = React.useState('');
   const [passkeys, setPasskeys] = React.useState<Array<{id: string; label: string; created_at: number}>>([]);
+  const [googleLinked, setGoogleLinked] = React.useState<boolean | null>(null);
   const [passkeyMessage, setPasskeyMessage] = React.useState('');
   const [recoveryCodes, setRecoveryCodes] = React.useState<string[]>([]);
   const needsRecoveryCodeCopy = recoveryCodes.length > 0;
@@ -65,10 +66,43 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
       .catch(error => setPasskeyMessage(error instanceof Error ? error.message : 'Nie udało się pobrać passkeys.'));
   }, [token]);
 
+  React.useEffect(() => {
+    if (!token) {
+      setGoogleLinked(null);
+      return;
+    }
+    getGoogleConnectionStatus(token)
+      .then(status => setGoogleLinked(status.linked))
+      .catch(() => setGoogleLinked(null));
+  }, [token]);
+
+  function needsFreshGoogleAuthentication(error: unknown): boolean {
+    return error instanceof Error
+      && error.message === 'Zaloguj się ponownie przed zmianą metod uwierzytelniania.';
+  }
+
+  async function retryAfterGoogleReauthentication<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!token || !googleLinked || !needsFreshGoogleAuthentication(error)) throw error;
+      setPasskeyMessage('Potwierdzam tożsamość przez Google…');
+      await reauthenticateWithGoogle(token);
+      setPasskeyMessage('Tożsamość potwierdzona. Kończę operację…');
+      return operation();
+    }
+  }
+
   async function addPasskey() {
     if (!token) return;
+    if (Platform.OS === 'ios' && __DEV__) {
+      setPasskeyMessage(
+        'Passkeys nie są dostępne w lokalnym buildzie iOS. Wymagają Associated Domains, które nie działa z darmowym Apple Personal Team.'
+      );
+      return;
+    }
     try {
-      const created = await createPasskey(token);
+      const created = await retryAfterGoogleReauthentication(() => createPasskey(token));
       setPasskeys(current => [created, ...current]);
       setPasskeyMessage('Passkey została dodana.');
     } catch (error) {
@@ -80,19 +114,10 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
     if (!token) return;
     try {
       await signInWithGoogle(token);
+      setGoogleLinked(true);
       setPasskeyMessage('Konto Google zostało połączone.');
     } catch (error) {
       setPasskeyMessage(error instanceof Error ? error.message : 'Nie udało się połączyć konta Google.');
-    }
-  }
-
-  async function confirmGoogleIdentity() {
-    if (!token) return;
-    try {
-      await reauthenticateWithGoogle(token);
-      setPasskeyMessage('Tożsamość Google została potwierdzona na 5 minut.');
-    } catch (error) {
-      setPasskeyMessage(error instanceof Error ? error.message : 'Nie udało się potwierdzić tożsamości Google.');
     }
   }
 
@@ -102,7 +127,7 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
       {text: 'Usuń', style: 'destructive', onPress: async () => {
         if (!token) return;
         try {
-          await removePasskey(token, id);
+          await retryAfterGoogleReauthentication(() => removePasskey(token, id));
           setPasskeys(current => current.filter(item => item.id !== id));
           setPasskeyMessage('Passkey została usunięta.');
         } catch (error) {
@@ -311,13 +336,12 @@ ${(data.recovery_codes ?? []).join('\n')}`,
       {page === 'security' ? (
         <View style={styles.pageContent}>
           <Text style={styles.groupTitle}>Passkeys</Text>
-          <Text style={styles.description}>Logowanie kluczem zapisanym w pęku kluczy lub menedżerze haseł urządzenia. Dodawanie i usuwanie wymaga ponownego logowania w ciągu ostatnich 5 minut.</Text>
+          <Text style={styles.description}>Logowanie kluczem zapisanym w pęku kluczy lub menedżerze haseł urządzenia. Przy dodawaniu lub usuwaniu aplikacja poprosi o świeże potwierdzenie przez Google, jeśli będzie potrzebne.</Text>
           <AppButton title="Dodaj passkey" onPress={addPasskey} />
           {passkeys.map(item => <Pressable key={item.id} accessibilityRole="button" onPress={() => confirmPasskeyRemoval(item.id)} style={styles.option}>
             <Text style={styles.optionTitle}>{item.label}</Text><Text style={styles.optionHint}>Usuń</Text>
           </Pressable>)}
-          <AppButton title="Połącz konto Google" onPress={connectGoogle} secondary />
-          <AppButton title="Potwierdź tożsamość przez Google" onPress={confirmGoogleIdentity} secondary />
+          {googleLinked === false ? <AppButton title="Połącz konto Google" onPress={connectGoogle} secondary /> : null}
           {passkeyMessage ? <Text selectable style={styles.description}>{passkeyMessage}</Text> : null}
           <Text style={styles.groupTitle}>TOTP / Authenticator</Text>
           <Text style={styles.description}>{totpEnabled ? 'TOTP jest włączone dla Twojego konta.' : 'Zabezpiecz logowanie kodem z aplikacji Authenticator.'}</Text>

@@ -55,6 +55,22 @@ def google_claims(monkeypatch, claims):
     monkeypatch.setattr(id_token, "verify_oauth2_token", lambda *args, **kwargs: claims)
 
 
+def test_google_connection_status_is_private_and_reflects_link(client):
+    user_id, token = make_user()
+    headers = {"Authorization": f"Bearer {token}"}
+    assert client.get("/api/auth/google/status", headers=headers).json() == {"linked": False}
+
+    with connect_db() as db, db:
+        db.execute(
+            """INSERT INTO oauth_identities(
+                user_id,provider,issuer,subject,email_at_link,created_at
+            ) VALUES (?,'google','https://accounts.google.com','subject-1','owner@example.com',1)""",
+            (user_id,),
+        )
+
+    assert client.get("/api/auth/google/status", headers=headers).json() == {"linked": True}
+
+
 @pytest.mark.parametrize("algorithm", ["none", "HS256", "ES256"])
 def test_google_login_rejects_non_rs256_algorithm_before_verifier(client, monkeypatch, algorithm):
     from google.oauth2 import id_token

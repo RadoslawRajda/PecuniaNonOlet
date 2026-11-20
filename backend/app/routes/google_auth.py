@@ -79,6 +79,17 @@ def google_nonce(request: Request) -> dict[str, object]:
     return {"nonce": nonce, "expires_in": CHALLENGE_TTL}
 
 
+@router.get("/status")
+def google_connection_status(session: Authenticated) -> dict[str, bool]:
+    """Report whether the current user can complete Google reauthentication."""
+    with closing(connect_db()) as db:
+        linked = db.execute(
+            "SELECT 1 FROM oauth_identities WHERE user_id=? AND provider='google' LIMIT 1",
+            (session.user.id,),
+        ).fetchone()
+    return {"linked": linked is not None}
+
+
 @router.post("/link/nonce")
 def google_link_nonce(session: Authenticated, request: Request) -> dict[str, object]:
     user = session.user
