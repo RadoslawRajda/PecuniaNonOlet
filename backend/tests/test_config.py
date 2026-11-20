@@ -221,3 +221,14 @@ def test_production_app_disables_public_docs_and_rejects_unknown_hosts(tmp_path)
         )
         assert client.get("/health", headers={"host": "attacker.example"}).status_code == 400
         assert client.get("/health", headers={"host": "api.pecunia.example.com"}).status_code == 200
+        aasa = client.get(
+            "/.well-known/apple-app-site-association", headers={"host": "pecunia.example.com"}
+        )
+        asset_links = client.get(
+            "/.well-known/assetlinks.json", headers={"host": "pecunia.example.com"}
+        )
+        assert aasa.status_code == asset_links.status_code == 200
+        assert aasa.json()["webcredentials"]["apps"] == [
+            f"{settings.apple_team_id}.{settings.ios_bundle_id}"
+        ]
+        assert asset_links.json()[0]["target"]["package_name"] == settings.android_package_name
