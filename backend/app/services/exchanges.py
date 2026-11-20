@@ -12,9 +12,8 @@ from fastapi import HTTPException, status
 
 from app.audit import write_audit_event
 from app.database import connect_db
+from app.money import MAX_BALANCE_MINOR
 from app.schemas import CurrencyCode, ExchangeRequest, User
-
-MAX_BALANCE_MINOR = 9_000_000_000_000_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,7 +95,7 @@ def _replayed_exchange(
     prior = _find_execution(db, user_id=user_id, key=key)
     if prior is None:
         return None
-    if prior["kind"] != "exchange" or prior["quote_id"] != payload.quote_id:
+    if prior["kind"] != "exchange" or prior["quote_id"] != str(payload.quote_id):
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Klucz idempotencji został użyty dla innej operacji."
         )
@@ -263,7 +262,7 @@ def execute_exchange_transaction(
         replay = _replayed_exchange(db, payload, user.id, key)
         if replay is not None:
             return replay
-        quote = _usable_quote(db, payload.quote_id, user.id, now)
+        quote = _usable_quote(db, str(payload.quote_id), user.id, now)
         _check_balances(db, quote, user.id)
         _move_balances(db, quote, user.id)
         transaction_id = str(uuid.uuid4())

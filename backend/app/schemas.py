@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
+from app.money import MAX_BALANCE_MINOR
 from app.password_policy import validate_password
 
 MAX_SQLITE_INTEGER = 9_223_372_036_854_775_807
@@ -15,7 +17,7 @@ class LoginCredentials(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     email: EmailStr
-    password: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=128, repr=False)
 
     @field_validator("email", mode="before")
     @classmethod
@@ -24,7 +26,7 @@ class LoginCredentials(BaseModel):
 
 
 class RegisterCredentials(LoginCredentials):
-    password: str = Field(min_length=8, max_length=128)
+    password: str = Field(min_length=8, max_length=128, repr=False)
 
     @model_validator(mode="after")
     def reject_common_or_contextual_password(self) -> RegisterCredentials:
@@ -33,7 +35,7 @@ class RegisterCredentials(LoginCredentials):
 
 
 class PublicRegisterRequest(RegisterCredentials):
-    captcha_token: str = Field(min_length=1, max_length=2048)
+    captcha_token: str = Field(min_length=1, max_length=2048, repr=False)
 
 
 class User(BaseModel):
@@ -44,8 +46,8 @@ class User(BaseModel):
 
 class AuthResponse(BaseModel):
     user: User
-    access_token: str
-    refresh_token: str
+    access_token: str = Field(repr=False)
+    refresh_token: str = Field(repr=False)
     token_type: str = "bearer"
     expires_in: int = 15 * 60
     refresh_expires_in: int = 30 * 24 * 60 * 60
@@ -54,14 +56,16 @@ class AuthResponse(BaseModel):
 class RefreshTokenRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    refresh_token: str = Field(min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]{43}$")
+    refresh_token: str = Field(
+        min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]{43}$", repr=False
+    )
 
 
 class LogoutRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     refresh_token: str | None = Field(
-        default=None, min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]{43}$"
+        default=None, min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]{43}$", repr=False
     )
 
 
@@ -94,12 +98,12 @@ LoginResponse = AuthResponse | MfaLoginChallengeResponse
 class MfaSetupRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    current_password: str | None = Field(default=None, min_length=1, max_length=128)
+    current_password: str | None = Field(default=None, min_length=1, max_length=128, repr=False)
 
 
 class MfaSetupResponse(BaseModel):
-    secret: str
-    provisioning_uri: str
+    secret: str = Field(repr=False)
+    provisioning_uri: str = Field(repr=False)
     expires_at: int
 
 
@@ -110,27 +114,30 @@ class MfaCodeRequest(BaseModel):
         min_length=6,
         max_length=22,
         pattern=r"^(?:[0-9]{6}|(?:[A-Za-z0-9_-]{16}|[A-Za-z0-9_-]{22}))$",
+        repr=False,
     )
 
 
 class MfaLoginRequest(MfaCodeRequest):
-    challenge_token: str = Field(min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]{43}$")
+    challenge_token: str = Field(
+        min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]{43}$", repr=False
+    )
 
 
 class MfaTotpCodeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    code: str = Field(min_length=6, max_length=6, pattern=r"^[0-9]{6}$")
+    code: str = Field(min_length=6, max_length=6, pattern=r"^[0-9]{6}$", repr=False)
 
 
 class MfaEnableResponse(BaseModel):
     totp_enabled: Literal[True] = True
-    recovery_codes: list[str]
+    recovery_codes: list[str] = Field(repr=False)
     reauthentication_required: Literal[True] = True
 
 
 class MfaDisableRequest(MfaCodeRequest):
-    current_password: str | None = Field(default=None, min_length=1, max_length=128)
+    current_password: str | None = Field(default=None, min_length=1, max_length=128, repr=False)
 
 
 class MfaDisableResponse(BaseModel):
@@ -145,8 +152,8 @@ class MfaStatusResponse(BaseModel):
 class ChangePasswordRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    current_password: str | None = Field(default=None, min_length=1, max_length=128)
-    new_password: str = Field(min_length=8, max_length=128)
+    current_password: str | None = Field(default=None, min_length=1, max_length=128, repr=False)
+    new_password: str = Field(min_length=8, max_length=128, repr=False)
 
     @model_validator(mode="after")
     def reject_common_password(self) -> ChangePasswordRequest:
@@ -204,7 +211,7 @@ class TransferRequest(BaseModel):
     recipient_email: EmailStr
     source_account_id: int = Field(gt=0, le=MAX_SQLITE_INTEGER, strict=True)
     currency_code: CurrencyCode
-    amount_minor: int = Field(gt=0, le=9_000_000_000_000_000, strict=True)
+    amount_minor: int = Field(gt=0, le=MAX_BALANCE_MINOR, strict=True)
 
     @field_validator("recipient_email", mode="before")
     @classmethod
@@ -243,7 +250,7 @@ class ExchangeQuoteRequest(BaseModel):
 
     source_account_id: int = Field(gt=0, le=MAX_SQLITE_INTEGER, strict=True)
     destination_account_id: int = Field(gt=0, le=MAX_SQLITE_INTEGER, strict=True)
-    source_amount_minor: int = Field(gt=0, le=9_000_000_000_000_000, strict=True)
+    source_amount_minor: int = Field(gt=0, le=MAX_BALANCE_MINOR, strict=True)
 
 
 class ExchangeQuoteResponse(BaseModel):
@@ -269,7 +276,7 @@ class ExchangeQuoteResponse(BaseModel):
 class ExchangeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    quote_id: str = Field(min_length=36, max_length=36)
+    quote_id: UUID
 
 
 class ExchangeResponse(BaseModel):

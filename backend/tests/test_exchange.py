@@ -621,6 +621,24 @@ def test_opening_balance_idempotency_key_conflicts_cleanly(client):
     assert response.status_code == 409
 
 
+def test_exchange_requires_uuid_quote_id_without_changing_json_contract(client):
+    user = create_user(client, "quote-uuid@example.com")
+    headers = {**auth(user["access_token"]), "Idempotency-Key": "invalid-quote-id"}
+    for quote_id in ("z" * 36, "00000000-0000-0000-0000-00000000000z", 123, True):
+        assert (
+            client.post("/api/exchange", headers=headers, json={"quote_id": quote_id}).status_code
+            == 422
+        )
+    assert (
+        client.post(
+            "/api/exchange",
+            headers=headers,
+            json={"quote_id": "00000000-0000-0000-0000-000000000000"},
+        ).status_code
+        == 404
+    )
+
+
 def test_sqlite_overflowing_ids_and_offsets_are_rejected_at_api_boundary(client):
     user = create_user(client, "numeric-boundary@example.com")
     headers = auth(user["access_token"])

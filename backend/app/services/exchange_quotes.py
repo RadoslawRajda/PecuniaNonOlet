@@ -13,9 +13,9 @@ from fastapi import HTTPException, status
 
 from app.adapters.nbp_rates import RateTable
 from app.database import connect_db
+from app.money import MAX_BALANCE_MINOR
 from app.schemas import CurrencyCode, ExchangeQuoteRequest
 
-MAX_BALANCE_MINOR = 9_000_000_000_000_000
 QUOTE_TTL_SECONDS = 120
 
 

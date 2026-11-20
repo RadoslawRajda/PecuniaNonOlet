@@ -42,8 +42,8 @@ Authenticated = Annotated[AuthenticatedSession, Depends(current_session)]
 
 class GoogleTokenRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    id_token: str = Field(min_length=20, max_length=8192)
-    nonce: str = Field(min_length=32, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    id_token: str = Field(min_length=20, max_length=8192, repr=False)
+    nonce: str = Field(min_length=32, max_length=128, pattern=r"^[A-Za-z0-9_-]+$", repr=False)
 
 
 def _digest(value: str) -> str:

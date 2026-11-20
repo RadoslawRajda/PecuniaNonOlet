@@ -13,10 +13,8 @@ from fastapi import HTTPException, status
 
 from app.audit import write_audit_event
 from app.database import connect_db
-from app.money import format_minor_units
+from app.money import MAX_BALANCE_MINOR, format_minor_units
 from app.schemas import TransferRequest, TransferResponse, User
-
-MAX_BALANCE_MINOR = 9_000_000_000_000_000
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,4 +1,6 @@
-"""Small exact helpers for currency amounts shared by API route modules."""
+"""Exact currency amount helpers and the shared account balance limit."""
+
+MAX_BALANCE_MINOR = 9_000_000_000_000_000
 
 
 def format_minor_units(amount_minor: int, minor_unit: int) -> str:
