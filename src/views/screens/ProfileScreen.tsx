@@ -332,7 +332,7 @@ ${(data.recovery_codes ?? []).join('\n')}`,
   const title: Record<ProfilePage, string> = {
     main: 'Profil', currency: 'Waluta i lokalizacja', appearance: 'Wygląd',
     account: 'Dane profilu', help: 'Pomoc i informacje', security: 'Bezpieczeństwo',
-    password: hasLocalPassword === false ? 'Ustaw hasło' : 'Zmień hasło',
+    password: 'Zmień hasło',
   };
   const selectManualCurrency = (currency: string) => {
     if (locationCurrencyEnabled) setLocationCurrencyEnabled(false);
@@ -374,14 +374,12 @@ ${(data.recovery_codes ?? []).join('\n')}`,
           <Text style={styles.groupTitle}>Konto i bezpieczeństwo</Text>
           {!isAnalyst ? <MenuRow icon={Shield} title="Dane profilu" subtitle="Zdjęcie profilowe" onPress={() => setPage('account')} /> : null}
           <MenuRow icon={Shield} title="Bezpieczeństwo" subtitle={`${totpEnabled ? 'TOTP włączone' : 'TOTP wyłączone'} · ${passkeys.length} passkeys`} onPress={() => setPage('security')} />
-          <MenuRow
+          {hasLocalPassword === true ? <MenuRow
             icon={KeyRound}
-            title={hasLocalPassword === false ? 'Ustaw hasło' : 'Zmień hasło'}
-            subtitle={hasLocalPassword === false
-              ? 'Dodaj hasło do logowania lokalnego'
-              : totpEnabled ? 'Wymagane hasło i kod MFA' : 'Potwierdź obecnym hasłem'}
+            title="Zmień hasło"
+            subtitle={totpEnabled ? 'Wymagane hasło i kod MFA' : 'Potwierdź obecnym hasłem'}
             onPress={() => setPage('password')}
-          />
+          /> : null}
           <Text style={styles.groupTitle}>Inne</Text>
           <MenuRow icon={CircleHelp} title="Pomoc i informacje" onPress={() => setPage('help')} />
           <Pressable accessibilityRole="button" accessibilityLabel="Wyloguj się z aplikacji" onPress={signOut} style={({pressed}) => [styles.logoutRow, pressed && styles.pressed]}>
@@ -504,25 +502,22 @@ ${(data.recovery_codes ?? []).join('\n')}`,
           <View style={styles.infoCard}>
             <Text style={styles.userTitle}>Potwierdzenie tożsamości</Text>
             <Text style={styles.description}>
-              {hasLocalPassword === false ? 'Ustawienie hasła zakończy wszystkie aktywne sesje.' : 'Zmiana hasła zakończy wszystkie aktywne sesje.'} {totpEnabled
+              Zmiana hasła zakończy wszystkie aktywne sesje. {totpEnabled
                 ? 'Aby chronić konto, wymagamy obecnego hasła i jednorazowego kodu MFA.'
-                : hasLocalPassword === false ? 'Potwierdzisz operację świeżym logowaniem Google.' : 'Potwierdź operację obecnym hasłem.'}
+                : 'Potwierdź operację obecnym hasłem.'}
             </Text>
           </View>
-          {hasLocalPassword !== false ? <>
-            <FormInput
-              autoCapitalize="none"
-              autoComplete="current-password"
-              autoCorrect={false}
-              editable={!isChangingPassword}
-              label="Obecne hasło"
-              onChangeText={setCurrentPassword}
-              secureTextEntry
-              textContentType="password"
-              value={currentPassword}
-            />
-            {googleLinked ? <Text style={styles.description}>Możesz też pozostawić to pole puste i potwierdzić operację świeżym logowaniem Google.</Text> : null}
-          </> : null}
+          <FormInput
+            autoCapitalize="none"
+            autoComplete="current-password"
+            autoCorrect={false}
+            editable={!isChangingPassword}
+            label="Obecne hasło"
+            onChangeText={setCurrentPassword}
+            secureTextEntry
+            textContentType="password"
+            value={currentPassword}
+          />
           <FormInput
             autoCapitalize="none"
             autoComplete="new-password"
@@ -568,7 +563,7 @@ ${(data.recovery_codes ?? []).join('\n')}`,
           <AppButton
             disabled={isChangingPassword}
             onPress={submitPasswordChange}
-            title={isChangingPassword ? (hasLocalPassword === false ? 'Ustawiam hasło…' : 'Zmieniam hasło…') : hasLocalPassword === false ? 'Ustaw hasło i wyloguj' : 'Zmień hasło i wyloguj'}
+            title={isChangingPassword ? 'Zmieniam hasło…' : 'Zmień hasło i wyloguj'}
           />
         </View>
       ) : null}

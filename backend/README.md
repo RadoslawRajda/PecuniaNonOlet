@@ -93,7 +93,7 @@ zdarzeń bezpieczeństwa korzystają z konfiguracji własnej instancji aplikacji
 | `GET` | `/api/analytics/transactions` | Stronicowana lista transakcji z filtrami (rola `analyst`) |
 | `GET` | `/api/analytics/audit-events` | Stronicowany dziennik operacji finansowych i administracyjnych (rola `analyst`) |
 | `POST` | `/api/logout` | Unieważnienie tokenu |
-| `POST` | `/api/change-password` | Zmiana hasła i unieważnienie wszystkich sesji użytkownika; przy aktywnym TOTP wymaga także aktualnego kodu MFA lub kodu odzyskiwania |
+| `POST` | `/api/change-password` | Zmiana istniejącego lokalnego hasła i unieważnienie wszystkich sesji użytkownika; konta utworzone wyłącznie przez Google nie obsługują lokalnego hasła; przy aktywnym TOTP wymaga także aktualnego kodu MFA lub kodu odzyskiwania |
 | `POST` | `/api/auth/google/nonce` | Jednorazowy nonce do logowania Google OIDC |
 | `POST` | `/api/auth/google/login` | Weryfikacja Google ID tokenu i wydanie lokalnej sesji |
 | `POST` | `/api/auth/google/link/nonce` | Nonce do jawnego połączenia Google z zalogowanym kontem |

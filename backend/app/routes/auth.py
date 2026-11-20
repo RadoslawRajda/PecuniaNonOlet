@@ -194,17 +194,21 @@ def change_password(
             "SELECT password_hash,has_local_password,password_origin FROM users WHERE id = ?",
             (user.id,),
         ).fetchone()
-        if row is not None:
-            assert_password_or_recent_federated_identity(
-                read_db,
-                row,
-                payload.current_password,
-                session_id=session.session_id,
-                user_id=user.id,
-                now=int(time.time()),
+        if row is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Obecne hasło jest nieprawidłowe.")
+        if not row["has_local_password"]:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Konto utworzone przez Google nie obsługuje lokalnego hasła.",
             )
-    if row is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Obecne hasło jest nieprawidłowe.")
+        assert_password_or_recent_federated_identity(
+            read_db,
+            row,
+            payload.current_password,
+            session_id=session.session_id,
+            user_id=user.id,
+            now=int(time.time()),
+        )
     if row["has_local_password"] and password_hasher.verify(
         payload.new_password, row["password_hash"]
     ):

@@ -513,13 +513,14 @@ def test_google_only_account_has_undisclosed_local_credential_and_cannot_passwor
             "mfa_code": recovery_code,
         },
     )
-    assert first_password.status_code == 200, first_password.text
+    assert first_password.status_code == 403, first_password.text
+    assert "nie obsługuje lokalnego hasła" in first_password.json()["detail"]
     assert (
         client.post(
             "/api/login",
             json={"email": "person@gmail.com", "password": "new-local-violet-bridge-2026!"},
         ).status_code
-        == 200
+        == 401
     )
 
 
@@ -552,7 +553,7 @@ def test_google_only_management_rejects_session_without_recent_provider_auth_tim
             headers=headers,
             json={"new_password": "new-local-violet-bridge-2026!"},
         ).status_code
-        == 401
+        == 403
     )
 
 
