@@ -128,6 +128,85 @@ async def test_final_oversized_chunk_does_not_register_user(client, tmp_path):
         assert db.execute("SELECT COUNT(*) FROM auth_sessions").fetchone()[0] == 0
 
 
+@pytest.mark.anyio
+async def test_final_oversized_transfer_chunk_does_not_change_balances_or_ledger(client, tmp_path):
+    sender = client.post(
+        "/api/register",
+        json={
+            "email": "sender-limit@example.com",
+            "password": "A strong unique password 2026!",
+            "captcha_token": "test-token",
+        },
+    ).json()
+    client.post(
+        "/api/register",
+        json={
+            "email": "recipient-limit@example.com",
+            "password": "A strong unique password 2026!",
+            "captcha_token": "test-token",
+        },
+    )
+    token = sender["access_token"]
+    accounts = client.get("/api/accounts", headers={"Authorization": f"Bearer {token}"}).json()
+    source_id = next(
+        account["id"] for account in accounts["accounts"] if account["currency_code"] == "PLN"
+    )
+    payload = json.dumps(
+        {
+            "recipient_email": "recipient-limit@example.com",
+            "source_account_id": source_id,
+            "currency_code": "PLN",
+            "amount_minor": 100,
+        }
+    ).encode()
+    body = payload + b" " * (MAX_GENERAL_REQUEST_BYTES + 1 - len(payload))
+    chunks = [
+        {"type": "http.request", "body": payload, "more_body": True},
+        {"type": "http.request", "body": body[len(payload) :], "more_body": False},
+    ]
+    sent = []
+
+    async def receive():
+        return chunks.pop(0)
+
+    async def send(message):
+        sent.append(message)
+
+    with sqlite3.connect(tmp_path / "request-limits.db") as db:
+        before = db.execute(
+            "SELECT balance_minor FROM accounts WHERE id=?", (source_id,)
+        ).fetchone()[0]
+        transactions_before = db.execute("SELECT count(*) FROM transactions").fetchone()[0]
+        ledger_before = db.execute("SELECT count(*) FROM ledger_entries").fetchone()[0]
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/api/transfers",
+        "raw_path": b"/api/transfers",
+        "query_string": b"",
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"authorization", f"Bearer {token}".encode()),
+            (b"idempotency-key", b"oversized-transfer-final-chunk"),
+        ],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+    }
+    await client.app(scope, receive, send)
+
+    assert [event["status"] for event in sent if event["type"] == "http.response.start"] == [413]
+    with sqlite3.connect(tmp_path / "request-limits.db") as db:
+        assert (
+            db.execute("SELECT balance_minor FROM accounts WHERE id=?", (source_id,)).fetchone()[0]
+            == before
+        )
+        assert db.execute("SELECT count(*) FROM transactions").fetchone()[0] == transactions_before
+        assert db.execute("SELECT count(*) FROM ledger_entries").fetchone()[0] == ledger_before
+
+
 def test_valid_registration_at_body_limit(client, tmp_path):
     payload = json.dumps(
         {
