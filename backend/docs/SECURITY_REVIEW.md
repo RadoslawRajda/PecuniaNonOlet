@@ -28,6 +28,14 @@ Przegląd dotyczy backendu na branchu `feature/backend-hardening` oraz bieżący
 | Request validation | Odpowiedzi 422 nie odbijają wejściowych wartości, aby nie ujawnić haseł i tokenów | Wymaga dalszego przeglądu pozostałych ścieżek logowania i wyjątków |
 | Operacje finansowe | Transakcje DB, idempotencja, kontrola właściciela rachunku, blokada współbieżności i audyt w tej samej transakcji | SQLite jest przeznaczone dla lokalnego MVP; zakres testów opisano niżej |
 
+### Polityka WebAuthn i OIDC
+
+- Passkeys są weryfikowane przez bibliotekę `webauthn`; wymagane jest User Verification, właściwy typ ceremonii, challenge, RP ID i origin. Discoverable login wymaga `userHandle` powiązanego z kontem oraz zgodności `id` z `rawId`.
+- `crossOrigin` musi mieć wartość `false` lub być pominięte, a `topOrigin` nie może występować. Reguła dotyczy rejestracji i asercji; testy odrzucają każdą z trzech niedozwolonych kombinacji.
+- `signCount=0` jest akceptowany, także przy powtórnych asercjach. Backend nie interpretuje flag backup eligibility/state (BE/BS), nie przechowuje ich i nie używa ich do autoryzacji ani oceny ryzyka. To świadoma polityka dla passkeys synchronizowanych; nie zapewnia detekcji klonowania opartej o licznik urządzenia.
+- Google identity jest kluczowana po providerze, kanonicznym issuerze i subject. Reautoryzacja do zmian wrażliwych wymaga świeżego `auth_time`; sama nowa sesja, nonce ani `prompt=select_account` nie są uznawane za dowód świeżego logowania. Jeśli Google nie zwróci `auth_time`, operacja jest odrzucana.
+- Dla logowania mobilnego klient używa Authorization Code + PKCE w systemowym flow AppAuth. ID token Google jest tylko wejściem do backendowego OIDC verifiera; API wydaje własne opaque sesje.
+
 ## Konkretne kontrole i testy ASVS
 
 Kontrole dotyczące sesji i uwierzytelniania zostały sprawdzone w kodzie oraz testach, w tym rotacja refresh tokenu, wykrywanie jego ponownego użycia, unieważnianie rodziny, ograniczenia liczby sesji, świeżość reautoryzacji, weryfikacja OIDC, WebAuthn UV i wyzwania jednorazowe. Testy integracyjne znajdują się przede wszystkim w `tests/test_app.py`, `tests/test_google_passkeys.py`, `tests/test_mfa.py` i `tests/test_rate_limits.py`. Kontrole finansowe oraz spójność transakcji są pokryte w `tests/test_exchange.py`, `tests/test_audit.py` i `tests/test_analytics.py`.
@@ -48,6 +56,8 @@ To nie stanowi pełnej oceny wszystkich 183 wymagań L2. Szczegółowa macierz r
 - `pip-audit -r requirements.lock.txt`: **brak znanych podatności** przy ostatnim uruchomieniu. To wynik bazy advisory w chwili audytu, nie gwarancja bezpieczeństwa zależności.
 - Testy obejmują aktywne sesje, cofanie sesji, świeże uwierzytelnienie, limity body, nagłówki, politykę haseł, prywatność pliku bazy, brak sekretów w logach, limity prób, rate limiting, migracje, transakcje i regresje finansowe.
 - Nie wykonano testu launchera, pełnego builda mobilnego ani testów end-to-end na iOS/Android.
+
+Źródła standardów: [OWASP ASVS 5.0.0](https://github.com/OWASP/ASVS/tree/v5.0.0), [WebAuthn Level 3](https://www.w3.org/TR/webauthn-3/), [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html), [OAuth Security BCP RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html), [PKCE RFC 7636](https://www.rfc-editor.org/rfc/rfc7636.html), [Native Apps RFC 8252](https://www.rfc-editor.org/rfc/rfc8252.html) i [JWT BCP RFC 8725](https://www.rfc-editor.org/rfc/rfc8725.html).
 
 ## Otwarte punkty przed deklaracją zgodności ASVS L2
 
