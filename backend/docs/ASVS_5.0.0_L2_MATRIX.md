@@ -14,7 +14,7 @@ Wykaz poniżej obejmuje wszystkie 253 wymagania L1+L2 ze źródłowego CSV. Każ
 
 ## Wyniki testów dla backendu
 
-- Bieżące lokalne drzewo: `pytest` 213 passed na Pythonie 3.11.0, 3.12.2 i 3.13.7; Ruff lint, Ruff format i mypy zaliczone na Pythonie 3.12.2. Wynik końcowy trzeba ponowić po dalszych zmianach kodu.
+- Po commicie `2fc686e`: `pytest` 213 passed na Pythonie 3.11.0, 3.12.2 i 3.13.7. Po zmianie opisów OpenAPI: 214 passed na Pythonie 3.12.2 oraz Ruff lint, Ruff format i mypy zaliczone. Wynik dla 3.11/3.13 trzeba ponowić po ostatniej zmianie kodu.
 - Historyczny baseline na SHA review: Python 3.11, 3.12 i 3.13 — 188 passed oraz Ruff/mypy. Nie jest to wynik bieżącego drzewa.
 - Bieżący `pip-audit -r requirements.lock.txt` nie zakończył się oceną: izolowane środowisko nie rozwiązuje `pypi.org` (także przy `--disable-pip --no-deps`). Poprzedni wynik bez znanych podatności jest historyczny i nie dowodzi stanu bieżącego lockfile.
 - Zakres nie obejmuje iOS/Android end-to-end, rzeczywistych zewnętrznych Google/Cloudflare/NBP, produkcyjnej konfiguracji TLS ani operacyjnego monitoringu.

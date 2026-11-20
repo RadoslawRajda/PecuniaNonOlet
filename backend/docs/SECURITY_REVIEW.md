@@ -68,7 +68,7 @@ Macierz zawiera indywidualny status wszystkich 253 wymagań L1+L2 z przypiętego
 
 ## Weryfikacja wykonana w tej iteracji
 
-- Bieżący stan lokalny: **213 testów zaliczonych** na Pythonie 3.11.0, 3.12.2 i 3.13.7; Ruff lint/format oraz mypy zaliczone na Pythonie 3.12.2. Wynik trzeba ponowić po dalszych zmianach kodu.
+- Po commicie `2fc686e`: **213 testów zaliczonych** na Pythonie 3.11.0, 3.12.2 i 3.13.7. Po zmianie opisów OpenAPI: 214 testów zaliczonych na Pythonie 3.12.2 oraz Ruff lint/format i mypy zaliczone. Wynik dla 3.11/3.13 trzeba ponowić po ostatniej zmianie kodu.
 - Historyczny baseline z SHA review na Pythonie 3.11, 3.12 i 3.13: **188 testów zaliczonych** na każdej wersji. Nie jest to wynik końcowego kodu.
 - Bieżący `pip-audit -r requirements.lock.txt` nie zakończył się oceną: izolowane środowisko nie rozwiązuje `pypi.org`, również przy `--disable-pip --no-deps`. Historyczny wynik bez znanych podatności nie dowodzi stanu bieżącego lockfile.
 - Testy obejmują aktywne sesje, cofanie sesji, świeże uwierzytelnienie, limity body, nagłówki, politykę haseł, prywatność pliku bazy, brak sekretów w logach, limity prób, rate limiting, migracje, transakcje i regresje finansowe.
