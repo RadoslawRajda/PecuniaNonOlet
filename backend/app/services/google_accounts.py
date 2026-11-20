@@ -270,11 +270,13 @@ def reauthenticate_google_identity(
     if not allowed:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wyzwanie Google wygasło.")
     identity = verify_identity()
-    if (
-        identity.authenticated_at is None
-        or identity.authenticated_at > now + 30
-        or now - identity.authenticated_at > 300
-    ):
+    if identity.authenticated_at is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Google nie zwrócił wymaganego potwierdzenia wieku sesji. "
+            "Skonfiguruj Session age claims dla aplikacji Google.",
+        )
+    if identity.authenticated_at > now + 30 or now - identity.authenticated_at > 300:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "Google nie potwierdził świeżego logowania."
         )

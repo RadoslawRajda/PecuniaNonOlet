@@ -1215,7 +1215,9 @@ def test_google_reauthentication_requires_bound_challenge_matching_identity_and_
     google_claims(monkeypatch, claims)
     assert client.post("/api/auth/google/reauth", headers=headers, json=payload).status_code == 401
     claims.pop("auth_time")
-    assert client.post("/api/auth/google/reauth", headers=headers, json=payload).status_code == 401
+    missing_claim = client.post("/api/auth/google/reauth", headers=headers, json=payload)
+    assert missing_claim.status_code == 503
+    assert "Session age claims" in missing_claim.json()["detail"]
     claims["auth_time"] = "invalid"
     assert client.post("/api/auth/google/reauth", headers=headers, json=payload).status_code == 401
     claims["auth_time"] = int(time.time())
