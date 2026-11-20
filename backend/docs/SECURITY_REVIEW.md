@@ -70,7 +70,7 @@ Macierz zawiera indywidualny status wszystkich 253 wymagań L1+L2 z przypiętego
 
 - Commit `e81356d`: **214 testów zaliczonych** na Pythonie 3.11.0, 3.12.2 i 3.13.7; Ruff lint/format i mypy zaliczone na Pythonie 3.12.2. Klient mobilny: Jest 28 passed oraz `tsc --noEmit` zaliczone. Zależności Node użyto z istniejącej instalacji w głównym checkoutcie.
 - Historyczny baseline z SHA review na Pythonie 3.11, 3.12 i 3.13: **188 testów zaliczonych** na każdej wersji. Nie jest to wynik końcowego kodu.
-- Bieżący `pip-audit -r requirements.lock.txt` nie zakończył się oceną: izolowane środowisko nie rozwiązuje `pypi.org`, również przy `--disable-pip --no-deps`. Historyczny wynik bez znanych podatności nie dowodzi stanu bieżącego lockfile.
+- Dla commita `e6d790f` pełny `pip-audit -r requirements.lock.txt` zakończył się wynikiem `No known vulnerabilities found` (z lokalnym `--cache-dir`; bez `--no-deps`). Wynik zależy od stanu bazy podatności w dniu wykonania.
 - Testy obejmują aktywne sesje, cofanie sesji, świeże uwierzytelnienie, limity body, nagłówki, politykę haseł, prywatność pliku bazy, brak sekretów w logach, limity prób, rate limiting, migracje, transakcje i regresje finansowe.
 - Testy jednostkowe launchera są w `tests/test_launcher.py`, lecz nie wykonano rzeczywistego uruchomienia Windows, pełnego builda mobilnego ani testów end-to-end na iOS/Android.
 

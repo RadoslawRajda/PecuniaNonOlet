@@ -16,7 +16,7 @@ Wykaz poniżej obejmuje wszystkie 253 wymagania L1+L2 ze źródłowego CSV. Każ
 
 - Commit `e81356d`: `pytest` 214 passed na Pythonie 3.11.0, 3.12.2 i 3.13.7; Ruff lint, Ruff format i mypy zaliczone na Pythonie 3.12.2. Testy klienta: Jest 28 passed oraz `tsc --noEmit` zaliczone.
 - Historyczny baseline na SHA review: Python 3.11, 3.12 i 3.13 — 188 passed oraz Ruff/mypy. Nie jest to wynik bieżącego drzewa.
-- Bieżący `pip-audit -r requirements.lock.txt` nie zakończył się oceną: izolowane środowisko nie rozwiązuje `pypi.org` (także przy `--disable-pip --no-deps`). Poprzedni wynik bez znanych podatności jest historyczny i nie dowodzi stanu bieżącego lockfile.
+- Dla commita `e6d790f` pełny `pip-audit -r requirements.lock.txt` zakończył się wynikiem `No known vulnerabilities found` (z lokalnym `--cache-dir`; bez `--no-deps`). Wynik zależy od stanu bazy podatności w dniu wykonania.
 - Zakres nie obejmuje iOS/Android end-to-end, rzeczywistych zewnętrznych Google/Cloudflare/NBP, produkcyjnej konfiguracji TLS ani operacyjnego monitoringu.
 
 Weryfikacje krytyczne wraz z dowodami są opisane w [przeglądzie bezpieczeństwa](SECURITY_REVIEW.md). Pozycje nadal oznaczone jako „Nieocenione” pozostają otwarte i nie są zaliczone.
