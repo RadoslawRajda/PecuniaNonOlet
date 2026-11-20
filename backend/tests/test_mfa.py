@@ -103,6 +103,7 @@ def test_enrollment_encrypts_secret_issues_recovery_codes_and_requires_mfa_login
     secret, recovery_codes = enable_totp(client, token, monkeypatch)
     assert len(recovery_codes) == 10
     assert len(set(recovery_codes)) == 10
+    assert all(len(code) == 22 for code in recovery_codes)
     assert client.get("/api/mfa", headers=auth(token)).status_code == 401
 
     with sqlite3.connect(tmp_path / "mfa-test.db") as db:

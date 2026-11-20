@@ -27,6 +27,7 @@ export function LoginScreen({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
+  const [usingRecoveryCode, setUsingRecoveryCode] = useState(false);
 
   return (
     <KeyboardAvoidingView
@@ -53,30 +54,56 @@ export function LoginScreen({
         <View style={styles.form}>
           {mfaRequired ? (
             <>
-              <Text style={styles.subtitle}>Wpisz kod z aplikacji Authenticator lub kod odzyskiwania.</Text>
-              <View style={styles.codeField}>
-                <Text style={styles.codeLabel}>Kod uwierzytelniający</Text>
-                <View style={styles.codeEntry}>
-                  <View pointerEvents="none" style={styles.codeBoxes}>
-                    {Array.from({length: 6}, (_, index) => (
-                      <View key={index} style={styles.codeBox}>
-                        <Text style={styles.codeDigit}>{code[index] ?? ''}</Text>
-                      </View>
-                    ))}
+              <Text style={styles.subtitle}>
+                {usingRecoveryCode
+                  ? 'Wpisz jeden z zapisanych kodów odzyskiwania.'
+                  : 'Wpisz kod z aplikacji Authenticator.'}
+              </Text>
+              {!usingRecoveryCode ? (
+                <View style={styles.codeField}>
+                  <Text style={styles.codeLabel}>Kod uwierzytelniający</Text>
+                  <View style={styles.codeEntry}>
+                    <View pointerEvents="none" style={styles.codeBoxes}>
+                      {Array.from({length: 6}, (_, index) => (
+                        <View key={index} style={styles.codeBox}>
+                          <Text style={styles.codeDigit}>{code[index] ?? ''}</Text>
+                        </View>
+                      ))}
+                    </View>
+                    <TextInput
+                      accessibilityLabel="Kod uwierzytelniający"
+                      accessibilityHint="Wpisz sześciocyfrowy kod z aplikacji Authenticator"
+                      value={code}
+                      onChangeText={value => setCode(value.replace(/\D/g, '').slice(0, 6))}
+                      keyboardType="number-pad"
+                      maxLength={6}
+                      autoCorrect={false}
+                      selectionColor={COLORS.yellow}
+                      style={styles.codeInput}
+                    />
                   </View>
-                  <TextInput
-                    accessibilityLabel="Kod uwierzytelniający"
-                    accessibilityHint="Wpisz sześciocyfrowy kod z aplikacji Authenticator"
-                    value={code}
-                    onChangeText={value => setCode(value.replace(/\D/g, '').slice(0, 6))}
-                    keyboardType="number-pad"
-                    maxLength={6}
-                    autoCorrect={false}
-                    selectionColor={COLORS.yellow}
-                    style={styles.codeInput}
-                  />
                 </View>
-              </View>
+              ) : (
+                <FormInput
+                  label="Kod odzyskiwania"
+                  placeholder="Wpisz zapisany kod"
+                  value={code}
+                  onChangeText={setCode}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  maxLength={22}
+                />
+              )}
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setCode('');
+                  setUsingRecoveryCode(value => !value);
+                }}>
+                <Text style={styles.recoveryToggle}>
+                  {usingRecoveryCode ? 'Użyj kodu z Authenticatora' : 'Użyj kodu odzyskiwania'}
+                </Text>
+              </Pressable>
               <AppButton title="Potwierdź kod" onPress={() => onSubmitMfa?.(code)} />
               <AppButton title="Wróć do logowania" onPress={onCancelMfa ?? onBack} secondary />
             </>
@@ -211,6 +238,11 @@ const styles = createThemedStyles(() => StyleSheet.create({
     color: 'transparent',
     fontSize: 22,
     opacity: 0.02,
+  },
+  recoveryToggle: {
+    color: COLORS.yellow,
+    fontSize: 14,
+    textDecorationLine: 'underline',
   },
   separator: {
     flexDirection: 'row',

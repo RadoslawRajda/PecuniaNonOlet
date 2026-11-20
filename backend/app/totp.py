@@ -103,7 +103,8 @@ def recovery_code_hash(code: str) -> str:
 
 
 def create_recovery_codes() -> list[str]:
-    return [secrets.token_urlsafe(12) for _ in range(RECOVERY_CODE_COUNT)]
+    """Generate one-time recovery secrets with 128 bits of entropy each."""
+    return [secrets.token_urlsafe(16) for _ in range(RECOVERY_CODE_COUNT)]
 
 
 def unix_time() -> int:

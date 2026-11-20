@@ -106,7 +106,11 @@ class MfaSetupResponse(BaseModel):
 class MfaCodeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    code: str = Field(min_length=6, max_length=16, pattern=r"^(?:[0-9]{6}|[A-Za-z0-9_-]{16})$")
+    code: str = Field(
+        min_length=6,
+        max_length=22,
+        pattern=r"^(?:[0-9]{6}|(?:[A-Za-z0-9_-]{16}|[A-Za-z0-9_-]{22}))$",
+    )
 
 
 class MfaLoginRequest(MfaCodeRequest):
