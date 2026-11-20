@@ -917,6 +917,42 @@ def test_registration_verifies_fixed_rp_origin_and_uv_and_consumes_challenge(cli
         )
 
 
+def test_passkey_registration_audit_failure_rolls_back_credential_and_challenge(
+    client, monkeypatch
+):
+    from app.services import passkey_registration
+
+    _, token = make_user()
+    headers = {"Authorization": f"Bearer {token}"}
+    options = client.post("/api/passkeys/registration/options", headers=headers).json()
+    credential = credential_json(options["challenge"])
+    set_client_data_type(credential, "webauthn.create")
+    monkeypatch.setattr(
+        "webauthn.verify_registration_response",
+        lambda **_: SimpleNamespace(
+            credential_id=b"test-credential", credential_public_key=b"public-key", sign_count=0
+        ),
+    )
+
+    def fail_audit(*args, **kwargs):
+        raise RuntimeError("audit write failed")
+
+    monkeypatch.setattr(passkey_registration, "write_audit_event", fail_audit)
+    with pytest.raises(RuntimeError, match="audit write failed"):
+        client.post(
+            "/api/passkeys/registration/verify",
+            headers=headers,
+            json={"credential": credential},
+        )
+    with connect_db() as db:
+        assert db.execute("SELECT count(*) FROM passkeys").fetchone()[0] == 0
+        assert (
+            db.execute("SELECT count(*) FROM auth_challenges WHERE kind='passkey_register'")
+            .fetchone()[0]
+            == 1
+        )
+
+
 def test_passkey_authentication_consumes_challenge_and_preserves_totp(client, monkeypatch):
     import app.routes.passkeys as route
 
