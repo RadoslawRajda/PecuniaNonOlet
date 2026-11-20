@@ -14,7 +14,7 @@ Wykaz poniżej obejmuje wszystkie 253 wymagania L1+L2 ze źródłowego CSV. Każ
 
 ## Wyniki testów dla backendu
 
-- Commit `269b0e3`: `pytest` 222 passed na Pythonie 3.11.0, 3.12.2 i 3.13.7; Ruff lint, Ruff format i mypy zaliczone na Pythonie 3.12.2. Klient: Jest 28 passed oraz `tsc --noEmit` zaliczone po zmianie Google `/reauth`.
+- Commit `43950f3`: `pytest` 223 passed na Pythonie 3.11.0, 3.12.2 i 3.13.7; Ruff lint, Ruff format i mypy zaliczone na Pythonie 3.12.2. Klient: Jest 28 passed oraz `tsc --noEmit` zaliczone po zmianie Google `/reauth`.
 - Historyczny baseline na SHA review: Python 3.11, 3.12 i 3.13 — 188 passed oraz Ruff/mypy. Nie jest to wynik bieżącego drzewa.
 - Pełny `pip-audit -r requirements.lock.txt` na niezmienionym lockfile zakończył się wynikiem `No known vulnerabilities found` (z lokalnym `--cache-dir`; bez `--no-deps`). Wynik zależy od stanu bazy podatności w dniu wykonania.
 - Zakres nie obejmuje iOS/Android end-to-end, rzeczywistych zewnętrznych Google/Cloudflare/NBP, produkcyjnej konfiguracji TLS ani operacyjnego monitoringu.
