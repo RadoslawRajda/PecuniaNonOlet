@@ -28,6 +28,20 @@ Przegląd dotyczy backendu na branchu `feature/backend-hardening` oraz bieżący
 | Request validation | Odpowiedzi 422 nie odbijają wejściowych wartości, aby nie ujawnić haseł i tokenów | Wymaga dalszego przeglądu pozostałych ścieżek logowania i wyjątków |
 | Operacje finansowe | Transakcje DB, idempotencja, kontrola właściciela rachunku, blokada współbieżności i audyt w tej samej transakcji | SQLite jest przeznaczone dla lokalnego MVP; zakres testów opisano niżej |
 
+### Klasyfikacja danych i log inventory (zakres backendu)
+
+| Dane | Klasyfikacja robocza | Kontrola i ograniczenie |
+|---|---|---|
+| Hasło, TOTP seed, kody recovery | Sekret uwierzytelniający — najwyższa poufność | Hasło Argon2id; TOTP szyfrowany AES-GCM; recovery przechowywane jako hash. Brak KMS/HSM i rotacji bez przestoju. |
+| Access/refresh tokeny, challenge | Sekret sesyjny | Tokeny losowe; w bazie hashe; refresh rotowany i replay unieważnia rodzinę. Odpowiedzi API `no-store`. |
+| Salda, przelewy, wymiany, historia | Wrażliwe dane finansowe | Autoryzacja właściciela/roli, parametryzowane zapytania, transakcje; SQLite bez szyfrowania at-rest. |
+| E-mail i identyfikatory kont | Dane osobowe | Ograniczenie dostępu w API; nie są zapisywane w security-event logach. Polityka usunięcia/retencji wymaga decyzji wdrożeniowej. |
+| Zdjęcie profilowe | Dane osobowe | Walidacja i re-encoding, limit rozmiaru/pikseli; katalog lokalny nie jest zaszyfrowany. |
+| Klucz MFA, klucze TLS i provider secrets | Sekrety operatora | Wczytywane z konfiguracji środowiska; brak zewnętrznego secret managera i audytu systemu hosta. |
+| Klucz publiczny passkey i rekord audytowy | Dane integralności/bezpieczeństwa | Klucz publiczny nie jest sekretem; audyt finansowy i security events są lokalne w SQLite, z ochroną integralności na poziomie aplikacji/triggerów. |
+
+Logowanie backendu składa się z: (1) Python/Uvicorn loggerów operacyjnych na stderr, (2) strukturalnych zdarzeń bezpieczeństwa w tabeli SQLite przez `app/security_events.py`, oraz (3) zdarzeń audytu finansowego w SQLite przez `app/audit.py`. Zdarzenia bezpieczeństwa obejmują wynik logowania, metodę, endpoint i czas; nie powinny zawierać haseł, tokenów, body ani e-maili. Logi lokalne nie są odseparowane od hosta aplikacji, nie mają skonfigurowanej retencji, centralizacji ani alertowania. Te luki są ocenione jako częściowe/brakujące w macierzy V14/V16.
+
 ### Polityka WebAuthn i OIDC
 
 - Passkeys są weryfikowane przez bibliotekę `webauthn`; wymagane jest User Verification, właściwy typ ceremonii, challenge, RP ID i origin. Discoverable login wymaga `userHandle` powiązanego z kontem oraz zgodności `id` z `rawId`.
@@ -47,12 +61,11 @@ Zidentyfikowane podczas tej pracy problemy i poprawki regresyjne:
 - błędne `crossOrigin`/`topOrigin` jest odrzucane dla rejestracji i uwierzytelniania WebAuthn;
 - świeżość uwierzytelnienia Google jest sprawdzana w `assert_recent_authentication`; brak lub nieaktualny `auth_time` nie może autoryzować zmiany metod uwierzytelniania.
 
-To nie stanowi pełnej oceny wszystkich 183 wymagań L2. Szczegółowa macierz rozróżnia wymagania otwarte od N/D; w tej iteracji nie deklaruje się certyfikacji ani pełnej zgodności.
+Macierz zawiera indywidualny status i uzasadnienie dla wszystkich 183 wymagań L2, lecz nie jest formalną oceną certyfikacyjną. Wiele kontroli pozostaje częściowych lub niespełnionych; nie deklaruje się zgodności L2.
 
 ## Weryfikacja wykonana w tej iteracji
 
-- Python 3.11, przypięte `requirements.lock.txt`: **188 testów zaliczonych**; Ruff lint, Ruff format oraz mypy zaliczone.
-- Python 3.12 i 3.13, przypięte `requirements.lock.txt`: bazowy stan sprzed ostatnich zmian przeszedł **184 testy** na każdej wersji; po poprawkach limitów prób i limiterów należy powtórzyć pełny przebieg.
+- Python 3.11, 3.12 i 3.13, przypięte `requirements.lock.txt`: **188 testów zaliczonych na każdej wersji**; Ruff lint, Ruff format oraz mypy zaliczone na każdej wersji.
 - `pip-audit -r requirements.lock.txt`: **brak znanych podatności** przy ostatnim uruchomieniu. To wynik bazy advisory w chwili audytu, nie gwarancja bezpieczeństwa zależności.
 - Testy obejmują aktywne sesje, cofanie sesji, świeże uwierzytelnienie, limity body, nagłówki, politykę haseł, prywatność pliku bazy, brak sekretów w logach, limity prób, rate limiting, migracje, transakcje i regresje finansowe.
 - Nie wykonano testu launchera, pełnego builda mobilnego ani testów end-to-end na iOS/Android.
@@ -61,13 +74,13 @@ To nie stanowi pełnej oceny wszystkich 183 wymagań L2. Szczegółowa macierz r
 
 ## Otwarte punkty przed deklaracją zgodności ASVS L2
 
-1. Powtórzyć pełny zestaw na Pythonie 3.11–3.13 po ostatnich zmianach i potwierdzić wykonanie w CI.
-2. Uzupełnić ocenę każdej pozycji w [macierzy L2](ASVS_5.0.0_L2_MATRIX.md). Pozycje „Nieocenione” są otwarte, nie zaliczone.
-3. Dodać centralne, rozdzielone od bazy aplikacji logowanie, retencję, alertowanie i monitoring błędów TLS.
-4. Ustalić szyfrowanie danych SQLite w spoczynku i zarządzanie/rotację `MFA_ENCRYPTION_KEY` dla docelowego wdrożenia.
-5. Uzupełnić breached-password screening wiarygodnym źródłem lokalnym lub usługą prywatnościową. Aktualne 3000 haseł to częściowe zabezpieczenie.
-6. Zweryfikować HTTPS, konfigurację zaufanych hostów, rate limiting i zachowanie sesji przy rzeczywistym uruchomieniu aplikacji.
-7. Dodać testy end-to-end odświeżania tokenów i cofania sesji na kliencie mobilnym oraz scenariusz odtwarzania po utracie urządzenia/MFA.
+1. Potwierdzić wykonanie bieżącego workflow CI na remote; lokalne wyniki nie stanowią potwierdzenia zewnętrznego CI.
+2. Dodać centralne, rozdzielone od bazy aplikacji logowanie, retencję, alertowanie i monitoring błędów TLS.
+3. Ustalić szyfrowanie danych SQLite w spoczynku i zarządzanie/rotację `MFA_ENCRYPTION_KEY` dla docelowego wdrożenia.
+4. Uzupełnić breached-password screening wiarygodnym źródłem lokalnym lub usługą prywatnościową. Aktualne 3000 haseł to częściowe zabezpieczenie.
+5. Zweryfikować HTTPS, konfigurację zaufanych hostów, rate limiting i zachowanie sesji przy rzeczywistym uruchomieniu aplikacji.
+6. Dodać testy end-to-end odświeżania tokenów i cofania sesji na kliencie mobilnym oraz scenariusz odtwarzania po utracie urządzenia/MFA.
+7. Zweryfikować osobno klienta mobilnego i host/proxy/firewall; ocena ASVS backendu nie zastępuje audytu tych warstw.
 
 ## Wniosek
 
