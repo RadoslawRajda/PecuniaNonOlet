@@ -1,5 +1,6 @@
 import base64
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -66,6 +67,69 @@ def test_google_oidc_nonce_audience_email_and_replay(client, monkeypatch):
     assert replay.status_code == 401
     with connect_db() as db:
         assert db.execute("SELECT count(*) FROM oauth_identities WHERE subject='google-sub-1'").fetchone()[0] == 1
+
+
+def test_google_oidc_uses_google_auth_to_verify_real_signature_and_expiry(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    import google.auth.crypt
+    import google.auth.jwt
+    import google.oauth2.id_token
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+    from fastapi import HTTPException
+
+    from app.routes.google_auth import GoogleTokenRequest, _verify_google_id_token
+
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_IDS", "ios.apps.googleusercontent.com")
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Google OIDC test key")])
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.now(timezone.utc) - timedelta(minutes=1))
+        .not_valid_after(datetime.now(timezone.utc) + timedelta(days=1))
+        .sign(private_key, hashes.SHA256())
+    )
+    pem_certificate = certificate.public_bytes(serialization.Encoding.PEM).decode()
+    monkeypatch.setattr(google.oauth2.id_token, "_fetch_certs", lambda *_: {"test-key": pem_certificate})
+    signer = google.auth.crypt.RSASigner.from_string(
+        private_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    nonce = "a" * 32
+    claims = {
+        "iss": "https://accounts.google.com",
+        "aud": "ios.apps.googleusercontent.com",
+        "sub": "stable-google-subject",
+        "email": "verified@gmail.com",
+        "email_verified": True,
+        "nonce": nonce,
+        "iat": int(time.time()),
+        "exp": int(time.time()) + 60,
+    }
+    token = google.auth.jwt.encode(signer, claims, key_id="test-key").decode()
+    request = GoogleTokenRequest(id_token=token, nonce=nonce)
+    assert _verify_google_id_token(request)["subject"] == "stable-google-subject"
+
+    tampered = token.rsplit(".", 1)[0] + "." + ("A" if token[-1] != "A" else "B")
+    with pytest.raises(HTTPException) as invalid_signature:
+        _verify_google_id_token(GoogleTokenRequest(id_token=tampered, nonce=nonce))
+    assert invalid_signature.value.status_code == 401
+
+    claims["exp"] = int(time.time()) - 60
+    expired = google.auth.jwt.encode(signer, claims, key_id="test-key").decode()
+    with pytest.raises(HTTPException) as expired_token:
+        _verify_google_id_token(GoogleTokenRequest(id_token=expired, nonce=nonce))
+    assert expired_token.value.status_code == 401
 
 
 @pytest.mark.parametrize(

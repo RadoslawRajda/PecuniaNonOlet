@@ -21,6 +21,9 @@ from app.database import connect_db, migrate_database
 from app.routes.analytics import router as analytics_router
 from app.routes.exchange import router as exchange_router
 from app.routes.finance import router as finance_router
+from app.routes.google_auth import router as google_auth_router
+from app.routes.mfa import router as mfa_router
+from app.routes.passkeys import router as passkeys_router
 from app.routes.profile_photos import (
     ProfilePhotoBodyLimitMiddleware,
 )
@@ -28,10 +31,6 @@ from app.routes.profile_photos import (
     router as profile_photos_router,
 )
 from app.routes.transfers import router as transfers_router
-from app.routes.mfa import router as mfa_router
-from app.routes.google_auth import router as google_auth_router
-from app.routes.passkeys import router as passkeys_router
-from app.sessions import issue_token
 from app.schemas import (
     AuthResponse,
     ChangePasswordRequest,
@@ -41,6 +40,7 @@ from app.schemas import (
     PublicRegisterRequest,
     User,
 )
+from app.sessions import issue_token
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 

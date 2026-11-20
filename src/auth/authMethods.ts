@@ -1,5 +1,5 @@
 import {Platform} from 'react-native';
-import {authorize} from 'react-native-app-auth';
+import {authorize, type AuthConfiguration} from 'react-native-app-auth';
 import {Passkey} from 'react-native-passkey';
 
 import {API_URL, GOOGLE_ANDROID_CLIENT_ID, GOOGLE_IOS_CLIENT_ID} from '@env';
@@ -31,17 +31,7 @@ export async function signInWithGoogle(linkToken?: string) {
   if (!clientId) {
     throw new Error('Uzupełnij GOOGLE_IOS_CLIENT_ID i GOOGLE_ANDROID_CLIENT_ID w pliku .env.');
   }
-  const clientIdPrefix = clientId.replace(/\.apps\.googleusercontent\.com$/, '');
-  const redirectUrl = `com.googleusercontent.apps.${clientIdPrefix}:/oauth2redirect/google`;
-  const result = await authorize({
-    issuer: 'https://accounts.google.com',
-    clientId,
-    redirectUrl,
-    scopes: ['openid', 'email', 'profile'],
-    additionalParameters: {nonce, prompt: 'select_account'},
-    usePKCE: true,
-    useNonce: false,
-  });
+  const result = await authorize(buildGoogleAuthorizationOptions(clientId, nonce));
   if (!result.idToken) throw new Error('Google nie zwrócił tokenu ID.');
   const path = linkToken ? '/api/auth/google/link' : '/api/auth/google/login';
   return request(path, {
@@ -49,6 +39,19 @@ export async function signInWithGoogle(linkToken?: string) {
     headers: linkToken ? {Authorization: `Bearer ${linkToken}`} : undefined,
     body: JSON.stringify({id_token: result.idToken, nonce}),
   });
+}
+
+export function buildGoogleAuthorizationOptions(clientId: string, nonce: string): AuthConfiguration {
+  const clientIdPrefix = clientId.replace(/\.apps\.googleusercontent\.com$/, '');
+  return {
+    issuer: 'https://accounts.google.com',
+    clientId,
+    redirectUrl: `com.googleusercontent.apps.${clientIdPrefix}:/oauth2redirect/google`,
+    scopes: ['openid', 'email', 'profile'],
+    additionalParameters: {nonce, prompt: 'select_account'},
+    usePKCE: true,
+    useNonce: false,
+  };
 }
 
 export async function createPasskey(
