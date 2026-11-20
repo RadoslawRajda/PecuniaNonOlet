@@ -2,9 +2,9 @@ import {Passkey} from 'react-native-passkey';
 import {authorize} from 'react-native-app-auth';
 
 import {buildGoogleAuthorizationOptions, reauthenticateWithGoogle, signInWithPasskey} from '../src/auth/authMethods';
-import {authenticatedFetch} from '../src/auth/session';
+import {authenticatedFetch, saveSessionTokens} from '../src/auth/session';
 
-jest.mock('../src/auth/session', () => ({authenticatedFetch: jest.fn()}));
+jest.mock('../src/auth/session', () => ({authenticatedFetch: jest.fn(), saveSessionTokens: jest.fn()}));
 
 const passkeyGetMock = Passkey.get as jest.Mock;
 
@@ -64,7 +64,7 @@ describe('native authentication methods', () => {
     const authenticatedFetchMock = authenticatedFetch as jest.Mock;
     authenticatedFetchMock
       .mockResolvedValueOnce({ok: true, json: async () => ({nonce: 'server-nonce'})})
-      .mockResolvedValueOnce({ok: true, json: async () => null});
+      .mockResolvedValueOnce({ok: true, json: async () => ({access_token: 'new-access', refresh_token: 'new-refresh'})});
     (authorize as jest.Mock).mockResolvedValue({idToken: 'signed-google-id-token'});
 
     await reauthenticateWithGoogle('current-access-token');
@@ -73,6 +73,7 @@ describe('native authentication methods', () => {
       1, expect.stringContaining('/api/auth/google/reauth/nonce'),
       expect.objectContaining({method: 'POST', accessToken: 'current-access-token'}),
     );
+    expect(saveSessionTokens).toHaveBeenCalledWith({access_token: 'new-access', refresh_token: 'new-refresh'});
     expect(authorize).toHaveBeenCalledWith(expect.objectContaining({
       additionalParameters: expect.objectContaining({nonce: 'server-nonce', max_age: '0'}),
     }));

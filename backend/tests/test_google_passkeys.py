@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import sqlite3
 import time
 from datetime import UTC
 from types import SimpleNamespace
@@ -1160,14 +1161,60 @@ def test_google_reauthentication_requires_bound_challenge_matching_identity_and_
     claims["sub"] = "different-subject"
     assert client.post("/api/auth/google/reauth", headers=headers, json=payload).status_code == 401
     claims["sub"] = "linked-subject"
-    assert client.post("/api/auth/google/reauth", headers=headers, json=payload).status_code == 204
-    assert client.post("/api/passkeys/registration/options", headers=headers).status_code == 200
+    reauthenticated = client.post("/api/auth/google/reauth", headers=headers, json=payload)
+    assert reauthenticated.status_code == 200
+    new_session = reauthenticated.json()
+    assert new_session["access_token"] != token
+    assert new_session["refresh_token"]
+    assert client.get("/api/me", headers=headers).status_code == 401
+    assert client.post("/api/passkeys/registration/options", headers=headers).status_code == 401
+    new_headers = {"Authorization": f"Bearer {new_session['access_token']}"}
+    assert client.post("/api/passkeys/registration/options", headers=new_headers).status_code == 200
     assert client.post("/api/auth/google/reauth", headers=headers, json=payload).status_code == 401
     with connect_db() as db:
         row = db.execute(
             """SELECT authentication_method,provider_authenticated_at
                FROM auth_sessions WHERE access_token_hash=?""",
-            (token_hash(token),),
+            (token_hash(new_session["access_token"]),),
         ).fetchone()
         assert row["authentication_method"] == "google"
         assert abs(row["provider_authenticated_at"] - int(time.time())) <= 5
+
+
+def test_google_reauthentication_rolls_back_revocation_if_new_session_cannot_be_saved(
+    client, monkeypatch
+):
+    user_id, token = make_user("rollback-reauth@example.com")
+    with connect_db() as db, db:
+        db.execute(
+            """INSERT INTO oauth_identities(
+                   user_id,provider,issuer,subject,email_at_link,created_at
+               ) VALUES (?,'google','https://accounts.google.com','rollback-subject',?,?)""",
+            (user_id, "rollback-reauth@example.com", int(time.time())),
+        )
+    headers = {"Authorization": f"Bearer {token}"}
+    nonce = client.post("/api/auth/google/reauth/nonce", headers=headers).json()["nonce"]
+    google_claims(
+        monkeypatch,
+        {
+            "iss": "https://accounts.google.com",
+            "sub": "rollback-subject",
+            "email": "rollback-reauth@example.com",
+            "email_verified": True,
+            "aud": "ios.apps.googleusercontent.com",
+            "nonce": nonce,
+            "auth_time": int(time.time()),
+        },
+    )
+    with connect_db() as db, db:
+        db.execute(
+            """CREATE TRIGGER fail_reauth_session BEFORE INSERT ON auth_sessions
+               BEGIN SELECT RAISE(ABORT, 'forced session write failure'); END"""
+        )
+    payload = {"id_token": "signed-token-placeholder-long", "nonce": nonce}
+    with pytest.raises(sqlite3.IntegrityError, match="forced session write failure"):
+        client.post("/api/auth/google/reauth", headers=headers, json=payload)
+    assert client.get("/api/me", headers=headers).status_code == 200
+    with connect_db() as db, db:
+        db.execute("DROP TRIGGER fail_reauth_session")
+    assert client.post("/api/auth/google/reauth", headers=headers, json=payload).status_code == 200

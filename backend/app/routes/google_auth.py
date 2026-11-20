@@ -24,7 +24,7 @@ from app.authorization import AuthenticatedSession, current_session
 from app.config import load_settings
 from app.database import connect_db
 from app.rate_limits import client_ip, enforce_rate_limit, ip_bucket
-from app.schemas import LoginResponse
+from app.schemas import AuthResponse, LoginResponse
 from app.services.authentication import (
     assert_recent_authentication,
 )
@@ -110,15 +110,16 @@ def google_reauth_nonce(session: Authenticated, request: Request) -> dict[str, o
     return {"nonce": nonce, "expires_in": CHALLENGE_TTL}
 
 
-@router.post("/reauth", status_code=204, response_class=Response)
+@router.post("/reauth", response_model=AuthResponse)
 def google_reauthenticate(
     payload: GoogleTokenRequest, session: Authenticated, request: Request
-) -> Response:
+) -> AuthResponse:
     enforce_rate_limit(
         [ip_bucket("google_reauth", client_ip(request.client.host if request.client else None))]
     )
-    reauthenticate_google_identity(payload.nonce, session, lambda: _verify_google_id_token(payload))
-    return Response(status_code=204)
+    return reauthenticate_google_identity(
+        payload.nonce, session, lambda: _verify_google_id_token(payload)
+    )
 
 
 def _verify_google_id_token(payload: GoogleTokenRequest) -> VerifiedGoogleIdentity:

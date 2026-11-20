@@ -1,7 +1,7 @@
 import {Platform} from 'react-native';
 import {authorize, type AuthConfiguration} from 'react-native-app-auth';
 import {Passkey} from 'react-native-passkey';
-import {authenticatedFetch} from './session';
+import {authenticatedFetch, saveSessionTokens} from './session';
 
 import {API_URL, GOOGLE_ANDROID_CLIENT_ID, GOOGLE_IOS_CLIENT_ID} from '@env';
 
@@ -52,10 +52,11 @@ async function authorizeGoogle(nonce: string) {
 export async function reauthenticateWithGoogle(accessToken: string): Promise<void> {
   const {nonce} = await request('/api/auth/google/reauth/nonce', {method: 'POST'}, accessToken);
   const result = await authorizeGoogle(nonce);
-  await request('/api/auth/google/reauth', {
+  const session = await request('/api/auth/google/reauth', {
     method: 'POST',
     body: JSON.stringify({id_token: result.idToken, nonce}),
   }, accessToken);
+  await saveSessionTokens(session);
 }
 
 export function buildGoogleAuthorizationOptions(clientId: string, nonce: string): AuthConfiguration {

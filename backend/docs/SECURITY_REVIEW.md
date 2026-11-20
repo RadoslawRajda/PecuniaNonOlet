@@ -50,6 +50,7 @@ Logowanie backendu składa się z: (1) Python/Uvicorn loggerów operacyjnych na 
 - Google identity jest kluczowana po providerze, kanonicznym issuerze i subject. Reautoryzacja do zmian wrażliwych wymaga świeżego `auth_time`; sama nowa sesja, nonce ani `prompt=select_account` nie są uznawane za dowód świeżego logowania. Jeśli Google nie zwróci `auth_time`, operacja jest odrzucana.
 - Dla logowania mobilnego klient używa Authorization Code + PKCE w systemowym flow AppAuth. ID token Google jest tylko wejściem do backendowego OIDC verifiera; API wydaje własne opaque sesje.
 - Klient dodaje `max_age=0` oraz żądanie claimu `auth_time` do autoryzacji Google. Zgodnie z OIDC Core `max_age=0` żąda aktywnej reautoryzacji; samo `prompt=select_account` zapewnia tylko wybór konta. Backend nadal ufa wyłącznie zweryfikowanemu `auth_time` i odrzuca brak, niepoprawną lub zbyt starą wartość przy zmianie metod logowania.
+- Udana reautoryzacja Google atomowo unieważnia dotychczasową sesję i zwraca nową parę access/refresh tokenów. Klient zapisuje je w Keychain przed pokazaniem sukcesu. Utrata odpowiedzi po zatwierdzeniu może wymagać ponownego zalogowania; stary token nie odzyskuje uprawnień.
 
 Ręczna weryfikacja na urządzeniu: na iOS i Androidzie wykonaj logowanie Google przez systemowy AppAuth, zakończ MFA jeśli jest włączone, a następnie spróbuj dodać passkey, skonfigurować TOTP, ustanowić hasło oraz cofnąć inne sesje. Sprawdź, że `provider_authenticated_at` sesji odpowiada ostatniemu aktywnemu logowaniu u Google i że operacje wrażliwe przechodzą w ciągu 5 minut. Po upływie 5 minut powinny zwrócić 401; ponowny przepływ Google powinien dać nowy dowód. Dla linkowania Google zweryfikuj także, że `subject` tokenu należy do wybranego konta. Ta próba wymaga skonfigurowanych identyfikatorów Google i urządzenia; nie została wykonana w tej iteracji. Testy lokalne używają kontrolowanych, podpisanych tokenów i nie zastępują testu dostawcy.
 
@@ -69,7 +70,7 @@ Macierz zawiera indywidualny status wszystkich 253 wymagań L1+L2 z przypiętego
 
 ## Weryfikacja wykonana w tej iteracji
 
-- Commit `bb06d7c`: **215 testów zaliczonych** na Pythonie 3.11.0, 3.12.2 i 3.13.7; Ruff lint/format i mypy zaliczone na Pythonie 3.12.2. Klient mobilny na niezmienionym kodzie: Jest 28 passed oraz `tsc --noEmit` zaliczone. Zależności Node użyto z istniejącej instalacji w głównym checkoutcie.
+- Bieżące drzewo po zmianie Google `/reauth`: **216 testów zaliczonych** na Pythonie 3.11.0, 3.12.2 i 3.13.7; Ruff lint/format i mypy zaliczone na Pythonie 3.12.2. Klient mobilny: Jest 28 passed oraz `tsc --noEmit` zaliczone. Zależności Node użyto z istniejącej instalacji w głównym checkoutcie.
 - Historyczny baseline z SHA review na Pythonie 3.11, 3.12 i 3.13: **188 testów zaliczonych** na każdej wersji. Nie jest to wynik końcowego kodu.
 - Pełny `pip-audit -r requirements.lock.txt` na niezmienionym lockfile zakończył się wynikiem `No known vulnerabilities found` (z lokalnym `--cache-dir`; bez `--no-deps`). Wynik zależy od stanu bazy podatności w dniu wykonania.
 - Testy obejmują aktywne sesje, cofanie sesji, świeże uwierzytelnienie, limity body, nagłówki, politykę haseł, prywatność pliku bazy, brak sekretów w logach, limity prób, rate limiting, migracje, transakcje i regresje finansowe.

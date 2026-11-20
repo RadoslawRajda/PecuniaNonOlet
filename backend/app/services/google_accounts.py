@@ -14,7 +14,7 @@ from fastapi import HTTPException, status
 
 from app.accounts import initialize_user_accounts
 from app.audit import write_audit_event
-from app.authorization import AuthenticatedSession
+from app.authorization import AuthenticatedSession, token_hash
 from app.database import connect_db
 from app.schemas import AuthResponse, LoginResponse, User
 from app.services.authentication import (
@@ -22,7 +22,7 @@ from app.services.authentication import (
     claim_auth_challenge_attempt,
     create_login_challenge,
 )
-from app.sessions import issue_session
+from app.sessions import issue_session, revoke_session
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,11 +248,13 @@ def reauthenticate_google_identity(
     nonce: str,
     session: AuthenticatedSession,
     verify_identity: Callable[[], VerifiedGoogleIdentity],
-) -> None:
-    """Refresh one session's Google authentication evidence after a fresh ceremony.
+) -> AuthResponse:
+    """Replace one session after a fresh Google ceremony.
 
     Count the bound challenge attempt before token verification; consume it only
-    after matching the verified issuer and subject to this user and live session.
+    after matching the verified issuer and subject to this user and live access
+    token. Revocation and issuance share the challenge-consumption transaction.
+    The caller must persist the returned token pair before using sensitive APIs.
     """
     now = int(time.time())
     with closing(connect_db()) as db, db:
@@ -283,12 +285,34 @@ def reauthenticate_google_identity(
             raise HTTPException(
                 status.HTTP_401_UNAUTHORIZED, "To konto Google nie należy do użytkownika."
             )
-        updated = db.execute(
-            """UPDATE auth_sessions
-               SET authentication_method='google', authenticated_at=?, provider_authenticated_at=?
-               WHERE session_id=? AND user_id=? AND access_expires_at>?
-                 AND refresh_expires_at>? AND absolute_expires_at>? AND revoked_at IS NULL""",
-            (now, identity.authenticated_at, session.session_id, session.user.id, now, now, now),
-        ).rowcount
-        if updated != 1:
+        live_session = db.execute(
+            """SELECT 1 FROM auth_sessions
+               WHERE session_id=? AND user_id=? AND access_token_hash=?
+                 AND access_expires_at>? AND refresh_expires_at>?
+                 AND absolute_expires_at>? AND revoked_at IS NULL""",
+            (
+                session.session_id,
+                session.user.id,
+                token_hash(session.access_token.get_secret_value()),
+                now,
+                now,
+                now,
+            ),
+        ).fetchone()
+        if live_session is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesja jest nieważna lub wygasła.")
+        revoke_session(db, session.session_id, now=now)
+        tokens = issue_session(
+            db,
+            session.user.id,
+            authentication_method="google",
+            provider_authenticated_at=identity.authenticated_at,
+            now=now,
+        )
+    return AuthResponse(
+        user=session.user,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        expires_in=tokens.expires_in,
+        refresh_expires_in=tokens.refresh_expires_in,
+    )
