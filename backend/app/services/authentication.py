@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from hashlib import sha256
 
 from fastapi import HTTPException, status
 
@@ -13,6 +14,8 @@ from app.totp import (
     challenge_hash,
     new_challenge,
 )
+
+MAX_AUTH_CHALLENGE_ATTEMPTS = 5
 
 
 def current_timestamp() -> int:
@@ -47,6 +50,45 @@ def assert_recent_authentication(
             status.HTTP_401_UNAUTHORIZED,
             "Zaloguj się ponownie przed zmianą metod uwierzytelniania.",
         )
+
+
+def claim_auth_challenge_attempt(
+    db: sqlite3.Connection,
+    kind: str,
+    value: str,
+    *,
+    now: int,
+    user_id: int | None = None,
+    session_id: str | None = None,
+) -> bool:
+    """Atomically count one verifier attempt inside the caller's write transaction.
+
+    The challenge is still consumed by the successful ceremony. Invalid or repeated
+    attempts are capped at five; expired, mismatched, or exhausted challenges fail
+    without running expensive cryptographic verification.
+    """
+    try:
+        digest = sha256(value.encode("ascii")).hexdigest()
+    except UnicodeEncodeError:
+        return False
+    row = db.execute(
+        """SELECT user_id,session_hash,expires_at,attempts FROM auth_challenges
+           WHERE challenge_hash=? AND kind=? AND challenge_value=?""",
+        (digest, kind, value),
+    ).fetchone()
+    if (
+        row is None
+        or row["expires_at"] <= now
+        or row["user_id"] != user_id
+        or row["session_hash"] != session_id
+        or row["attempts"] >= MAX_AUTH_CHALLENGE_ATTEMPTS
+    ):
+        return False
+    db.execute(
+        "UPDATE auth_challenges SET attempts=attempts+1 WHERE challenge_hash=? AND attempts < ?",
+        (digest, MAX_AUTH_CHALLENGE_ATTEMPTS),
+    )
+    return db.execute("SELECT changes()").fetchone()[0] == 1
 
 
 def create_login_challenge(

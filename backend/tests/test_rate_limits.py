@@ -30,7 +30,7 @@ def test_rate_limit_is_shared_by_database_connections_and_expires(client):
         assert db.execute("SELECT attempts FROM auth_rate_limits").fetchone()[0] == 1
 
 
-def test_rate_limit_commits_ip_bucket_when_identity_bucket_is_exhausted(client):
+def test_blocked_request_does_not_consume_other_rate_limit_buckets(client):
     enforce_rate_limit(
         ["auth:test:ip:192.0.2.2", "auth:test:email:user@example.com"], limits=[10, 1], now=100
     )
@@ -41,7 +41,7 @@ def test_rate_limit_commits_ip_bucket_when_identity_bucket_is_exhausted(client):
 
     with connect_db() as db:
         attempts = dict(db.execute("SELECT bucket_hash,attempts FROM auth_rate_limits").fetchall())
-        assert sorted(attempts.values()) == [1, 2]
+        assert sorted(attempts.values()) == [1, 1]
 
 
 def test_password_login_stops_before_password_verification_after_limit(client, monkeypatch):

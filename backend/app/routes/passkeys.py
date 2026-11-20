@@ -20,7 +20,11 @@ from app.config import load_settings
 from app.database import connect_db
 from app.rate_limits import client_ip, enforce_rate_limit, ip_bucket
 from app.schemas import AuthResponse, LoginResponse, User
-from app.services.authentication import assert_recent_authentication, create_login_challenge
+from app.services.authentication import (
+    assert_recent_authentication,
+    claim_auth_challenge_attempt,
+    create_login_challenge,
+)
 from app.sessions import issue_session
 
 router = APIRouter(prefix="/api/passkeys", tags=["passkeys"])
@@ -225,9 +229,7 @@ def registration_options(session: Authenticated, request: Request) -> dict[str, 
             ),
         )
         serialized = json.loads(options_to_json(options))
-        _new_challenge(
-            db, "passkey_register", user.id, serialized["challenge"], session.session_id
-        )
+        _new_challenge(db, "passkey_register", user.id, serialized["challenge"], session.session_id)
     return serialized
 
 
@@ -370,14 +372,24 @@ def authentication_verify(payload: PasskeyAssertionBody, request: Request) -> Lo
         _discard_login_challenge(challenge)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Nie udało się uwierzytelnić passkey.")
     now = int(time.time())
-    with closing(connect_db()) as read_db:
-        challenge_row = read_db.execute(
-            "SELECT 1 FROM auth_challenges WHERE challenge_hash=? AND kind='passkey_login' AND challenge_value=? AND user_id IS NULL AND expires_at>?",
-            (_digest(challenge), challenge, now),
-        ).fetchone()
-        row = read_db.execute(
-            "SELECT * FROM passkeys WHERE credential_id=?", (credential_id,)
-        ).fetchone()
+    with closing(connect_db()) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        attempt_allowed = claim_auth_challenge_attempt(db, "passkey_login", challenge, now=now)
+        challenge_row = (
+            db.execute(
+                """SELECT 1 FROM auth_challenges WHERE challenge_hash=?
+                   AND kind='passkey_login' AND challenge_value=? AND user_id IS NULL
+                   AND expires_at>?""",
+                (_digest(challenge), challenge, now),
+            ).fetchone()
+            if attempt_allowed
+            else None
+        )
+        row = (
+            db.execute("SELECT * FROM passkeys WHERE credential_id=?", (credential_id,)).fetchone()
+            if challenge_row is not None
+            else None
+        )
     if challenge_row is None or row is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Nie udało się uwierzytelnić passkey.")
     user_handle = credential.get("response", {}).get("userHandle")

@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "identity.db"))
+    monkeypatch.setenv("MFA_ENCRYPTION_KEY", "dGVzdC1vbmx5LXRvdHAta2V5LW1hdGVyaWFsLTMyYiE=")
     monkeypatch.setenv(
         "GOOGLE_OAUTH_CLIENT_IDS",
         "ios.apps.googleusercontent.com,android.apps.googleusercontent.com",
@@ -207,6 +208,34 @@ def test_google_oidc_nonce_audience_email_and_replay(client, monkeypatch):
             ).fetchone()[0]
             == 1
         )
+
+
+def test_google_login_stops_verifying_after_challenge_attempt_limit(client, monkeypatch):
+    from app.routes import google_auth
+    from fastapi import HTTPException
+
+    nonce = client.post("/api/auth/google/nonce").json()["nonce"]
+    verifications = 0
+
+    def reject_google_token(_payload):
+        nonlocal verifications
+        verifications += 1
+        raise HTTPException(status_code=401, detail="invalid test token")
+
+    monkeypatch.setattr(google_auth, "_verify_google_id_token", reject_google_token)
+    payload = {"id_token": "signed-token-placeholder-long", "nonce": nonce}
+    for _ in range(5):
+        assert client.post("/api/auth/google/login", json=payload).status_code == 401
+    assert verifications == 5
+
+    exhausted = client.post("/api/auth/google/login", json=payload)
+    assert exhausted.status_code == 401
+    assert verifications == 5
+    with connect_db() as db:
+        challenge = db.execute(
+            "SELECT attempts FROM auth_challenges WHERE challenge_value=?", (nonce,)
+        ).fetchone()
+    assert challenge["attempts"] == 5
 
 
 def test_google_oidc_uses_google_auth_to_verify_real_signature_and_expiry(monkeypatch):
@@ -747,6 +776,34 @@ def test_passkey_registration_rejects_cross_origin_client_data(
         headers=headers,
         json={"credential": credential},
     )
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "client_data_patch",
+    [
+        {"crossOrigin": True, "topOrigin": "https://attacker.example"},
+        {"crossOrigin": True},
+        {"crossOrigin": False, "topOrigin": "https://attacker.example"},
+    ],
+)
+def test_passkey_authentication_rejects_cross_origin_client_data(client, client_data_patch):
+    import base64
+
+    options = client.post("/api/passkeys/authentication/options")
+    assert options.status_code == 200
+    credential = credential_json(options.json()["challenge"])
+    client_data = {
+        "type": "webauthn.get",
+        "challenge": options.json()["challenge"],
+        "origin": "https://pecunianonolet.local",
+        **client_data_patch,
+    }
+    credential["response"]["clientDataJSON"] = (
+        base64.urlsafe_b64encode(json.dumps(client_data).encode()).decode().rstrip("=")
+    )
+
+    response = client.post("/api/passkeys/authentication/verify", json={"credential": credential})
     assert response.status_code == 400
 
 

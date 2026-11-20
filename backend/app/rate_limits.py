@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 import time
 from collections.abc import Sequence
 from contextlib import closing
@@ -38,12 +39,28 @@ def enforce_rate_limit(
     retry_after = 0
     with closing(connect_db()) as db, db:
         db.execute("BEGIN IMMEDIATE")
+        buckets: list[tuple[str, int, sqlite3.Row | None]] = []
         for key, limit in zip(bucket_keys, bucket_limits, strict=True):
             digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
             row = db.execute(
                 "SELECT window_started_at,attempts FROM auth_rate_limits WHERE bucket_hash=?",
                 (digest,),
             ).fetchone()
+            buckets.append((digest, limit, row))
+            if row is not None and timestamp - row["window_started_at"] < window_seconds:
+                if row["attempts"] >= limit:
+                    retry_after = max(
+                        retry_after, row["window_started_at"] + window_seconds - timestamp
+                    )
+
+        if retry_after:
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "Zbyt wiele prób. Spróbuj ponownie później.",
+                headers={"Retry-After": str(retry_after)},
+            )
+
+        for digest, limit, row in buckets:
             if row is None or timestamp - row["window_started_at"] >= window_seconds:
                 db.execute(
                     "INSERT INTO auth_rate_limits(bucket_hash,window_started_at,attempts) "
@@ -51,24 +68,14 @@ def enforce_rate_limit(
                     "window_started_at=excluded.window_started_at,attempts=1",
                     (digest, timestamp),
                 )
-                continue
-            if row["attempts"] >= limit:
-                retry_after = max(
-                    retry_after, row["window_started_at"] + window_seconds - timestamp
+            else:
+                db.execute(
+                    "UPDATE auth_rate_limits SET attempts=attempts+1 WHERE bucket_hash=?",
+                    (digest,),
                 )
-                continue
-            db.execute(
-                "UPDATE auth_rate_limits SET attempts=attempts+1 WHERE bucket_hash=?", (digest,)
-            )
         db.execute(
             "DELETE FROM auth_rate_limits WHERE window_started_at < ?",
             (timestamp - max(window_seconds * 2, 3600),),
-        )
-    if retry_after:
-        raise HTTPException(
-            status.HTTP_429_TOO_MANY_REQUESTS,
-            "Zbyt wiele prób. Spróbuj ponownie później.",
-            headers={"Retry-After": str(retry_after)},
         )
 
 

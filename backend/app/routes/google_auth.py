@@ -28,7 +28,11 @@ from app.config import load_settings
 from app.database import connect_db
 from app.rate_limits import client_ip, enforce_rate_limit, ip_bucket
 from app.schemas import AuthResponse, LoginResponse, User
-from app.services.authentication import assert_recent_authentication, create_login_challenge
+from app.services.authentication import (
+    assert_recent_authentication,
+    claim_auth_challenge_attempt,
+    create_login_challenge,
+)
 from app.sessions import issue_session
 
 router = APIRouter(prefix="/api/auth/google", tags=["authentication"])
@@ -232,12 +236,11 @@ def google_login(payload: GoogleTokenRequest, request: Request) -> LoginResponse
     enforce_rate_limit(
         [ip_bucket("google_login", client_ip(request.client.host if request.client else None))]
     )
-    with closing(connect_db()) as db:
-        pending = db.execute(
-            "SELECT 1 FROM auth_challenges WHERE challenge_hash=? AND kind='google_login' AND challenge_value=? AND expires_at>?",
-            (_digest(payload.nonce), payload.nonce, int(time.time())),
-        ).fetchone()
-    if pending is None:
+    now = int(time.time())
+    with closing(connect_db()) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        attempt_allowed = claim_auth_challenge_attempt(db, "google_login", payload.nonce, now=now)
+    if not attempt_allowed:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "Sesja logowania wygasła. Spróbuj ponownie."
         )
@@ -304,9 +307,7 @@ def google_login(payload: GoogleTokenRequest, request: Request) -> LoginResponse
 
 
 @router.post("/link", status_code=204)
-def link_google(
-    payload: GoogleTokenRequest, session: Authenticated, request: Request
-) -> Response:
+def link_google(payload: GoogleTokenRequest, session: Authenticated, request: Request) -> Response:
     enforce_rate_limit(
         [ip_bucket("google_link", client_ip(request.client.host if request.client else None))]
     )
