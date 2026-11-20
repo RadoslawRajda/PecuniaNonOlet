@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import os
 from logging.config import fileConfig
 from pathlib import Path
 
 from alembic import context
 from sqlalchemy import create_engine, event, pool
+from app.config import Settings
 
 config = context.config
-database_path = Path(os.getenv("DATABASE_PATH", "data/pecunia.db")).resolve()
+database_path = Path(config.attributes.get("database_path") or Settings().database_path).expanduser().resolve()
 database_path.parent.mkdir(parents=True, exist_ok=True)
 config.set_main_option(
     "sqlalchemy.url", f"sqlite:///{database_path.as_posix()}".replace("%", "%%")

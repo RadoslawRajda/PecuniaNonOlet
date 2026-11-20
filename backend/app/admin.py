@@ -27,7 +27,9 @@ def create_analyst(email: str, password: str) -> int:
                     "INSERT INTO users(email, password_hash, created_at) VALUES (?, ?, ?)",
                     (credentials.email, password_hash, int(time.time())),
                 )
-                user_id = int(cursor.lastrowid)
+                if cursor.lastrowid is None:
+                    raise RuntimeError("The inserted analyst did not receive a database id.")
+                user_id = cursor.lastrowid
                 db.execute(
                     "INSERT INTO user_roles(user_id, role_name) VALUES (?, 'analyst')",
                     (user_id,),

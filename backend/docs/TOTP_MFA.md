@@ -1,6 +1,6 @@
 # MFA TOTP — dokumentacja integracji
 
-MFA jest opcjonalne i dotyczy logowania hasłem do API. Użytkownik może je skonfigurować w aplikacji Authenticator, a później loguje się hasłem oraz jednorazowym kodem TOTP. Dostępne są także jednorazowe kody odzyskiwania.
+TOTP jest dodatkowym wymaganym krokiem po zalogowaniu metodą hasła, Google lub passkey, gdy użytkownik wcześniej je włączył. Żadna z tych metod logowania nie omija aktywnego MFA. Dostępne są jednorazowe kody odzyskiwania.
 
 ## Konfiguracja serwera
 
@@ -28,11 +28,13 @@ Chronione endpointy wymagają `Authorization: Bearer <token>`. Wszystkie odpowie
 
 ### Rozpoczęcie konfiguracji
 
-`POST /api/mfa/totp/setup` z aktywną sesją:
+`POST /api/mfa/totp/setup` z aktywną sesją. Dla konta z hasłem lokalnym wymagane jest aktualne hasło:
 
 ```json
 {"current_password":"obecne-haslo"}
 ```
+
+Dla konta Google-only bez hasła lokalnego wyślij `{}`. Wtedy backend wymaga świeżego uwierzytelnienia Google (`auth_time` nie starsze niż 5 minut). Identyczna reguła dotyczy wyłączenia TOTP i ustawienia pierwszego hasła.
 
 Odpowiedź `200` zawiera sekret i URI do wygenerowania QR w aplikacji:
 
@@ -45,6 +47,8 @@ Odpowiedź `200` zawiera sekret i URI do wygenerowania QR w aplikacji:
 ```
 
 Sekret jest pokazany tylko w tej odpowiedzi, przechowywany w bazie w postaci AES-GCM i wygasa po 10 minutach. Frontend powinien umożliwić zeskanowanie QR lub ręczne wpisanie sekretu. Nie zapisuj sekretu w AsyncStorage ani logach.
+
+Dla konta z hasłem lokalnym wymagane jest aktualne hasło. Konto Google-only bez hasła lokalnego przekazuje `{}`; backend wymaga wtedy świeżego uwierzytelnienia Google (`auth_time` nie starsze niż 5 minut). Identyczna reguła dotyczy wyłączenia TOTP i ustawienia pierwszego hasła.
 
 ### Potwierdzenie i aktywacja
 
@@ -74,7 +78,7 @@ Pierwszy krok pozostaje `POST /api/login`:
 {"email":"user@example.com","password":"haslo"}
 ```
 
-Konto bez MFA otrzymuje dotychczasową odpowiedź z `token`. Konto z MFA otrzymuje odpowiedź bez tokenu:
+Konto bez MFA otrzymuje `access_token` oraz `refresh_token`. Access token jest ważny 15 minut; refresh token wygasa po 30 dniach bezczynności i maksymalnie po 90 dniach od utworzenia sesji. `POST /api/refresh` rotuje oba tokeny. Konto z MFA dostaje najpierw odpowiedź bez tokenów:
 
 ```json
 {
@@ -98,7 +102,7 @@ albo:
 {"challenge_token":"…","code":"RECOVERY_CODE"}
 ```
 
-Kod TOTP ma 6 cyfr, kod odzyskiwania ma 16 znaków URL-safe. Sukces zwraca standardowe `AuthResponse` (`user`, `token`, `token_type`, `expires_in`), którego token należy obsługiwać tak samo jak token po zwykłym logowaniu. Challenge jest jednorazowy i wygasa po 5 minutach. Ponowne użycie challenge, TOTP z już zaakceptowanego kroku lub odzyskanego kodu kończy się `401`.
+Kod TOTP ma 6 cyfr. Nowe kody odzyskiwania mają 22 znaki URL-safe (128 bitów entropii); kody wydane starszą wersją o długości 16 znaków pozostają obsługiwane. Sukces zwraca tę samą odpowiedź sesji co zwykłe logowanie: `access_token`, `refresh_token`, `expires_in`, `refresh_expires_in` i `user`. Access token jest ważny 15 minut, a refresh token 30 dni bezczynności i maksymalnie 90 dni od utworzenia sesji; `POST /api/refresh` rotuje oba tokeny. Challenge jest jednorazowy i wygasa po 5 minutach. Ponowne użycie challenge, TOTP z już zaakceptowanego kroku lub odzyskanego kodu kończy się `401`.
 
 ### Wyłączenie
 
@@ -114,7 +118,7 @@ W polu `code` można przekazać TOTP lub jednorazowy kod odzyskiwania. Poprawna 
 {"totp_enabled":false,"reauthentication_required":true}
 ```
 
-Wyłączenie wymaga ponownego hasła i świeżego kodu; unieważnia wszystkie sesje i czyści challenge. Frontend usuwa token i kieruje użytkownika do logowania.
+Wyłączenie wymaga ponownego hasła (albo świeżego uwierzytelnienia Google dla kont Google-only) oraz świeżego TOTP lub kodu odzyskiwania. Unieważnia wszystkie sesje i czyści challenge. Frontend usuwa oba tokeny i kieruje użytkownika do logowania.
 
 ## Błędy i ograniczenia prób
 
@@ -129,8 +133,8 @@ Limity są egzekwowane per konto w bazie, także przy tworzeniu nowych challenge
 ## Reguły implementacji
 
 - Sekret TOTP: losowy Base32, 160 bitów; szyfrowanie AES-GCM 256 bitów z nonce per zapis i AAD powiązanym z użytkownikiem oraz przeznaczeniem.
-- TOTP: SHA-1 zgodnie z interoperacyjnością RFC 6238, 6 cyfr, krok 30 sekund, bieżący krok oraz najwyżej jeden poprzedni krok dla opóźnienia sieciowego. Przyszłe kroki nie są akceptowane. Zaakceptowany krok nie może zostać użyty ponownie.
-- Challenge i kody odzyskiwania: losowe wartości; w SQLite zapisują się wyłącznie SHA-256 hashe.
+- TOTP: SHA-1 zgodnie z interoperacyjnością RFC 6238, 6 cyfr i wyłącznie bieżący krok 30 sekund. Poprzednie i przyszłe kroki nie są akceptowane; zapewnia to maksymalny czas ważności 30 sekund wymagany w ASVS 5.0.0 V6.5.5. Serwer wymaga zsynchronizowanego zegara. Zaakceptowany krok nie może zostać użyty ponownie.
+- Challenge i kody odzyskiwania: losowe wartości; w SQLite zapisują się wyłącznie SHA-256 hashe. Nowe kody odzyskiwania mają 128 bitów entropii, więc nie wymagają wolnego hashowania przeznaczonego dla słabych, zgadywalnych sekretów. Wcześniej wydane kody 16-znakowe mają 96 bitów; pozostają ważne dla kompatybilności i nie można ich bezpiecznie przekształcić bez znajomości wartości jawnej. Są ograniczeniem migracyjnym do rozwiązania przez bezpieczną rotację kodów.
 - Sesje są tworzone dopiero po poprawnym drugim kroku MFA. Aktywacja/wyłączenie unieważnia wszystkie sesje.
 - Zmiana hasła usuwa challenge logowania i niepotwierdzony sekret konfiguracji.
 - Tabele: `user_totp`, `totp_login_challenges`, `totp_recovery_codes`.
@@ -143,7 +147,7 @@ Z katalogu `backend/` uruchom:
 .venv/bin/python -m pytest -q
 ```
 
-Testy MFA obejmują wektory RFC 6238, zgodność parametrów provisioning URI, bieżący/poprzedni/przyszły krok, setup i wygaśnięcie setupu oraz challenge, brak sekretu jawnego w bazie, brak tokenu po pierwszym kroku logowania, jednorazowość challenge/TOTP/kodów odzyskiwania, blokadę prób, unieważnianie sesji, brak klucza, modyfikację ciphertext oraz równoległe wykorzystanie challenge.
+Testy MFA obejmują wektory RFC 6238, zgodność parametrów provisioning URI, akceptację bieżącego oraz odrzucanie poprzedniego i przyszłego kroku, setup i wygaśnięcie setupu oraz challenge, brak sekretu jawnego w bazie, brak tokenu po pierwszym kroku logowania, jednorazowość challenge/TOTP/kodów odzyskiwania, blokadę prób, unieważnianie sesji, brak klucza, modyfikację ciphertext oraz równoległe wykorzystanie challenge.
 
 ## Podstawa zaleceń
 

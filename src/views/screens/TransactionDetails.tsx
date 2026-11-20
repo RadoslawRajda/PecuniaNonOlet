@@ -1,3 +1,4 @@
+import {authenticatedFetch} from '../../auth/session';
 import React from 'react';
 import {
   ActivityIndicator,
@@ -58,7 +59,7 @@ export function TransactionDetails({transactionId, token, onClose, goHome}: Tran
       setIsLoading(true);
       setError(null);
       try {
-        const response = await fetch(
+        const response = await authenticatedFetch(
           `${apiBaseUrl}/api/transactions/${encodeURIComponent(requestedTransactionId)}`,
           {headers: {Authorization: `Bearer ${token}`}},
         );

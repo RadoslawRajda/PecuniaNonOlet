@@ -4,49 +4,46 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timezone
-from typing import Annotated
+from datetime import UTC, datetime
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.authorization import require_roles
 from app.database import connect_db
+from app.money import format_minor_units
+from app.photo_storage import photo_path
 from app.schemas import (
     AccountBalance,
     AccountListResponse,
+    CurrencyCode,
     FinancialTransaction,
+    TransactionDirection,
     TransactionPage,
     User,
 )
-from app.routes.profile_photos import photo_path
 
 router = APIRouter(prefix="/api")
 AuthenticatedUser = Annotated[User, Depends(require_roles("user"))]
 
 
-def format_minor_units(amount_minor: int, minor_unit: int) -> str:
-    sign = "-" if amount_minor < 0 else ""
-    whole, fraction = divmod(abs(amount_minor), 10**minor_unit)
-    if minor_unit == 0:
-        return f"{sign}{whole}"
-    return f"{sign}{whole}.{fraction:0{minor_unit}d}"
-
-
 def transaction_view(row: sqlite3.Row, user_id: int) -> FinancialTransaction:
-    direction = "internal"
+    direction: TransactionDirection = "internal"
     if row["kind"] == "transfer":
         direction = "incoming" if row["recipient_user_id"] == user_id else "outgoing"
     if direction == "incoming":
         amount_minor = row["destination_amount_minor"]
-        currency_code = row["destination_currency_code"]
+        currency_code = cast(CurrencyCode, row["destination_currency_code"])
         counterparty_email = row["sender_email"]
     elif row["kind"] == "opening":
         amount_minor = row["destination_amount_minor"]
-        currency_code = row["destination_currency_code"]
+        currency_code = cast(CurrencyCode, row["destination_currency_code"])
         counterparty_email = None
     else:
         amount_minor = row["source_amount_minor"] or row["destination_amount_minor"]
-        currency_code = row["source_currency_code"] or row["destination_currency_code"]
+        currency_code = cast(
+            CurrencyCode, row["source_currency_code"] or row["destination_currency_code"]
+        )
         counterparty_email = row["recipient_email"] if direction == "outgoing" else None
 
     source_minor_unit = row["source_minor_unit"]
@@ -60,7 +57,9 @@ def transaction_view(row: sqlite3.Row, user_id: int) -> FinancialTransaction:
         amount_minor=amount_minor,
         amount=format_minor_units(
             amount_minor,
-            destination_minor_unit if direction == "incoming" or row["kind"] == "opening" else source_minor_unit,
+            destination_minor_unit
+            if direction == "incoming" or row["kind"] == "opening"
+            else source_minor_unit,
         ),
         source_account_id=row["source_account_id"],
         destination_account_id=row["destination_account_id"],
@@ -78,7 +77,7 @@ def transaction_view(row: sqlite3.Row, user_id: int) -> FinancialTransaction:
         ),
         exchange_rate=row["exchange_rate"],
         counterparty_email=counterparty_email,
-        created_at=datetime.fromtimestamp(row["created_at"], tz=timezone.utc)
+        created_at=datetime.fromtimestamp(row["created_at"], tz=UTC)
         .isoformat()
         .replace("+00:00", "Z"),
     )
@@ -190,6 +189,11 @@ def get_transaction_counterparty_photo(
     try:
         content = photo_path(photo["storage_key"]).read_bytes()
     except FileNotFoundError as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Nie znaleziono zdjęcia kontrahenta.") from exc
-    return Response(content=content, media_type="image/jpeg", headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
-
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "Nie znaleziono zdjęcia kontrahenta."
+        ) from exc
+    return Response(
+        content=content,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )

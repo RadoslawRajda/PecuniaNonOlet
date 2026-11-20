@@ -24,7 +24,7 @@ function LocationState() {
 async function renderState() {
   let renderer!: ReactTestRenderer.ReactTestRenderer;
   await ReactTestRenderer.act(async () => {
-    renderer = ReactTestRenderer.create(<AppPreferencesProvider token="test-token"><LocationState /></AppPreferencesProvider>);
+    renderer = ReactTestRenderer.create(<AppPreferencesProvider token="test-token" role="user" handleForbidden={() => undefined}><LocationState /></AppPreferencesProvider>);
     await new Promise<void>(resolve => setTimeout(resolve, 10));
   });
   return renderer;

@@ -1,15 +1,18 @@
+import {authenticatedFetch} from '../../auth/session';
 import React from 'react';
-import {Alert, BackHandler, Linking, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {Alert, BackHandler, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import ChevronRight from 'lucide-react-native/icons/chevron-right';
 import MapPin from 'lucide-react-native/icons/map-pin';
 import Palette from 'lucide-react-native/icons/palette';
 import Shield from 'lucide-react-native/icons/shield';
 import CircleHelp from 'lucide-react-native/icons/circle-question-mark';
 import LogOut from 'lucide-react-native/icons/log-out';
+import KeyRound from 'lucide-react-native/icons/key-round';
 import QRCode from 'react-native-qrcode-svg';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {launchImageLibrary, type ImageLibraryOptions} from 'react-native-image-picker';
 import {API_URL} from '@env';
+import {changePassword, createPasskey, getGoogleConnectionStatus, getPasskeys, reauthenticateWithGoogle, removePasskey, signInWithGoogle} from '../../auth/authMethods';
 
 import {AppButton, BrandLogo, FormInput} from '../components/Ui';
 import {COLORS, createThemedStyles, type ColorScheme} from '../theme';
@@ -17,7 +20,7 @@ import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPrefe
 import type {Account} from '../../types/Account';
 import type {UserRole} from '../../models/auth';
 
-type ProfilePage = 'main' | 'currency' | 'appearance' | 'account' | 'help' | 'security';
+type ProfilePage = 'main' | 'currency' | 'appearance' | 'account' | 'help' | 'security' | 'password';
 
 export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {username?: string; role: UserRole | null; onLogout: () => void}) {
   const isAnalyst = role === 'analyst';
@@ -37,9 +40,22 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
   const [totpSecret, setTotpSecret] = React.useState('');
   const [totpPassword, setTotpPassword] = React.useState('');
   const [totpCode, setTotpCode] = React.useState('');
+  const [useTotpRecoveryCode, setUseTotpRecoveryCode] = React.useState(false);
   const [totpMessage, setTotpMessage] = React.useState('');
+  const [passkeys, setPasskeys] = React.useState<Array<{id: string; label: string; created_at: number}>>([]);
+  const [googleLinked, setGoogleLinked] = React.useState<boolean | null>(null);
+  const [hasLocalPassword, setHasLocalPassword] = React.useState<boolean | null>(null);
+  const [passkeyMessage, setPasskeyMessage] = React.useState('');
   const [recoveryCodes, setRecoveryCodes] = React.useState<string[]>([]);
+  const [currentPassword, setCurrentPassword] = React.useState('');
+  const [newPassword, setNewPassword] = React.useState('');
+  const [newPasswordConfirmation, setNewPasswordConfirmation] = React.useState('');
+  const [passwordMfaCode, setPasswordMfaCode] = React.useState('');
+  const [usePasswordRecoveryCode, setUsePasswordRecoveryCode] = React.useState(false);
+  const [passwordMessage, setPasswordMessage] = React.useState('');
+  const [isChangingPassword, setIsChangingPassword] = React.useState(false);
   const needsRecoveryCodeCopy = recoveryCodes.length > 0;
+  const isGoogleOnlyAccount = hasLocalPassword === false;
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
 
   React.useEffect(() => {
@@ -50,13 +66,97 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
 
   React.useEffect(() => {
     if (!token) return;
-    fetch(`${apiBaseUrl}/api/mfa`, {headers: {Authorization: `Bearer ${token}`}})
+    authenticatedFetch(`${apiBaseUrl}/api/mfa`, {headers: {Authorization: `Bearer ${token}`}})
       .then(response => response.json()).then(data => setTotpEnabled(Boolean(data?.totp_enabled)))
       .catch(() => setTotpMessage('Nie udało się pobrać statusu TOTP.'));
   }, [apiBaseUrl, token]);
 
+  React.useEffect(() => {
+    if (!token) return;
+    getPasskeys(token).then(data => setPasskeys(Array.isArray(data) ? data : []))
+      .catch(error => setPasskeyMessage(error instanceof Error ? error.message : 'Nie udało się pobrać passkeys.'));
+  }, [token]);
+
+  React.useEffect(() => {
+    if (!token) {
+      setGoogleLinked(null);
+      setHasLocalPassword(null);
+      return;
+    }
+    getGoogleConnectionStatus(token)
+      .then(status => {
+        setGoogleLinked(status.linked);
+        setHasLocalPassword(status.has_local_password);
+      })
+      .catch(() => {
+        setGoogleLinked(null);
+        setHasLocalPassword(null);
+      });
+  }, [token]);
+
+  function needsFreshGoogleAuthentication(error: unknown): boolean {
+    return error instanceof Error
+      && error.message === 'Zaloguj się ponownie przed zmianą metod uwierzytelniania.';
+  }
+
+  async function retryAfterGoogleReauthentication<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!token || !googleLinked || !needsFreshGoogleAuthentication(error)) throw error;
+      setPasskeyMessage('Potwierdzam tożsamość przez Google…');
+      await reauthenticateWithGoogle(token);
+      setPasskeyMessage('Tożsamość potwierdzona. Kończę operację…');
+      return operation();
+    }
+  }
+
+  async function addPasskey() {
+    if (!token) return;
+    if (Platform.OS === 'ios' && __DEV__) {
+      setPasskeyMessage(
+        'Passkeys nie są dostępne w lokalnym buildzie iOS. Wymagają Associated Domains, które nie działa z darmowym Apple Personal Team.'
+      );
+      return;
+    }
+    try {
+      const created = await retryAfterGoogleReauthentication(() => createPasskey(token));
+      setPasskeys(current => [created, ...current]);
+      setPasskeyMessage('Passkey została dodana.');
+    } catch (error) {
+      setPasskeyMessage(error instanceof Error ? error.message : 'Nie udało się dodać passkey. Zaloguj się ponownie i spróbuj ponownie.');
+    }
+  }
+
+  async function connectGoogle() {
+    if (!token) return;
+    try {
+      await signInWithGoogle(token);
+      setGoogleLinked(true);
+      setPasskeyMessage('Konto Google zostało połączone.');
+    } catch (error) {
+      setPasskeyMessage(error instanceof Error ? error.message : 'Nie udało się połączyć konta Google.');
+    }
+  }
+
+  function confirmPasskeyRemoval(id: string) {
+    Alert.alert('Usunąć passkey?', 'Usunięcie jej uniemożliwi logowanie tą metodą.', [
+      {text: 'Anuluj', style: 'cancel'},
+      {text: 'Usuń', style: 'destructive', onPress: async () => {
+        if (!token) return;
+        try {
+          await retryAfterGoogleReauthentication(() => removePasskey(token, id));
+          setPasskeys(current => current.filter(item => item.id !== id));
+          setPasskeyMessage('Passkey została usunięta.');
+        } catch (error) {
+          setPasskeyMessage(error instanceof Error ? error.message : 'Nie udało się usunąć passkey.');
+        }
+      }},
+    ]);
+  }
+
   async function requestTotp(path: string, body: object) {
-    const response = await fetch(`${apiBaseUrl}/api/${path}`, {
+    const response = await authenticatedFetch(`${apiBaseUrl}/api/${path}`, {
       method: 'POST', headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
       body: JSON.stringify(body),
     });
@@ -67,7 +167,7 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
 
   async function beginTotpSetup() {
     try {
-      const data = await requestTotp('mfa/totp/setup', {current_password: totpPassword});
+      const data = await requestTotp('mfa/totp/setup', {current_password: totpPassword || undefined});
       setTotpUri(data.provisioning_uri); setTotpSecret(data.secret);
       setTotpMessage('Zeskanuj kod lub wpisz sekret w aplikacji Authenticator.');
     } catch (error) { setTotpMessage(error instanceof Error ? error.message : 'Nie udało się rozpocząć konfiguracji.'); }
@@ -104,7 +204,7 @@ ${(data.recovery_codes ?? []).join('\n')}`,
 
   async function disableTotp() {
     try {
-      await requestTotp('mfa/totp/disable', {current_password: totpPassword, code: totpCode});
+      await requestTotp('mfa/totp/disable', {current_password: totpPassword || undefined, code: totpCode});
       setTotpEnabled(false); setTotpCode('');
       Alert.alert('TOTP wyłączone', 'Ze względów bezpieczeństwa nastąpi wylogowanie.', [
         {text: 'Zaloguj się ponownie', onPress: onLogout},
@@ -112,10 +212,75 @@ ${(data.recovery_codes ?? []).join('\n')}`,
     } catch (error) { setTotpMessage(error instanceof Error ? error.message : 'Nie udało się wyłączyć TOTP.'); }
   }
 
+  function clearPasswordForm() {
+    setCurrentPassword('');
+    setNewPassword('');
+    setNewPasswordConfirmation('');
+    setPasswordMfaCode('');
+    setUsePasswordRecoveryCode(false);
+    setPasswordMessage('');
+  }
+
+  function toggleTotpRecoveryCode() {
+    setUseTotpRecoveryCode(current => !current);
+    setTotpCode('');
+  }
+
+  function togglePasswordRecoveryCode() {
+    setUsePasswordRecoveryCode(current => !current);
+    setPasswordMfaCode('');
+  }
+
+  async function submitPasswordChange() {
+    if (!token || isChangingPassword) return;
+    if (newPassword.length < 8) {
+      setPasswordMessage('Nowe hasło musi mieć co najmniej 8 znaków.');
+      return;
+    }
+    if (newPassword !== newPasswordConfirmation) {
+      setPasswordMessage('Nowe hasła nie są identyczne.');
+      return;
+    }
+    if (totpEnabled && !passwordMfaCode.trim()) {
+      setPasswordMessage('Podaj aktualny kod z Authenticatora albo kod odzyskiwania.');
+      return;
+    }
+
+    const payload = {
+      current_password: currentPassword || undefined,
+      new_password: newPassword,
+      mfa_code: totpEnabled ? passwordMfaCode.trim() || undefined : undefined,
+    };
+    setIsChangingPassword(true);
+    setPasswordMessage('Potwierdzam zmianę hasła…');
+    try {
+      try {
+        await changePassword(token, payload);
+      } catch (error) {
+        if (!googleLinked || !needsFreshGoogleAuthentication(error)) throw error;
+        setPasswordMessage('Potwierdzam tożsamość przez Google…');
+        await reauthenticateWithGoogle(token);
+        setPasswordMessage('Tożsamość potwierdzona. Kończę zmianę hasła…');
+        await changePassword(token, payload);
+      }
+      clearPasswordForm();
+      Alert.alert(
+        'Hasło zmienione',
+        'Ze względów bezpieczeństwa nastąpi wylogowanie ze wszystkich urządzeń.',
+        [{text: 'Zaloguj się ponownie', onPress: onLogout}],
+        {cancelable: false},
+      );
+    } catch (error) {
+      setPasswordMessage(error instanceof Error ? error.message : 'Nie udało się zmienić hasła.');
+    } finally {
+      setIsChangingPassword(false);
+    }
+  }
+
   React.useEffect(() => {
     if (!token || isAnalyst) return;
     let active = true;
-    fetch(`${apiBaseUrl}/api/accounts`, {headers: {Authorization: `Bearer ${token}`}})
+    authenticatedFetch(`${apiBaseUrl}/api/accounts`, {headers: {Authorization: `Bearer ${token}`}})
       .then(async response => {
         if (handleForbiddenResponse(response, handleForbidden)) return;
         const data = await response.json().catch(() => null);
@@ -147,7 +312,7 @@ ${(data.recovery_codes ?? []).join('\n')}`,
       } as any);
       setIsUploading(true);
       setPhotoStatus('Wysyłam zdjęcie na serwer…');
-      const response = await fetch(`${apiBaseUrl}/api/profile/photo`, {
+      const response = await authenticatedFetch(`${apiBaseUrl}/api/profile/photo`, {
         method: 'PUT', headers: {Authorization: `Bearer ${token}`}, body: form,
       });
       if (handleForbiddenResponse(response, handleForbidden)) return;
@@ -167,7 +332,8 @@ ${(data.recovery_codes ?? []).join('\n')}`,
 
   const title: Record<ProfilePage, string> = {
     main: 'Profil', currency: 'Waluta i lokalizacja', appearance: 'Wygląd',
-    account: 'Dane profilu', help: 'Pomoc i informacje', security: 'Uwierzytelnianie TOTP',
+    account: 'Dane profilu', help: 'Pomoc i informacje', security: 'Bezpieczeństwo',
+    password: 'Zmień hasło',
   };
   const selectManualCurrency = (currency: string) => {
     if (locationCurrencyEnabled) setLocationCurrencyEnabled(false);
@@ -179,7 +345,14 @@ ${(data.recovery_codes ?? []).join('\n')}`,
 
   return (
     <View style={styles.screen}>
-    <ScrollView contentContainerStyle={styles.container}>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={styles.keyboardAvoiding}>
+    <ScrollView
+      automaticallyAdjustKeyboardInsets
+      contentContainerStyle={styles.container}
+      keyboardDismissMode="interactive"
+      keyboardShouldPersistTaps="handled">
       <View style={styles.headerRow}>
         <View style={styles.backPlaceholder} />
         <Text style={styles.headerTitle}>{title[page]}</Text>
@@ -190,7 +363,7 @@ ${(data.recovery_codes ?? []).join('\n')}`,
           {!isAnalyst ? <View style={styles.userCard}>
             <BrandLogo size={64} showProfilePhoto />
             <View style={styles.userCardText}>
-              <Text style={styles.userTitle}>{username}</Text>
+              <Text numberOfLines={1} ellipsizeMode="tail" style={styles.userTitle}>{username}</Text>
               <Text style={styles.description}>Twoje konto i preferencje</Text>
             </View>
           </View> : null}
@@ -199,10 +372,22 @@ ${(data.recovery_codes ?? []).join('\n')}`,
           {!isAnalyst ? <MenuRow icon={MapPin} title="Waluta i lokalizacja" subtitle={preferredCurrency ?? 'Wybierz preferencje'} onPress={() => setPage('currency')} /> : null}
           <MenuRow icon={Palette} title="Wygląd aplikacji" subtitle={THEME_LABELS[colorScheme]} onPress={() => setPage('appearance')} />
 
-          {!isAnalyst ? <Text style={styles.groupTitle}>Konto i bezpieczeństwo</Text> : null}
+          <Text style={styles.groupTitle}>Konto i bezpieczeństwo</Text>
           {!isAnalyst ? <MenuRow icon={Shield} title="Dane profilu" subtitle="Zdjęcie profilowe" onPress={() => setPage('account')} /> : null}
-
-          <MenuRow icon={Shield} title="TOTP / Authenticator" subtitle={totpEnabled ? 'Włączone' : 'Wyłączone'} onPress={() => setPage('security')} />
+          <MenuRow
+            icon={Shield}
+            title="Bezpieczeństwo"
+            subtitle={isGoogleOnlyAccount
+              ? 'Konto Google — dodatkowe metody niedostępne'
+              : `${totpEnabled ? 'TOTP włączone' : 'TOTP wyłączone'} · ${passkeys.length} passkeys`}
+            onPress={() => setPage('security')}
+          />
+          {hasLocalPassword === true ? <MenuRow
+            icon={KeyRound}
+            title="Zmień hasło"
+            subtitle={totpEnabled ? 'Wymagane hasło i kod MFA' : 'Potwierdź obecnym hasłem'}
+            onPress={() => setPage('password')}
+          /> : null}
           <Text style={styles.groupTitle}>Inne</Text>
           <MenuRow icon={CircleHelp} title="Pomoc i informacje" onPress={() => setPage('help')} />
           <Pressable accessibilityRole="button" accessibilityLabel="Wyloguj się z aplikacji" onPress={signOut} style={({pressed}) => [styles.logoutRow, pressed && styles.pressed]}>
@@ -253,8 +438,29 @@ ${(data.recovery_codes ?? []).join('\n')}`,
 
       {page === 'security' ? (
         <View style={styles.pageContent}>
+          {isGoogleOnlyAccount ? (
+            <View style={styles.infoCard}>
+              <Text style={styles.userTitle}>Konto Google</Text>
+              <Text style={styles.description}>
+                To konto korzysta wyłącznie z logowania Google. Dodanie TOTP lub passkey wymagałoby niezależnego, świeżego potwierdzenia tożsamości.
+              </Text>
+              <Text style={styles.description}>
+                Nie udostępniamy tych operacji bez takiego potwierdzenia, aby przejęta sesja nie mogła dopisać własnej metody logowania.
+              </Text>
+            </View>
+          ) : <>
+          <Text style={styles.groupTitle}>Passkeys</Text>
+          <Text style={styles.description}>Logowanie kluczem zapisanym w pęku kluczy lub menedżerze haseł urządzenia. Przy dodawaniu lub usuwaniu aplikacja poprosi o świeże potwierdzenie przez Google, jeśli będzie potrzebne.</Text>
+          <AppButton title="Dodaj passkey" onPress={addPasskey} />
+          {passkeys.map(item => <Pressable key={item.id} accessibilityRole="button" onPress={() => confirmPasskeyRemoval(item.id)} style={styles.option}>
+            <Text style={styles.optionTitle}>{item.label}</Text><Text style={styles.optionHint}>Usuń</Text>
+          </Pressable>)}
+          {googleLinked === false ? <AppButton title="Połącz konto Google" onPress={connectGoogle} secondary /> : null}
+          {passkeyMessage ? <Text selectable style={styles.description}>{passkeyMessage}</Text> : null}
+          <Text style={styles.groupTitle}>TOTP / Authenticator</Text>
           <Text style={styles.description}>{totpEnabled ? 'TOTP jest włączone dla Twojego konta.' : 'Zabezpiecz logowanie kodem z aplikacji Authenticator.'}</Text>
           <FormInput label="Obecne hasło" value={totpPassword} onChangeText={setTotpPassword} secureTextEntry />
+          <Text style={styles.description}>Nie masz hasła do konta utworzonego przez Google? Zaloguj się ponownie przez Google i pozostaw to pole puste.</Text>
           {!totpEnabled && !totpUri ? <AppButton title="Rozpocznij konfigurację TOTP" onPress={beginTotpSetup} /> : null}
           {totpUri ? <>
             <QRCode value={totpUri} size={210} />
@@ -266,7 +472,19 @@ ${(data.recovery_codes ?? []).join('\n')}`,
             <AppButton title="Potwierdź i włącz TOTP" onPress={confirmTotp} />
           </> : null}
           {totpEnabled && !needsRecoveryCodeCopy ? <>
-            <FormInput label="Kod TOTP lub kod odzyskiwania" value={totpCode} onChangeText={setTotpCode} autoCapitalize="characters" />
+            <FormInput
+              autoCapitalize={useTotpRecoveryCode ? 'characters' : 'none'}
+              autoCorrect={false}
+              keyboardType={useTotpRecoveryCode ? 'default' : 'number-pad'}
+              label={useTotpRecoveryCode ? 'Kod odzyskiwania' : 'Kod z Authenticatora'}
+              maxLength={useTotpRecoveryCode ? 22 : 6}
+              textContentType={useTotpRecoveryCode ? 'none' : 'oneTimeCode'}
+              value={totpCode}
+              onChangeText={setTotpCode}
+            />
+            <Pressable accessibilityRole="button" onPress={toggleTotpRecoveryCode} style={({pressed}) => [styles.authenticatorLink, pressed && styles.pressed]}>
+              <Text style={styles.authenticatorLinkText}>{useTotpRecoveryCode ? 'Użyj kodu z Authenticatora' : 'Użyj kodu odzyskiwania'}</Text>
+            </Pressable>
             <AppButton title="Wyłącz TOTP" onPress={disableTotp} secondary />
           </> : null}
           {recoveryCodes.length ? <>
@@ -281,6 +499,7 @@ ${(data.recovery_codes ?? []).join('\n')}`,
             <AppButton title="Wyloguj się i zaloguj ponownie" onPress={onLogout} />
           </> : null}
           {totpMessage ? <Text selectable style={styles.description}>{totpMessage}</Text> : null}
+          </>}
         </View>
       ) : null}
 
@@ -298,6 +517,77 @@ ${(data.recovery_codes ?? []).join('\n')}`,
         </View>
       ) : null}
 
+      {page === 'password' ? (
+        <View style={styles.pageContent}>
+          <View style={styles.infoCard}>
+            <Text style={styles.userTitle}>Potwierdzenie tożsamości</Text>
+            <Text style={styles.description}>
+              Zmiana hasła zakończy wszystkie aktywne sesje. {totpEnabled
+                ? 'Aby chronić konto, wymagamy obecnego hasła i jednorazowego kodu MFA.'
+                : 'Potwierdź operację obecnym hasłem.'}
+            </Text>
+          </View>
+          <FormInput
+            autoCapitalize="none"
+            autoComplete="current-password"
+            autoCorrect={false}
+            editable={!isChangingPassword}
+            label="Obecne hasło"
+            onChangeText={setCurrentPassword}
+            secureTextEntry
+            textContentType="password"
+            value={currentPassword}
+          />
+          <FormInput
+            autoCapitalize="none"
+            autoComplete="new-password"
+            autoCorrect={false}
+            editable={!isChangingPassword}
+            label="Nowe hasło"
+            onChangeText={setNewPassword}
+            secureTextEntry
+            textContentType="newPassword"
+            value={newPassword}
+          />
+          <FormInput
+            autoCapitalize="none"
+            autoComplete="new-password"
+            autoCorrect={false}
+            editable={!isChangingPassword}
+            label="Powtórz nowe hasło"
+            onChangeText={setNewPasswordConfirmation}
+            secureTextEntry
+            textContentType="newPassword"
+            value={newPasswordConfirmation}
+          />
+          {totpEnabled ? (
+            <>
+              <FormInput
+                autoCapitalize={usePasswordRecoveryCode ? 'characters' : 'none'}
+                autoComplete={usePasswordRecoveryCode ? 'off' : 'one-time-code'}
+                autoCorrect={false}
+                editable={!isChangingPassword}
+                keyboardType={usePasswordRecoveryCode ? 'default' : 'number-pad'}
+                label={usePasswordRecoveryCode ? 'Kod odzyskiwania' : 'Kod z Authenticatora'}
+                maxLength={usePasswordRecoveryCode ? 22 : 6}
+                onChangeText={setPasswordMfaCode}
+                textContentType={usePasswordRecoveryCode ? 'none' : 'oneTimeCode'}
+                value={passwordMfaCode}
+              />
+              <Pressable accessibilityRole="button" onPress={togglePasswordRecoveryCode} style={({pressed}) => [styles.authenticatorLink, pressed && styles.pressed]}>
+                <Text style={styles.authenticatorLinkText}>{usePasswordRecoveryCode ? 'Użyj kodu z Authenticatora' : 'Użyj kodu odzyskiwania'}</Text>
+              </Pressable>
+            </>
+          ) : null}
+          {passwordMessage ? <Text accessibilityLiveRegion="polite" style={styles.statusMessage}>{passwordMessage}</Text> : null}
+          <AppButton
+            disabled={isChangingPassword}
+            onPress={submitPasswordChange}
+            title={isChangingPassword ? 'Zmieniam hasło…' : 'Zmień hasło i wyloguj'}
+          />
+        </View>
+      ) : null}
+
       {page === 'help' ? (
         <View style={styles.pageContent}>
           <View style={styles.infoCard}>
@@ -308,6 +598,7 @@ ${(data.recovery_codes ?? []).join('\n')}`,
       ) : null}
     </ScrollView>
     {page !== 'main' && !needsRecoveryCodeCopy ? <View style={styles.stickyFooter}><AppButton title="Wróć do profilu" onPress={() => setPage('main')} secondary /></View> : null}
+    </KeyboardAvoidingView>
     </View>
   );
 }
@@ -333,6 +624,7 @@ const PERMISSION_LABELS = {GRANTED: 'przyznane', DENIED: 'odmówione', BLOCKED: 
 
 const styles = createThemedStyles(() => StyleSheet.create({
   screen: {flex: 1},
+  keyboardAvoiding: {flex: 1},
   container: {flexGrow: 1, paddingHorizontal: 22, paddingTop: 18, paddingBottom: 28, gap: 10},
   headerRow: {minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8},
   headerTitle: {color: COLORS.white, fontSize: 22, fontWeight: '800', flex: 1, textAlign: 'center'},
@@ -352,6 +644,7 @@ const styles = createThemedStyles(() => StyleSheet.create({
   pageContent: {gap: 12},
   statusText: {color: COLORS.muted, fontSize: 13},
   locationMessage: {color: COLORS.muted, fontSize: 14, lineHeight: 20},
+  statusMessage: {color: COLORS.yellow, fontSize: 14, lineHeight: 20},
   infoCard: {backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 14, padding: 16, gap: 8},
   authenticatorLink: {alignSelf: 'center', paddingVertical: 6, paddingHorizontal: 10},
   authenticatorLinkText: {color: COLORS.yellow, fontSize: 14, fontWeight: '700', textDecorationLine: 'underline'},
