@@ -16,7 +16,17 @@ AuthenticatedUser = Annotated[User, Depends(require_roles("user"))]
 ActiveSession = Annotated[AuthenticatedSession, Depends(current_session)]
 
 
-@router.post("/transfers", response_model=TransferResponse, status_code=201)
+@router.post(
+    "/transfers",
+    response_model=TransferResponse,
+    status_code=201,
+    summary="Przelej środki na konto innego użytkownika",
+    description=(
+        "Kwota jest podawana w najmniejszych jednostkach waluty. Źródłowy rachunek musi "
+        "należeć do bieżącego użytkownika. `Idempotency-Key` zapobiega powtórnemu "
+        "zaksięgowaniu tego samego żądania; inna treść z tym samym kluczem daje 409."
+    ),
+)
 def create_transfer(
     payload: TransferRequest,
     user: AuthenticatedUser,

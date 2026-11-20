@@ -206,7 +206,19 @@ class TransactionPage(BaseModel):
 
 
 class TransferRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {
+                    "recipient_email": "odbiorca@example.test",
+                    "source_account_id": 1,
+                    "currency_code": "PLN",
+                    "amount_minor": 1250,
+                }
+            ]
+        },
+    )
 
     recipient_email: EmailStr
     source_account_id: int = Field(gt=0, le=MAX_SQLITE_INTEGER, strict=True)
@@ -246,7 +258,18 @@ class ExchangeRatesResponse(BaseModel):
 
 
 class ExchangeQuoteRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {
+                    "source_account_id": 1,
+                    "destination_account_id": 2,
+                    "source_amount_minor": 424,
+                }
+            ]
+        },
+    )
 
     source_account_id: int = Field(gt=0, le=MAX_SQLITE_INTEGER, strict=True)
     destination_account_id: int = Field(gt=0, le=MAX_SQLITE_INTEGER, strict=True)
@@ -274,7 +297,10 @@ class ExchangeQuoteResponse(BaseModel):
 
 
 class ExchangeRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [{"quote_id": "9fbe98e3-48e1-4e66-91e9-0dcb9ef0e70d"}]},
+    )
 
     quote_id: UUID
 

@@ -142,7 +142,17 @@ def get_exchange_rates(
     return provider_response(require_rate_table(provider))
 
 
-@router.post("/exchange/quote", response_model=ExchangeQuoteResponse, status_code=201)
+@router.post(
+    "/exchange/quote",
+    response_model=ExchangeQuoteResponse,
+    status_code=201,
+    summary="Utwórz wycenę wymiany walut",
+    description=(
+        "Wycena korzysta z aktualnej tabeli NBP i wskazanych rachunków użytkownika. "
+        "Kwota jest podawana w najmniejszych jednostkach waluty. Wynik zawiera "
+        "jednorazowe `quote_id` i czas ważności; samo utworzenie wyceny nie zmienia sald."
+    ),
+)
 def create_exchange_quote(
     payload: ExchangeQuoteRequest,
     user: AuthenticatedUser,
@@ -158,7 +168,17 @@ def create_exchange_quote(
     return quote_response(create_quote(payload, user.id, table))
 
 
-@router.post("/exchange", response_model=ExchangeResponse, status_code=201)
+@router.post(
+    "/exchange",
+    response_model=ExchangeResponse,
+    status_code=201,
+    summary="Zrealizuj wycenioną wymianę walut",
+    description=(
+        "Ważne `quote_id` można zrealizować tylko raz. `Idempotency-Key` pozwala "
+        "bezpiecznie ponowić identyczne żądanie; konflikt treści daje 409. "
+        "Obciążenie, uznanie, historia i audyt zatwierdzają się atomowo."
+    ),
+)
 def execute_exchange(
     payload: ExchangeRequest,
     user: AuthenticatedUser,
