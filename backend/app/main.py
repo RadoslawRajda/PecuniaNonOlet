@@ -29,6 +29,8 @@ from app.routes.profile_photos import (
 )
 from app.routes.transfers import router as transfers_router
 from app.routes.mfa import router as mfa_router
+from app.routes.google_auth import router as google_auth_router
+from app.routes.passkeys import router as passkeys_router
 from app.sessions import issue_token
 from app.schemas import (
     AuthResponse,
@@ -101,6 +103,8 @@ app.include_router(exchange_router)
 app.include_router(profile_photos_router)
 app.include_router(analytics_router)
 app.include_router(mfa_router)
+app.include_router(google_auth_router)
+app.include_router(passkeys_router)
 app.add_middleware(ProfilePhotoBodyLimitMiddleware)
 
 
@@ -184,6 +188,40 @@ def download_local_ca() -> FileResponse:
         certificate_path,
         media_type="application/pkix-cert",
         filename="pecunianonolet-local-root-ca.cer",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/.well-known/apple-app-site-association", include_in_schema=False)
+def apple_app_site_association() -> JSONResponse:
+    team_id = os.getenv("APPLE_TEAM_ID", "96UM85TJJ7").strip()
+    bundle_id = os.getenv("IOS_BUNDLE_ID", "com.rajda.pecunianonolet").strip()
+    if not team_id or not bundle_id or "." in team_id or " " in bundle_id:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Brakuje APPLE_TEAM_ID lub IOS_BUNDLE_ID.")
+    return JSONResponse(
+        {"webcredentials": {"apps": [f"{team_id}.{bundle_id}"]}},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/.well-known/assetlinks.json", include_in_schema=False)
+def android_asset_links() -> JSONResponse:
+    fingerprints = [
+        value.strip().upper()
+        for value in os.getenv("ANDROID_SHA256_CERT_FINGERPRINTS", "FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C").split(",")
+        if value.strip()
+    ]
+    if not fingerprints or any(len(value) != 95 or any(c not in "0123456789ABCDEF:" for c in value) for value in fingerprints):
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Brakuje poprawnego ANDROID_SHA256_CERT_FINGERPRINTS.")
+    return JSONResponse(
+        [{
+            "relation": ["delegate_permission/common.get_login_creds"],
+            "target": {
+                "namespace": "android_app",
+                "package_name": os.getenv("ANDROID_PACKAGE_NAME", "com.pecunianonolet"),
+                "sha256_cert_fingerprints": fingerprints,
+            },
+        }],
         headers={"Cache-Control": "no-store"},
     )
 

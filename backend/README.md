@@ -81,10 +81,41 @@ Na Windows użyj `.venv\Scripts\alembic.exe -c alembic.ini upgrade head`.
 | `GET` | `/api/analytics/audit-events` | Stronicowany dziennik operacji finansowych i administracyjnych (rola `analyst`) |
 | `POST` | `/api/logout` | Unieważnienie tokenu |
 | `POST` | `/api/change-password` | Zmiana hasła i unieważnienie wszystkich sesji użytkownika |
+| `POST` | `/api/auth/google/nonce` | Jednorazowy nonce do logowania Google OIDC |
+| `POST` | `/api/auth/google/login` | Weryfikacja Google ID tokenu i wydanie lokalnej sesji |
+| `POST` | `/api/auth/google/link/nonce` | Nonce do jawnego połączenia Google z zalogowanym kontem |
+| `POST` | `/api/auth/google/link` | Połączenie kont po świeżym uwierzytelnieniu |
+| `GET` | `/api/passkeys` | Lista własnych passkeys bez ujawniania kluczy publicznych |
+| `POST` | `/api/passkeys/registration/options` | Początek rejestracji passkey |
+| `POST` | `/api/passkeys/registration/verify` | Weryfikacja attestation i zapis poświadczenia |
+| `POST` | `/api/passkeys/authentication/options` | Jednorazowe wyzwanie do logowania passkey |
+| `POST` | `/api/passkeys/authentication/verify` | Weryfikacja assertion i wydanie lokalnej sesji |
+| `DELETE` | `/api/passkeys/{credential_id}` | Usunięcie własnej passkey |
+| `GET` | `/.well-known/apple-app-site-association` | Powiązanie domeny z iOS dla passkeys |
+| `GET` | `/.well-known/assetlinks.json` | Powiązanie domeny z Androidem dla passkeys |
 
 Rejestracja przyjmuje JSON `{"email":"test@example.com","password":"haslo1234","captcha_token":"..."}`. Token CAPTCHA pochodzi z obowiązkowego widżetu Cloudflare Turnstile w aplikacji i jest weryfikowany przez backend przed utworzeniem konta. Logowanie przyjmuje e-mail i hasło. Hasło przy rejestracji musi mieć od 8 do 128 znaków. Odpowiedź zawiera `user`, `token`, `token_type` i `expires_in`. Dla `/api/me` i `/api/logout` wyślij nagłówek `Authorization: Bearer <token>`. Token wygasa po 7 dniach, a wylogowanie unieważnia go od razu.
 
 Gdy użytkownik ma włączone MFA, `/api/login` zamiast tokenu zwraca `mfa_required: true`, `challenge_token` i `expires_in`. Frontend kończy logowanie przez `POST /api/login/mfa`. Szczegółowy przepływ konfiguracji, przykładowe żądania i odpowiedzi opisuje [dokumentacja MFA TOTP](docs/TOTP_MFA.md).
+
+## Google OIDC i passkeys — lokalny development
+
+Backend wczytuje `backend/.env`; aplikacja React Native wczytuje główny `.env`. Skopiuj odpowiednie pliki `.env.example` i wpisz identyfikatory klientów OAuth z jednego projektu Google Cloud. Włącz w nim Google Identity/OAuth, utwórz klienta iOS dla `com.rajda.pecunianonolet` oraz klienta Android dla `com.pecunianonolet` i odcisku debugowego SHA-256 z pliku `android/app/debug.keystore`. Identyfikatory klientów są publiczne — nie dodawaj do aplikacji `client_secret`.
+
+W `backend/.env` ustaw `GOOGLE_OAUTH_CLIENT_IDS` jako listę identyfikatorów rozdzielonych przecinkami. W głównym `.env` ustaw `GOOGLE_IOS_CLIENT_ID` i `GOOGLE_ANDROID_CLIENT_ID`. W `ios/PecuniaNonOlet/Info.plist` zastąp `REPLACE_WITH_IOS_CLIENT_ID_PREFIX`, a w `android/app/build.gradle` zastąp `REPLACE_WITH_ANDROID_CLIENT_ID_PREFIX`. Wartość prefiksu to identyfikator klienta bez końcówki `.apps.googleusercontent.com`; np. `123-example.apps.googleusercontent.com` daje schemat `com.googleusercontent.apps.123-example`. Redirect jest obsługiwany przez systemową przeglądarkę i AppAuth (Authorization Code + PKCE). Backend przyjmuje ID token, sprawdza podpis, `iss`, `aud`, `azp`, `exp`, `sub` i jednorazowy `nonce`. Token dostępu Google nie jest przechowywany jako sesja aplikacji. Istniejące konta nie są automatycznie łączone po samym adresie e-mail.
+
+Passkeys używają `py_webauthn` i natywnego menedżera poświadczeń iOS/Android. Backend wymaga świeżego logowania (do 5 minut) przed dodaniem/usunięciem passkey i wymusza resident credential oraz User Verification. Dla logowania weryfikuje jednorazowy challenge, dozwolony origin, RP ID, podpis, User Verification i licznik; TOTP pozostaje wymagane, jeśli jest włączone.
+
+Dla `pecunianonolet.local` backend serwuje wymagane pliki powiązań z domyślnym Apple Team ID, identyfikatorem aplikacji oraz fingerprintem debugowego Androida z tego repozytorium. Są to ustawienia developerskie i można je nadpisać zmiennymi `APPLE_TEAM_ID`, `IOS_BUNDLE_ID`, `ANDROID_PACKAGE_NAME` i `ANDROID_SHA256_CERT_FINGERPRINTS`. Lista `WEBAUTHN_ALLOWED_ORIGINS` domyślnie dopuszcza lokalny HTTPS w przeglądarce, natywny origin iOS oraz certyfikat Android debug; dla innej domeny lub podpisu ustaw własną listę. Nie dodawaj `Origin` z żądania klienta do tej listy.
+
+Na iPhonie zainstaluj aplikację podpisaną tym samym Apple Team ID, włącz w Ustawieniach tryb developerski Associated Domains, a następnie uruchom aplikację ponownie. Entitlement testowy zawiera domenę lokalną w trybie developer oraz wariant z portem `8000`; backend serwuje AASA pod tym portem. iOS może w ten sposób pobrać plik bez publicznego CDN. Lokalny serwer nadal musi mieć certyfikat TLS zaufany przez telefon. Na Androidzie instaluj APK podpisany debugowym kluczem z repozytorium i korzystaj z tego samego lokalnego HTTPS. Sprawdź odpowiedzi:
+
+```text
+https://pecunianonolet.local:8000/.well-known/apple-app-site-association
+https://pecunianonolet.local:8000/.well-known/assetlinks.json
+```
+
+Passkeys pod `.local` są wyłącznie testowe. Produkcja wymaga publicznej domeny z prawidłowym certyfikatem, właściwym Apple Associated Domains oraz fingerprintem certyfikatu używanego do podpisania aplikacji. Nie publikuj debugowego fingerprintu jako konfiguracji produkcyjnej.
 
 Przy pierwszej konfiguracji skopiuj `backend/.env.example` do `backend/.env`. Wygeneruj klucz poleceniem `.venv/bin/python -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"` (Windows: `.venv\\Scripts\\python.exe -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"`) i wklej wynik jako `MFA_ENCRYPTION_KEY`. Wartość `TURNSTILE_SECRET_KEY` w przykładzie jest publicznym kluczem testowym Cloudflare i służy wyłącznie do lokalnego developmentu; przed wdrożeniem skonfiguruj własną parę kluczy Turnstile. Możesz opcjonalnie ustawić `TURNSTILE_EXPECTED_HOSTNAME`. Launcher automatycznie wczytuje `backend/.env`; po zmianie pliku uruchom backend ponownie. Zachowaj ten sam klucz MFA po każdym restarcie, poza repozytorium. To klucz szyfrujący sekrety TOTP w bazie i nie jest tym samym co lokalny CA TLS. Zmiana klucza po włączeniu MFA uniemożliwi odszyfrowanie dotychczas zapisanych sekretów.
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Alert } from 'react-native';
 import * as Keychain from 'react-native-keychain';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {signInWithGoogle, signInWithPasskey} from '../auth/authMethods';
 
 import { API_URL } from '@env';
 
@@ -40,6 +41,22 @@ export function useAppController() {
   tokenRef.current = token;
   roleRef.current = role;
   const [pendingTransactionId, setPendingTransactionId] = useState<string | null>(null);
+
+  async function finishFederatedLogin(responseData: any) {
+    if (responseData?.mfa_required && typeof responseData.challenge_token === 'string') {
+      setMfaChallenge(responseData.challenge_token);
+      return;
+    }
+    if (!responseData?.token || !responseData?.user) throw new Error('Serwer nie zwrócił poprawnej sesji.');
+    const loginRole: UserRole = isUserRole(responseData.user.role) ? responseData.user.role : 'user';
+    setRole(loginRole);
+    setToken(responseData.token);
+    setUsername(responseData.user.email ?? '');
+    setMfaChallenge(null);
+    await AsyncStorage.setItem(ROLE_STORAGE_KEY, loginRole);
+    await Keychain.setGenericPassword('app-auth-token', responseData.token, KEYCHAIN_OPTIONS);
+    if (loginRole === 'analyst') resetToAnalytics(); else resetToDashboard();
+  }
 
   const roleHomeScreen: ScreenName = role === 'analyst' ? 'analytics' : 'dashboard';
   const allowedScreens: readonly ScreenName[] = role === 'analyst'
@@ -452,11 +469,20 @@ export function useAppController() {
     }
   }
 
-  function loginWithPasskey() {
-    Alert.alert(
-      'Passkey',
-      'Logowanie za pomocą passkey zostanie dodane po podłączeniu backendu.',
-    );
+  async function loginWithPasskey() {
+    try {
+      await finishFederatedLogin(await signInWithPasskey());
+    } catch (error) {
+      Alert.alert('Logowanie passkey', error instanceof Error ? error.message : 'Nie udało się zalogować passkey.');
+    }
+  }
+
+  async function loginWithGoogle() {
+    try {
+      await finishFederatedLogin(await signInWithGoogle());
+    } catch (error) {
+      Alert.alert('Logowanie Google', error instanceof Error ? error.message : 'Nie udało się zalogować przez Google.');
+    }
   }
 
   return {
@@ -489,6 +515,7 @@ export function useAppController() {
     cancelMfaLogin: () => setMfaChallenge(null),
     submitRegister,
     loginWithPasskey,
+    loginWithGoogle,
     logout,
     getinfo,
   };

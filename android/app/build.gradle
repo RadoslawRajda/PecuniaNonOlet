@@ -80,6 +80,7 @@ android {
     namespace "com.pecunianonolet"
     defaultConfig {
         applicationId "com.pecunianonolet"
+        manifestPlaceholders = [appAuthRedirectScheme: "com.googleusercontent.apps.REPLACE_WITH_ANDROID_CLIENT_ID_PREFIX"]
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

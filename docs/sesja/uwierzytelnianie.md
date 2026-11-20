@@ -117,7 +117,7 @@ sequenceDiagram
 
 **Ważne rozróżnienie:** TOTP **nie wykorzystuje pary klucz publiczny/prywatny**. Wspólny sekret jest przechowywany przez Authenticator i backend. Na backendzie jest szyfrowany AES-256-GCM kluczem `MFA_ENCRYPTION_KEY` z pliku `.env`, poza repozytorium i SQLite; nonce jest unikalny, a AAD wiąże dane z użytkownikiem i przeznaczeniem. Utrata klucza uniemożliwia weryfikację zapisanych sekretów. Nie należy go utożsamiać z prywatnym kluczem TLS ani kluczem passkey. Źródło: `backend/docs/TOTP_MFA.md`.
 
-### 1.1.4 Logowanie federacyjne Google — [PROJEKT]
+### 1.1.4 Logowanie federacyjne Google — [ZAIMPLEMENTOWANE]
 
 ```mermaid
 sequenceDiagram
@@ -136,22 +136,25 @@ sequenceDiagram
     P-->>A: Powrót przez zweryfikowany app/universal link
     A->>G: Wymiana kodu z code_verifier (wariant klienta publicznego)
     G-->>A: ID token (i ewentualne tokeny Google)
-    A->>B: POST /api/auth/google {id_token} (PROJEKT)
-    B->>B: Weryfikacja podpisu JWKS, iss, aud, exp, nonce (zgodnie z architekturą)
+    A->>B: POST /api/auth/google/nonce
+    B->>D: Zapis nonce jednorazowego (TTL 5 min)
+    B-->>A: nonce
+    A->>B: POST /api/auth/google/login {id_token, nonce}
+    B->>B: Weryfikacja podpisu, iss, aud, azp, exp, sub i nonce
     B->>D: Znajdź powiązanie po (issuer, sub)
     alt Nieznana tożsamość
-        B-->>A: Kontrolowane utworzenie/powiązanie konta
-        Note over B,D: Nie łączyć automatycznie kont wyłącznie po e-mailu
+        B->>D: Utworzenie nowego konta dla zweryfikowanego, autorytatywnego e-maila
+        Note over B,D: Istniejące konto nie jest łączone automatycznie po e-mailu
     else Powiązane konto
         B->>D: Utwórz lokalną sesję aplikacji
-        B-->>A: Lokalny access + refresh token (PROJEKT)
+        B-->>A: Lokalny token sesji (7 dni) lub wymaganie TOTP
     end
     Note over A,G: Token Google nie zastępuje lokalnej sesji aplikacji
 ```
 
-**Decyzje:** zewnętrzna przeglądarka, PKCE S256, `state`, `nonce`, sprawdzenie ID tokenu i stabilnego `sub`, bez osadzania sekretu klienta w aplikacji. Backend musi zdefiniować bezpieczną procedurę łączenia kont. Wariant wymiany kodu po stronie backendu jest również dopuszczalny, lecz wymaga spójnego projektu redirect URI i PKCE. **Żaden z endpointów na diagramie oznaczonych „PROJEKT” nie został potwierdzony jako istniejący.** Źródła projektowe: karta F-08; RFC 8252, RFC 7636, OpenID Connect Core.
+**Decyzje:** używany jest systemowy user-agent AppAuth, Authorization Code + PKCE, biblioteczny `state` i nonce wydany przez backend. Backend weryfikuje podpis, wystawcę, audience, `azp` (jeśli występuje), czas ważności, stabilny `sub`, potwierdzenie e-maila i zgodność jednorazowego nonce. Tożsamość jest zapisywana po `(provider, issuer, sub)`. Nowe konto powstaje tylko dla e-maila `@gmail.com` lub zweryfikowanego konta Workspace z claimem `hd`. Istniejące konto łączy się jawnie po świeżej sesji przez `/api/auth/google/link/nonce` i `/api/auth/google/link`; równość e-maili sama nie łączy kont. TOTP jest wymagane także po logowaniu Google, jeśli użytkownik ma je włączone. Źródła: karta F-08; RFC 8252, RFC 7636, OpenID Connect Core.
 
-### 1.1.5 Passkeys (WebAuthn/FIDO2) — [PROJEKT]
+### 1.1.5 Passkeys (WebAuthn/FIDO2) — [ZAIMPLEMENTOWANE]
 
 ```mermaid
 sequenceDiagram
@@ -163,31 +166,31 @@ sequenceDiagram
     participant D as SQLite
     Note over U,D: Rejestracja passkey — wymaga uwierzytelnionej sesji
     U->>A: Dodaj passkey
-    A->>B: POST /api/passkeys/register/options (PROJEKT)
+    A->>B: POST /api/passkeys/registration/options
     B->>D: Zapis jednorazowego challenge (TTL 5 min)
     B-->>A: PublicKeyCredentialCreationOptions
     A->>M: Utwórz poświadczenie
     M->>M: Generuje parę kluczy, prywatny pozostaje u dostawcy passkey
     U->>M: Potwierdza PIN/biometrią
     M-->>A: Attestation + credentialId + publicKey
-    A->>B: POST /api/passkeys/register/verify (PROJEKT)
+    A->>B: POST /api/passkeys/registration/verify
     B->>B: Weryfikuje challenge, origin, RP ID i UV
     B->>D: Zapis credentialId, klucza publicznego, licznika/metadanych
     Note over U,D: Późniejsze logowanie
     U->>A: Zaloguj passkey
-    A->>B: POST /api/passkeys/login/options (PROJEKT)
+    A->>B: POST /api/passkeys/authentication/options
     B-->>A: Jednorazowy challenge + RP ID
     A->>M: Żądanie podpisu challenge
     U->>M: PIN/biometria
     M-->>A: Assertion: credentialId, signature, authenticatorData
-    A->>B: POST /api/passkeys/login/verify (PROJEKT)
+    A->>B: POST /api/passkeys/authentication/verify
     B->>D: Odczyt klucza publicznego
     B->>B: Weryfikacja podpisu, challenge, origin, RP ID, UV i licznika
     B->>D: Zużyj challenge, utwórz lokalną sesję
-    B-->>A: Lokalny access + refresh token (PROJEKT)
+    B-->>A: Lokalny token sesji lub wymaganie TOTP
 ```
 
-**Klucz prywatny passkey:** nie jest wysyłany do backendu. Pozostaje w menedżerze poświadczeń / zabezpieczonym środowisku, może być synchronizowany między urządzeniami przez dostawcę passkeys. Backend zapisuje klucz publiczny i identyfikator poświadczenia. Biometria lub PIN służą lokalnemu odblokowaniu użycia klucza; aplikacja nie otrzymuje wzorca biometrycznego. Rejestracja powinna wymagać świeżego uwierzytelnienia. Źródła projektowe: karta F-09; W3C WebAuthn, FIDO Alliance.
+**Klucz prywatny passkey:** nie jest wysyłany do backendu. Pozostaje w natywnym menedżerze poświadczeń. Backend zapisuje klucz publiczny, identyfikator i licznik, wymaga challenge jednorazowego przez 5 minut, stałego RP ID `pecunianonolet.local`, jawnej listy dozwolonych originów, User Verification oraz resident credential. Dodanie i usunięcie wymagają świeżej sesji (maksymalnie 5 minut). Po usunięciu dostęp jest ograniczony do własnych poświadczeń. Konfiguracja domeny testowej jest serwowana przez AASA i Digital Asset Links; iOS wymaga Associated Domains w trybie developerskim. Źródła: karta F-09; W3C WebAuthn, FIDO Alliance.
 
 ### 1.1.6 Tabela elementów uwierzytelniania i sesji
 
@@ -203,9 +206,9 @@ sequenceDiagram
 | Kod odzyskiwania [OBECNIE] | Backend | Użytkownik; hash w SQLite | Do użycia/odwołania | Jednorazowe zużycie, wyłączenie MFA | Pokazać tylko przy utworzeniu |
 | Access token [PROJEKT] | Backend | Pamięć procesu aplikacji | **10 min** | Wygaśnięcie, revocation/sesja | Krótki token, nie trwały magazyn |
 | Refresh token [PROJEKT] | Backend | Keychain/Keystore; hash w SQLite | **7 dni bezczynności, max 30 dni** | Rotacja, logout, reuse detection, wygaśnięcie | Nigdy nie przechowywać jawnie w SQLite |
-| Google ID token [PROJEKT] | Google | Krótkotrwale w procesie | `exp` nadany przez Google | Wygaśnięcie; nie używać jako lokalnej sesji | Weryfikować podpis, issuer, audience, nonce |
-| Klucz prywatny passkey [PROJEKT] | Authenticator/OS | Menedżer passkeys | Do usunięcia poświadczenia | Usunięcie lokalne lub cofnięcie rejestracji na serwerze | Nie eksportować do aplikacji ani backendu |
-| Klucz publiczny passkey [PROJEKT] | Authenticator/OS | SQLite backendu | Do usunięcia poświadczenia | Usunięcie wpisu credentialId | Weryfikacja podpisów WebAuthn |
+| Google ID token [OBECNIE] | Google | Krótkotrwale w procesie | `exp` nadany przez Google | Wymiana na lokalną sesję; token nie jest przechowywany | Weryfikacja podpisu, issuer, audience, nonce i `sub` |
+| Klucz prywatny passkey [OBECNIE] | Authenticator/OS | Menedżer passkeys | Do usunięcia poświadczenia | Usunięcie lokalne lub cofnięcie rejestracji na serwerze | Nie eksportować do aplikacji ani backendu |
+| Klucz publiczny passkey [OBECNIE] | Authenticator/OS | SQLite backendu | Do usunięcia poświadczenia | Usunięcie wpisu credentialId | Weryfikacja podpisów WebAuthn |
 
 ## 1.2 Scenariusze
 
@@ -217,15 +220,15 @@ sequenceDiagram
 | Token wygasa podczas pracy | Próba odświeżenia lub powrót do logowania | [OBECNIE] 401 po 7 dniach; brak refresh endpointu | 
 | Reinstalacja aplikacji | Brak niekontrolowanego przywrócenia sesji | [OBECNIE] Token ma `THIS_DEVICE_ONLY`; zachowanie Keychain na iOS po reinstalacji wymaga testu |
 | Przechwycony token | Krótki okres użyteczności i możliwość revocation | [OBECNIE] Token ważny do 7 dni, chyba że usunięto rekord sesji |
-| Google | Hasło widzi tylko Google, a backend potwierdza tożsamość | [PROJEKT] Brak wdrożenia | 
-| Passkey / biometria | Prywatny klucz nie opuszcza dostawcy poświadczeń | [PROJEKT] `loginWithPasskey()` pokazuje komunikat o przyszłej implementacji |
+| Google | Hasło widzi tylko Google, a backend potwierdza tożsamość | [ZAIMPLEMENTOWANE] AppAuth + OIDC, jednorazowy nonce i weryfikacja ID tokenu; wymaga skonfigurowanych klientów OAuth |
+| Passkey / biometria | Prywatny klucz nie opuszcza dostawcy poświadczeń | [ZAIMPLEMENTOWANE] Natywne WebAuthn, backendowa weryfikacja i obsługa w profilu; wymaga skonfigurowanego powiązania domeny |
 | Włączenie MFA | Nowe sesje wymagają TOTP; stare wygasają | [OBECNIE] Potwierdzenie TOTP usuwa wszystkie sesje |
 | Wyłączenie MFA | Hasło + kod; zakończenie wszystkich sesji | [OBECNIE] Backend wymaga obu i usuwa sesje | 
 | Błędny kod TOTP | Ograniczenie zgadywania i brak wydania sesji | [OBECNIE] 5 prób / 15 min, blokada 15 min | 
 | Brak klucza szyfrującego TOTP | Odmowa drugiego kroku, bez obejścia MFA | [OBECNIE] Błąd 503; brak przejścia na samo hasło | 
 | Brak sieci przy starcie | Nie uznawać offline UI za potwierdzenie serwerowej sesji | [OBECNIE] UI może przejść do ekranu zalogowanego na podstawie cache |
 
-**Uwaga o dowodach:** powyższe „obecnie” wynika z przeglądu kodu i dokumentacji, nie z uruchomienia testów w tym raporcie. Wykonanie testów i zrzuty wyników należy dopisać przed oddaniem, jeśli prowadzący wymaga empirycznego potwierdzenia.
+**Uwaga o dowodach:** status implementacji Google OIDC i passkeys potwierdzają testy API backendu oraz testy aplikacji opisane w repozytorium. Nie oznacza to potwierdzenia działania na każdym modelu telefonu ani w konfiguracji produkcyjnej.
 
 ## 1.3 Polityka sesji
 

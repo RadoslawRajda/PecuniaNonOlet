@@ -10,6 +10,7 @@ import QRCode from 'react-native-qrcode-svg';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {launchImageLibrary, type ImageLibraryOptions} from 'react-native-image-picker';
 import {API_URL} from '@env';
+import {createPasskey, getPasskeys, removePasskey, signInWithGoogle} from '../../auth/authMethods';
 
 import {AppButton, BrandLogo, FormInput} from '../components/Ui';
 import {COLORS, createThemedStyles, type ColorScheme} from '../theme';
@@ -38,6 +39,8 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
   const [totpPassword, setTotpPassword] = React.useState('');
   const [totpCode, setTotpCode] = React.useState('');
   const [totpMessage, setTotpMessage] = React.useState('');
+  const [passkeys, setPasskeys] = React.useState<Array<{id: string; label: string; created_at: number}>>([]);
+  const [passkeyMessage, setPasskeyMessage] = React.useState('');
   const [recoveryCodes, setRecoveryCodes] = React.useState<string[]>([]);
   const needsRecoveryCodeCopy = recoveryCodes.length > 0;
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
@@ -54,6 +57,49 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
       .then(response => response.json()).then(data => setTotpEnabled(Boolean(data?.totp_enabled)))
       .catch(() => setTotpMessage('Nie udało się pobrać statusu TOTP.'));
   }, [apiBaseUrl, token]);
+
+  React.useEffect(() => {
+    if (!token) return;
+    getPasskeys(token).then(data => setPasskeys(Array.isArray(data) ? data : []))
+      .catch(error => setPasskeyMessage(error instanceof Error ? error.message : 'Nie udało się pobrać passkeys.'));
+  }, [token]);
+
+  async function addPasskey() {
+    if (!token) return;
+    try {
+      const created = await createPasskey(token);
+      setPasskeys(current => [created, ...current]);
+      setPasskeyMessage('Passkey została dodana.');
+    } catch (error) {
+      setPasskeyMessage(error instanceof Error ? error.message : 'Nie udało się dodać passkey. Zaloguj się ponownie i spróbuj ponownie.');
+    }
+  }
+
+  async function connectGoogle() {
+    if (!token) return;
+    try {
+      await signInWithGoogle(token);
+      setPasskeyMessage('Konto Google zostało połączone.');
+    } catch (error) {
+      setPasskeyMessage(error instanceof Error ? error.message : 'Nie udało się połączyć konta Google.');
+    }
+  }
+
+  function confirmPasskeyRemoval(id: string) {
+    Alert.alert('Usunąć passkey?', 'Usunięcie jej uniemożliwi logowanie tą metodą.', [
+      {text: 'Anuluj', style: 'cancel'},
+      {text: 'Usuń', style: 'destructive', onPress: async () => {
+        if (!token) return;
+        try {
+          await removePasskey(token, id);
+          setPasskeys(current => current.filter(item => item.id !== id));
+          setPasskeyMessage('Passkey została usunięta.');
+        } catch (error) {
+          setPasskeyMessage(error instanceof Error ? error.message : 'Nie udało się usunąć passkey.');
+        }
+      }},
+    ]);
+  }
 
   async function requestTotp(path: string, body: object) {
     const response = await fetch(`${apiBaseUrl}/api/${path}`, {
@@ -167,7 +213,7 @@ ${(data.recovery_codes ?? []).join('\n')}`,
 
   const title: Record<ProfilePage, string> = {
     main: 'Profil', currency: 'Waluta i lokalizacja', appearance: 'Wygląd',
-    account: 'Dane profilu', help: 'Pomoc i informacje', security: 'Uwierzytelnianie TOTP',
+    account: 'Dane profilu', help: 'Pomoc i informacje', security: 'Bezpieczeństwo',
   };
   const selectManualCurrency = (currency: string) => {
     if (locationCurrencyEnabled) setLocationCurrencyEnabled(false);
@@ -202,7 +248,7 @@ ${(data.recovery_codes ?? []).join('\n')}`,
           {!isAnalyst ? <Text style={styles.groupTitle}>Konto i bezpieczeństwo</Text> : null}
           {!isAnalyst ? <MenuRow icon={Shield} title="Dane profilu" subtitle="Zdjęcie profilowe" onPress={() => setPage('account')} /> : null}
 
-          <MenuRow icon={Shield} title="TOTP / Authenticator" subtitle={totpEnabled ? 'Włączone' : 'Wyłączone'} onPress={() => setPage('security')} />
+          <MenuRow icon={Shield} title="Bezpieczeństwo" subtitle={`${totpEnabled ? 'TOTP włączone' : 'TOTP wyłączone'} · ${passkeys.length} passkeys`} onPress={() => setPage('security')} />
           <Text style={styles.groupTitle}>Inne</Text>
           <MenuRow icon={CircleHelp} title="Pomoc i informacje" onPress={() => setPage('help')} />
           <Pressable accessibilityRole="button" accessibilityLabel="Wyloguj się z aplikacji" onPress={signOut} style={({pressed}) => [styles.logoutRow, pressed && styles.pressed]}>
@@ -253,6 +299,15 @@ ${(data.recovery_codes ?? []).join('\n')}`,
 
       {page === 'security' ? (
         <View style={styles.pageContent}>
+          <Text style={styles.groupTitle}>Passkeys</Text>
+          <Text style={styles.description}>Logowanie kluczem zapisanym w pęku kluczy lub menedżerze haseł urządzenia. Dodawanie i usuwanie wymaga ponownego logowania w ciągu ostatnich 5 minut.</Text>
+          <AppButton title="Dodaj passkey" onPress={addPasskey} />
+          {passkeys.map(item => <Pressable key={item.id} accessibilityRole="button" onPress={() => confirmPasskeyRemoval(item.id)} style={styles.option}>
+            <Text style={styles.optionTitle}>{item.label}</Text><Text style={styles.optionHint}>Usuń</Text>
+          </Pressable>)}
+          <AppButton title="Połącz konto Google" onPress={connectGoogle} secondary />
+          {passkeyMessage ? <Text selectable style={styles.description}>{passkeyMessage}</Text> : null}
+          <Text style={styles.groupTitle}>TOTP / Authenticator</Text>
           <Text style={styles.description}>{totpEnabled ? 'TOTP jest włączone dla Twojego konta.' : 'Zabezpiecz logowanie kodem z aplikacji Authenticator.'}</Text>
           <FormInput label="Obecne hasło" value={totpPassword} onChangeText={setTotpPassword} secureTextEntry />
           {!totpEnabled && !totpUri ? <AppButton title="Rozpocznij konfigurację TOTP" onPress={beginTotpSetup} /> : null}

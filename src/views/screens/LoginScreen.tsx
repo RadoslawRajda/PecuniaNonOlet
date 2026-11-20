@@ -19,6 +19,7 @@ export function LoginScreen({
   onRegister,
   onSubmit,
   onPasskey,
+  onGoogle,
   mfaRequired,
   onSubmitMfa,
   onCancelMfa,
@@ -118,6 +119,7 @@ export function LoginScreen({
             onPress={onPasskey}
             secondary
           />
+          <AppButton title="Zaloguj przez Google" onPress={onGoogle} secondary />
           </> : null}
         </View>
 

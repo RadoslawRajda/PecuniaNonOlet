@@ -16,7 +16,7 @@ def issue_token(db: sqlite3.Connection, user_id: int) -> str:
     now = int(time.time())
     db.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
     db.execute(
-        "INSERT INTO sessions(token_hash, user_id, expires_at) VALUES (?, ?, ?)",
-        (token_hash(token), user_id, now + SESSION_LIFETIME_SECONDS),
+        "INSERT INTO sessions(token_hash, user_id, expires_at, authenticated_at) VALUES (?, ?, ?, ?)",
+        (token_hash(token), user_id, now + SESSION_LIFETIME_SECONDS, now),
     )
     return token

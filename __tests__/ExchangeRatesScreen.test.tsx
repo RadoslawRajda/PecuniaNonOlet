@@ -53,7 +53,7 @@ describe('exchange quote screen flow', () => {
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await ReactTestRenderer.act(async () => {
       renderer = ReactTestRenderer.create(
-        <AppPreferencesProvider token="test-token">
+        <AppPreferencesProvider token="test-token" role="user" handleForbidden={() => undefined}>
           <ExchangeRatesScreen token="test-token" goHome={() => undefined} />
         </AppPreferencesProvider>,
       );

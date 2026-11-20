@@ -93,6 +93,9 @@ def test_missing_expired_and_invalid_token(client, tmp_path):
 
 
 def test_registration_validation(client):
+    assert client.request(
+        "POST", "/api/register", json={"email": "ok@example.com", "password": "test12345"}
+    ).status_code == 422
     for payload in (
         {"email": "not-an-email", "password": "test12345"},
         {"email": "ok@example.com", "password": "short"},

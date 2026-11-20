@@ -115,6 +115,7 @@ function AppScreens({controller}: {controller: ReturnType<typeof useAppControlle
             onRegister={controller.goRegister}
             onSubmit={controller.submitLogin}
             onPasskey={controller.loginWithPasskey}
+            onGoogle={controller.loginWithGoogle}
             mfaRequired={Boolean(controller.mfaChallenge)}
             onSubmitMfa={controller.submitMfaLogin}
             onCancelMfa={controller.cancelMfaLogin}
