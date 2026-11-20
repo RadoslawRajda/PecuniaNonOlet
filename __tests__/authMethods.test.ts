@@ -3,6 +3,7 @@ import {authorize} from 'react-native-app-auth';
 
 import {
   buildGoogleAuthorizationOptions,
+  buildGoogleReauthenticationOptions,
   changePassword,
   getApiErrorMessage,
   reauthenticateWithGoogle,
@@ -66,6 +67,19 @@ describe('native authentication methods', () => {
     );
   });
 
+  it('builds a separate Google reauthentication ceremony for sensitive actions', () => {
+    const options = buildGoogleReauthenticationOptions(
+      'ios-client.apps.googleusercontent.com',
+      'server-issued-one-time-nonce',
+    );
+
+    expect(options.additionalParameters).toEqual(expect.objectContaining({
+      max_age: '0',
+      prompt: 'login',
+      claims: JSON.stringify({id_token: {auth_time: {essential: true}}}),
+    }));
+  });
+
   it('binds a fresh Google ceremony to the current backend session', async () => {
     const authenticatedFetchMock = authenticatedFetch as jest.Mock;
     authenticatedFetchMock
@@ -81,7 +95,11 @@ describe('native authentication methods', () => {
     );
     expect(saveSessionTokens).toHaveBeenCalledWith({access_token: 'new-access', refresh_token: 'new-refresh'});
     expect(authorize).toHaveBeenCalledWith(expect.objectContaining({
-      additionalParameters: expect.objectContaining({nonce: 'server-nonce', max_age: '0'}),
+      additionalParameters: expect.objectContaining({
+        nonce: 'server-nonce',
+        max_age: '0',
+        prompt: 'login',
+      }),
     }));
     expect(authenticatedFetchMock).toHaveBeenNthCalledWith(
       2, expect.stringContaining('/api/auth/google/reauth'),

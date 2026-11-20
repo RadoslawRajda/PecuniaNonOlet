@@ -70,19 +70,22 @@ export async function getGoogleConnectionStatus(
   return request('/api/auth/google/status', undefined, accessToken);
 }
 
-async function authorizeGoogle(nonce: string) {
+async function authorizeGoogle(nonce: string, requireFreshAuthentication = false) {
   const clientId = Platform.OS === 'ios' ? GOOGLE_IOS_CLIENT_ID : GOOGLE_ANDROID_CLIENT_ID;
   if (!clientId) {
     throw new Error('Uzupełnij GOOGLE_IOS_CLIENT_ID i GOOGLE_ANDROID_CLIENT_ID w pliku .env.');
   }
-  const result = await authorize(buildGoogleAuthorizationOptions(clientId, nonce));
+  const configuration = requireFreshAuthentication
+    ? buildGoogleReauthenticationOptions(clientId, nonce)
+    : buildGoogleAuthorizationOptions(clientId, nonce);
+  const result = await authorize(configuration);
   if (!result.idToken) throw new Error('Google nie zwrócił tokenu ID.');
   return result;
 }
 
 export async function reauthenticateWithGoogle(accessToken: string): Promise<void> {
   const {nonce} = await request('/api/auth/google/reauth/nonce', {method: 'POST'}, accessToken);
-  const result = await authorizeGoogle(nonce);
+  const result = await authorizeGoogle(nonce, true);
   const session = await request('/api/auth/google/reauth', {
     method: 'POST',
     body: JSON.stringify({id_token: result.idToken, nonce}),
@@ -101,6 +104,27 @@ export async function changePassword(
 }
 
 export function buildGoogleAuthorizationOptions(clientId: string, nonce: string): AuthConfiguration {
+  return buildGoogleOptions(clientId, nonce, 'select_account');
+}
+
+/**
+ * Build a distinct OIDC ceremony for changing credentials or managing passkeys.
+ * `select_account` proves only account selection; OIDC defines `max_age=0` as
+ * equivalent to `prompt=login`, so both are sent and the backend verifies the
+ * signed `auth_time` claim before allowing the sensitive operation.
+ */
+export function buildGoogleReauthenticationOptions(
+  clientId: string,
+  nonce: string,
+): AuthConfiguration {
+  return buildGoogleOptions(clientId, nonce, 'login');
+}
+
+function buildGoogleOptions(
+  clientId: string,
+  nonce: string,
+  prompt: 'login' | 'select_account',
+): AuthConfiguration {
   const clientIdPrefix = clientId.replace(/\.apps\.googleusercontent\.com$/, '');
   return {
     issuer: 'https://accounts.google.com',
@@ -110,7 +134,7 @@ export function buildGoogleAuthorizationOptions(clientId: string, nonce: string)
     additionalParameters: {
       nonce,
       max_age: '0',
-      prompt: 'select_account',
+      prompt,
       claims: JSON.stringify({id_token: {auth_time: {essential: true}}}),
     },
     usePKCE: true,
