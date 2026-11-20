@@ -7,7 +7,6 @@ import secrets
 import sqlite3
 import time
 from contextlib import closing
-from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -20,20 +19,22 @@ from pydantic import (
     ValidationError,
 )
 
-from app.accounts import initialize_user_accounts
 from app.adapters.google_oidc import google_certificate_request
-from app.audit import write_audit_event
 from app.authorization import AuthenticatedSession, current_session
 from app.config import load_settings
 from app.database import connect_db
 from app.rate_limits import client_ip, enforce_rate_limit, ip_bucket
-from app.schemas import AuthResponse, LoginResponse, User
+from app.schemas import LoginResponse
 from app.services.authentication import (
     assert_recent_authentication,
     claim_auth_challenge_attempt,
-    create_login_challenge,
 )
-from app.sessions import issue_session
+from app.services.google_accounts import (
+    VerifiedGoogleIdentity,
+    consume_google_challenge,
+    link_google_identity,
+    login_with_google,
+)
 
 router = APIRouter(prefix="/api/auth/google", tags=["authentication"])
 CHALLENGE_TTL = 300
@@ -44,15 +45,6 @@ class GoogleTokenRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id_token: str = Field(min_length=20, max_length=8192)
     nonce: str = Field(min_length=32, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
-
-
-@dataclass(frozen=True, slots=True)
-class VerifiedGoogleIdentity:
-    issuer: str
-    subject: str
-    email: str
-    authoritative_mailbox: bool
-    authenticated_at: int | None
 
 
 def _digest(value: str) -> str:
@@ -153,7 +145,9 @@ def google_reauthenticate(
 
     with closing(connect_db()) as db, db:
         db.execute("BEGIN IMMEDIATE")
-        _consume_challenge(db, "google_reauth", payload.nonce, session.user.id, session.session_id)
+        consume_google_challenge(
+            db, "google_reauth", payload.nonce, session.user.id, session.session_id
+        )
         linked = db.execute(
             """SELECT 1 FROM oauth_identities
                WHERE user_id=? AND provider='google' AND issuer=? AND subject=?""",
@@ -260,134 +254,12 @@ def _verify_google_id_token(payload: GoogleTokenRequest) -> VerifiedGoogleIdenti
     )
 
 
-def _consume_challenge(
-    db: sqlite3.Connection,
-    kind: str,
-    nonce: str,
-    user_id: int | None = None,
-    session_digest: str | None = None,
-) -> None:
-    row = db.execute(
-        "SELECT user_id, session_hash FROM auth_challenges WHERE challenge_hash = ? AND kind = ? AND challenge_value = ? AND expires_at > ?",
-        (_digest(nonce), kind, nonce, int(time.time())),
-    ).fetchone()
-    if row is None or row["user_id"] != user_id or row["session_hash"] != session_digest:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, "Sesja logowania wygasła. Spróbuj ponownie."
-        )
-    db.execute("DELETE FROM auth_challenges WHERE challenge_hash = ?", (_digest(nonce),))
-
-
-def _auth_result(
-    db: sqlite3.Connection, user_id: int, provider_authenticated_at: int | None
-) -> LoginResponse:
-    user_row = db.execute(
-        "SELECT u.id, u.email, r.role_name FROM users u JOIN user_roles r ON r.user_id=u.id WHERE u.id=?",
-        (user_id,),
-    ).fetchone()
-    mfa = db.execute("SELECT enabled_at FROM user_totp WHERE user_id=?", (user_id,)).fetchone()
-    if mfa and mfa["enabled_at"] is not None:
-        return create_login_challenge(
-            db,
-            user_id,
-            authentication_method="google",
-            provider_authenticated_at=provider_authenticated_at,
-        )
-    tokens = issue_session(
-        db,
-        user_id,
-        authentication_method="google",
-        provider_authenticated_at=provider_authenticated_at,
-    )
-    return AuthResponse(
-        user=User(id=user_row["id"], email=user_row["email"], role=user_row["role_name"]),
-        access_token=tokens.access_token,
-        refresh_token=tokens.refresh_token,
-        expires_in=tokens.expires_in,
-        refresh_expires_in=tokens.refresh_expires_in,
-    )
-
-
 @router.post("/login", response_model=LoginResponse)
 def google_login(payload: GoogleTokenRequest, request: Request) -> LoginResponse:
     enforce_rate_limit(
         [ip_bucket("google_login", client_ip(request.client.host if request.client else None))]
     )
-    now = int(time.time())
-    with closing(connect_db()) as db, db:
-        db.execute("BEGIN IMMEDIATE")
-        attempt_allowed = claim_auth_challenge_attempt(db, "google_login", payload.nonce, now=now)
-    if not attempt_allowed:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, "Sesja logowania wygasła. Spróbuj ponownie."
-        )
-    identity = _verify_google_id_token(payload)
-    with closing(connect_db()) as read_db:
-        existing_identity = read_db.execute(
-            "SELECT 1 FROM oauth_identities WHERE provider='google' AND issuer=? AND subject=?",
-            (identity.issuer, identity.subject),
-        ).fetchone()
-        existing_email = read_db.execute(
-            "SELECT 1 FROM users WHERE email=?", (identity.email,)
-        ).fetchone()
-    # Existing Google identities need no password hashing. New Google-only accounts
-    # receive an undisclosed random credential to satisfy the current NOT NULL schema.
-    random_password_hash = None
-    if existing_identity is None and not identity.authoritative_mailbox:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "Użyj konta Google zarządzanego przez Google lub najpierw połącz konto.",
-        )
-    if existing_identity is None and existing_email is not None:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "Konto z tym adresem już istnieje. Zaloguj się i połącz Google w profilu.",
-        )
-    if existing_identity is None:
-        from app.passwords import password_hasher
-
-        random_password_hash = password_hasher.hash(secrets.token_urlsafe(64))
-    with closing(connect_db()) as db, db:
-        db.execute("BEGIN IMMEDIATE")
-        _consume_challenge(db, "google_login", payload.nonce)
-        existing = db.execute(
-            "SELECT user_id FROM oauth_identities WHERE provider='google' AND issuer=? AND subject=?",
-            (identity.issuer, identity.subject),
-        ).fetchone()
-        if existing:
-            return _auth_result(db, existing["user_id"], identity.authenticated_at)
-        if not identity.authoritative_mailbox:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                "Użyj konta Google zarządzanego przez Google lub najpierw połącz konto.",
-            )
-        if db.execute("SELECT 1 FROM users WHERE email=?", (identity.email,)).fetchone():
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Konto z tym adresem już istnieje. Zaloguj się i połącz Google w profilu.",
-            )
-        created = int(time.time())
-        cursor = db.execute(
-            "INSERT INTO users(email,password_hash,webauthn_user_handle,has_local_password,password_origin,created_at) VALUES (?,?,?,?,?,?)",
-            (
-                identity.email,
-                random_password_hash,
-                secrets.token_bytes(32),
-                False,
-                "google_generated",
-                created,
-            ),
-        )
-        if cursor.lastrowid is None:
-            raise RuntimeError("The inserted user did not receive a database id.")
-        user_id = cursor.lastrowid
-        db.execute("INSERT INTO user_roles(user_id,role_name) VALUES (?, 'user')", (user_id,))
-        db.execute(
-            "INSERT INTO oauth_identities(user_id,provider,issuer,subject,email_at_link,created_at) VALUES (?,'google',?,?,?,?)",
-            (user_id, identity.issuer, identity.subject, identity.email, created),
-        )
-        initialize_user_accounts(db, user_id, created)
-        return _auth_result(db, user_id, identity.authenticated_at)
+    return login_with_google(payload.nonce, lambda: _verify_google_id_token(payload))
 
 
 @router.post("/link", status_code=204)
@@ -395,51 +267,6 @@ def link_google(payload: GoogleTokenRequest, session: Authenticated, request: Re
     enforce_rate_limit(
         [ip_bucket("google_link", client_ip(request.client.host if request.client else None))]
     )
-    user = session.user
     identity = _verify_google_id_token(payload)
-    now = int(time.time())
-    if (
-        identity.authenticated_at is None
-        or identity.authenticated_at > now + 30
-        or now - identity.authenticated_at > 300
-    ):
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            "Uwierzytelnij się ponownie w Google przed połączeniem konta.",
-        )
-    with closing(connect_db()) as db, db:
-        db.execute("BEGIN IMMEDIATE")
-        _consume_challenge(db, "google_link", payload.nonce, user.id, session.session_id)
-        assert_recent_authentication(db, session.session_id, user.id, now=now)
-        existing = db.execute(
-            "SELECT user_id FROM oauth_identities WHERE provider='google' AND issuer=? AND subject=?",
-            (identity.issuer, identity.subject),
-        ).fetchone()
-        if existing is not None:
-            if existing["user_id"] == user.id:
-                return Response(status_code=204)
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "To konto Google jest już połączone z innym użytkownikiem.",
-            )
-        try:
-            db.execute(
-                "INSERT INTO oauth_identities(user_id,provider,issuer,subject,email_at_link,created_at) VALUES (?,'google',?,?,?,?)",
-                (user.id, identity.issuer, identity.subject, identity.email, now),
-            )
-            write_audit_event(
-                db,
-                actor_user_id=user.id,
-                actor_role=user.role,
-                action="auth.google_linked",
-                entity_type="user",
-                entity_id=str(user.id),
-                details={"provider": "google"},
-                created_at=now,
-            )
-        except sqlite3.IntegrityError:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "To konto Google jest już połączone z innym użytkownikiem.",
-            ) from None
+    link_google_identity(payload.nonce, session, identity)
     return Response(status_code=204)

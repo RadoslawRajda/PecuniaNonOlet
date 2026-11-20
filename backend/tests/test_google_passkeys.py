@@ -560,6 +560,46 @@ def test_google_link_requires_fresh_session_and_binds_verified_subject(client, m
     assert client.post("/api/auth/google/link/nonce", headers=headers).status_code == 401
 
 
+def test_google_link_audit_failure_rolls_back_identity_and_nonce(client, monkeypatch):
+    from app.services import google_accounts
+
+    _, token = make_user("rollback-link@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    nonce = client.post("/api/auth/google/link/nonce", headers=headers).json()["nonce"]
+    google_claims(
+        monkeypatch,
+        {
+            "iss": "https://accounts.google.com",
+            "sub": "rollback-sub",
+            "email": "linked@workspace.example",
+            "email_verified": True,
+            "hd": "workspace.example",
+            "aud": "ios.apps.googleusercontent.com",
+            "nonce": nonce,
+            "auth_time": int(time.time()),
+        },
+    )
+
+    def fail_audit(*args, **kwargs):
+        raise RuntimeError("audit write failed")
+
+    monkeypatch.setattr(google_accounts, "write_audit_event", fail_audit)
+    with pytest.raises(RuntimeError, match="audit write failed"):
+        client.post(
+            "/api/auth/google/link",
+            headers=headers,
+            json={"id_token": "signed-token-placeholder-long", "nonce": nonce},
+        )
+    with connect_db() as db:
+        assert db.execute("SELECT count(*) FROM oauth_identities").fetchone()[0] == 0
+        assert (
+            db.execute(
+                "SELECT count(*) FROM auth_challenges WHERE challenge_value=?", (nonce,)
+            ).fetchone()[0]
+            == 1
+        )
+
+
 def test_google_link_challenge_is_bound_to_starting_session(client, monkeypatch):
     from app.authorization import token_hash
 
@@ -947,8 +987,9 @@ def test_passkey_registration_audit_failure_rolls_back_credential_and_challenge(
     with connect_db() as db:
         assert db.execute("SELECT count(*) FROM passkeys").fetchone()[0] == 0
         assert (
-            db.execute("SELECT count(*) FROM auth_challenges WHERE kind='passkey_register'")
-            .fetchone()[0]
+            db.execute(
+                "SELECT count(*) FROM auth_challenges WHERE kind='passkey_register'"
+            ).fetchone()[0]
             == 1
         )
 
