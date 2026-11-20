@@ -20,11 +20,7 @@ def _normalize(value: str) -> str:
     normalized = (
         unicodedata.normalize("NFKC", value)
         .casefold()
-        .translate(
-            str.maketrans(
-                {"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s"}
-            )
-        )
+        .translate(str.maketrans("013457@$", "oieastas"))
     )
     return "".join(character for character in normalized if character.isalnum())
 

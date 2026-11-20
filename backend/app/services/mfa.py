@@ -38,9 +38,7 @@ def _verify_password(password: str | None, password_hash: str | None) -> bool:
     return bool(password and password_hash and password_hasher.verify(password, password_hash))
 
 
-def _assert_live_session(
-    db: sqlite3.Connection, session_id: str, user_id: int, now: int
-) -> None:
+def _assert_live_session(db: sqlite3.Connection, session_id: str, user_id: int, now: int) -> None:
     row = db.execute(
         """SELECT 1 FROM auth_sessions WHERE session_id = ? AND user_id = ?
            AND access_expires_at > ? AND refresh_expires_at > ?

@@ -207,7 +207,10 @@ def test_refresh_rejects_expired_token_and_logout_revokes_rotated_family(client,
         },
     ).json()
     with sqlite3.connect(tmp_path / "test.db") as db:
-        db.execute("UPDATE auth_sessions SET refresh_expires_at = 1 WHERE refresh_token_hash != ''")
+        db.execute(
+            "UPDATE auth_sessions SET access_expires_at=1,refresh_expires_at=1,absolute_expires_at=1 "
+            "WHERE refresh_token_hash != ''"
+        )
     assert (
         client.post("/api/refresh", json={"refresh_token": expired["refresh_token"]}).status_code
         == 401
@@ -444,7 +447,7 @@ def test_change_password_revokes_all_sessions_and_requires_reauthentication(clie
         "/api/register",
         json={
             "email": "other@example.com",
-            "password": "other-password",
+            "password": "amber-river-2027#",
             "captcha_token": "test-token",
         },
     ).json()

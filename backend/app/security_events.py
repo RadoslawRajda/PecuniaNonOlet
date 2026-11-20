@@ -15,6 +15,7 @@ from app.database import connect_db
 logger = logging.getLogger(__name__)
 EventType = Literal["authentication", "authorization", "session", "credential_change"]
 AuthMethod = Literal["password", "totp", "google", "passkey", "refresh", "bearer"]
+EventOutcome = Literal["success", "failure", "challenge"]
 
 
 def _event_details(path: str, status_code: int) -> tuple[EventType, AuthMethod] | None:
@@ -47,7 +48,7 @@ def _record_event(
     *,
     event_type: EventType,
     authentication_method: AuthMethod,
-    outcome: Literal["success", "failure", "challenge"],
+    outcome: EventOutcome,
     endpoint: str,
     user_id: int | None,
 ) -> None:
@@ -94,7 +95,7 @@ async def log_security_event(request: Request, call_next):
 
     route = request.scope.get("route")
     endpoint = getattr(route, "path", "/unmatched")
-    outcome = "success" if response.status_code < 400 else "failure"
+    outcome: EventOutcome = "success" if response.status_code < 400 else "failure"
     _record_event(
         event_type=classification[0],
         authentication_method=classification[1],

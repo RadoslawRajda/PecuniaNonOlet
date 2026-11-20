@@ -435,7 +435,11 @@ def test_exact_cross_rate_conversion_preserves_whole_eurocents(
     assert next(item["balance_minor"] for item in balances if item["currency_code"] == "EUR") == 100
 
 
-def test_exchange_quotes_match_exact_fraction_results_for_supported_currency_pairs(client):
+def test_exchange_quotes_match_exact_fraction_results_for_supported_currency_pairs(
+    client, monkeypatch
+):
+    # The exhaustive arithmetic table is independent of the separately tested API throttle.
+    monkeypatch.setattr(exchange, "enforce_rate_limit", lambda *args, **kwargs: None)
     rates = {
         "PLN": Decimal(1),
         "EUR": Decimal("4.24"),
@@ -478,6 +482,38 @@ def test_exchange_quotes_match_exact_fraction_results_for_supported_currency_pai
                     assert response.json()["destination_amount_minor"] == expected
 
 
+def test_exchange_quote_api_enforces_per_user_rate_limit(client):
+    class QuoteRateProvider:
+        def current_rates(self):
+            return RateTable(
+                "Rate limit test rates",
+                date.today().isoformat(),
+                {
+                    "PLN": Decimal(1),
+                    "EUR": Decimal(4),
+                    "USD": Decimal(3),
+                    "GBP": Decimal(5),
+                    "CZK": Decimal("0.2"),
+                },
+            )
+
+    app.dependency_overrides[exchange.get_rate_provider] = QuoteRateProvider
+    user = create_user(client, "quote-throttle@example.com")
+    ids = account_ids(client, user["access_token"])
+    payload = {
+        "source_account_id": ids["PLN"],
+        "destination_account_id": ids["EUR"],
+        "source_amount_minor": 100,
+    }
+    responses = [
+        client.post("/api/exchange/quote", headers=auth(user["access_token"]), json=payload)
+        for _ in range(31)
+    ]
+    assert [response.status_code for response in responses[:30]] == [201] * 30
+    assert responses[30].status_code == 429
+    assert responses[30].headers["Retry-After"]
+
+
 @pytest.mark.parametrize(
     ("effective_date", "expected_status"),
     [
@@ -510,7 +546,9 @@ def test_rate_table_freshness_policy(client, effective_date, expected_status):
     assert response.status_code == expected_status
 
 
-def test_two_way_exchange_cycles_never_increase_source_balance(client, tmp_path):
+def test_two_way_exchange_cycles_never_increase_source_balance(client, tmp_path, monkeypatch):
+    # Keep this deterministic stress test focused on conversion/ledger invariants.
+    monkeypatch.setattr(exchange, "enforce_rate_limit", lambda *args, **kwargs: None)
     user = create_user(client, "round-trip@example.com")
     ids = account_ids(client, user["access_token"])
     amounts = (1, 2, 3, 4, 5, 9, 10, 25, 100, 101, 1_000)
