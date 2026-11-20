@@ -21,10 +21,8 @@ FAKE_GOOGLE_TOKEN = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.e30.c2ln"
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "identity.db"))
     monkeypatch.setenv("MFA_ENCRYPTION_KEY", "dGVzdC1vbmx5LXRvdHAta2V5LW1hdGVyaWFsLTMyYiE=")
-    monkeypatch.setenv(
-        "GOOGLE_OAUTH_CLIENT_IDS",
-        "ios.apps.googleusercontent.com,android.apps.googleusercontent.com",
-    )
+    monkeypatch.setenv("GOOGLE_IOS_CLIENT_ID", "ios.apps.googleusercontent.com")
+    monkeypatch.setenv("GOOGLE_ANDROID_CLIENT_ID", "android.apps.googleusercontent.com")
     monkeypatch.setenv(
         "WEBAUTHN_ALLOWED_ORIGINS",
         "https://pecunianonolet.local,https://pecunianonolet.local:8000,android:apk-key-hash:test",
@@ -304,7 +302,8 @@ def test_google_oidc_uses_google_auth_to_verify_real_signature_and_expiry(monkey
     from cryptography.x509.oid import NameOID
     from fastapi import HTTPException
 
-    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_IDS", "ios.apps.googleusercontent.com")
+    monkeypatch.setenv("GOOGLE_IOS_CLIENT_ID", "ios.apps.googleusercontent.com")
+    monkeypatch.setenv("GOOGLE_ANDROID_CLIENT_ID", "android.apps.googleusercontent.com")
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Google OIDC test key")])
     certificate = (

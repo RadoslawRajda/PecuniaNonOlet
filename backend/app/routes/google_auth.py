@@ -146,9 +146,10 @@ def google_reauthenticate(
 
 
 def _verify_google_id_token(payload: GoogleTokenRequest) -> VerifiedGoogleIdentity:
+    settings = load_settings()
     audiences = {
         value.strip()
-        for value in load_settings().google_oauth_client_ids.split(",")
+        for value in (settings.google_ios_client_id, settings.google_android_client_id)
         if value.strip()
     }
     if not audiences:

@@ -103,7 +103,8 @@ class Settings(BaseSettings):
         "https://pecunianonolet.local,https://pecunianonolet.local:8000,"
         "android:apk-key-hash:-sYXRdwJA3hvue3mKpYrOZ9zSPC7b4mbgzJmdZEDO5w"
     )
-    google_oauth_client_ids: str = ""
+    google_ios_client_id: str = ""
+    google_android_client_id: str = ""
     apple_team_id: str = "96UM85TJJ7"
     ios_bundle_id: str = "com.rajda.pecunianonolet"
     android_package_name: str = "com.pecunianonolet"
@@ -122,7 +123,8 @@ class Settings(BaseSettings):
     @field_validator(
         "trusted_hosts",
         "webauthn_allowed_origins",
-        "google_oauth_client_ids",
+        "google_ios_client_id",
+        "google_android_client_id",
         "android_sha256_cert_fingerprints",
         mode="before",
     )
@@ -167,12 +169,12 @@ class Settings(BaseSettings):
         secret = self.turnstile_secret_key.get_secret_value().strip()
         if not secret or secret == "1x0000000000000000000000000000000AA":
             errors.append("TURNSTILE_SECRET_KEY must be a private production key")
-        audiences = _list_items(self.google_oauth_client_ids)
-        if not audiences or any(
+        google_client_ids = (self.google_ios_client_id, self.google_android_client_id)
+        if any(
             not re.fullmatch(r"[A-Za-z0-9_-]+\.apps\.googleusercontent\.com", item)
-            for item in audiences
+            for item in google_client_ids
         ):
-            errors.append("GOOGLE_OAUTH_CLIENT_IDS must list valid client IDs")
+            errors.append("GOOGLE_IOS_CLIENT_ID and GOOGLE_ANDROID_CLIENT_ID must be valid client IDs")
         trusted_hosts = _list_items(self.trusted_hosts)
         if not trusted_hosts or any(not _public_domain(host.lower()) for host in trusted_hosts):
             errors.append("TRUSTED_HOSTS must list explicit production hostnames")

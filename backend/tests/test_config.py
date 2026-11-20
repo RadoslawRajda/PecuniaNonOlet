@@ -11,7 +11,8 @@ PRODUCTION_IDENTITY = {
     "app_env": "production",
     "mfa_encryption_key": base64.urlsafe_b64encode(b"k" * 32).decode(),
     "turnstile_secret_key": "private-turnstile-secret",
-    "google_oauth_client_ids": "mobile-client.apps.googleusercontent.com",
+    "google_ios_client_id": "ios-client.apps.googleusercontent.com",
+    "google_android_client_id": "android-client.apps.googleusercontent.com",
     "webauthn_rp_id": "pecunia.example.com",
     "webauthn_allowed_origins": "https://pecunia.example.com",
     "android_sha256_cert_fingerprints": "AA:" * 31 + "AA",
@@ -45,7 +46,8 @@ def test_production_settings_reject_wildcard_trusted_hosts():
             app_env="production",
             mfa_encryption_key=base64.urlsafe_b64encode(b"k" * 32).decode(),
             turnstile_secret_key="private-turnstile-secret",
-            google_oauth_client_ids="mobile-client.apps.googleusercontent.com",
+            google_ios_client_id="ios-client.apps.googleusercontent.com",
+            google_android_client_id="android-client.apps.googleusercontent.com",
             webauthn_rp_id="pecunia.example.com",
             webauthn_allowed_origins="https://pecunia.example.com",
             android_sha256_cert_fingerprints="AA:" * 31 + "AA",
@@ -58,7 +60,8 @@ def test_production_settings_accept_public_domains_and_private_keys():
         app_env="production",
         mfa_encryption_key=base64.urlsafe_b64encode(b"k" * 32).decode(),
         turnstile_secret_key="private-turnstile-secret",
-        google_oauth_client_ids="mobile-client.apps.googleusercontent.com",
+        google_ios_client_id="ios-client.apps.googleusercontent.com",
+        google_android_client_id="android-client.apps.googleusercontent.com",
         webauthn_rp_id="pecunia.example.com",
         webauthn_allowed_origins=(
             "https://pecunia.example.com,android:apk-key-hash:"
@@ -78,7 +81,8 @@ def test_production_normalizes_identity_lists_once():
             | {
                 "trusted_hosts": " PECUNIA.EXAMPLE.COM , api.pecunia.example.com , pecunia.example.com ",
                 "webauthn_allowed_origins": " https://pecunia.example.com ",
-                "google_oauth_client_ids": " mobile-client.apps.googleusercontent.com ",
+                "google_ios_client_id": " ios-client.apps.googleusercontent.com ",
+                "google_android_client_id": " android-client.apps.googleusercontent.com ",
                 "android_sha256_cert_fingerprints": ("aa:" * 31 + "aa"),
                 "webauthn_rp_id": " PECUNIA.EXAMPLE.COM ",
             }
@@ -86,7 +90,8 @@ def test_production_normalizes_identity_lists_once():
     )
     assert settings.trusted_hosts == "pecunia.example.com,api.pecunia.example.com"
     assert settings.webauthn_allowed_origins == "https://pecunia.example.com"
-    assert settings.google_oauth_client_ids == "mobile-client.apps.googleusercontent.com"
+    assert settings.google_ios_client_id == "ios-client.apps.googleusercontent.com"
+    assert settings.google_android_client_id == "android-client.apps.googleusercontent.com"
     assert settings.android_sha256_cert_fingerprints == "AA:" * 31 + "AA"
     assert settings.webauthn_rp_id == "pecunia.example.com"
 
@@ -122,10 +127,8 @@ def test_production_normalizes_identity_lists_once():
         ({"apple_team_id": "invalid"}, "APPLE_TEAM_ID"),
         ({"ios_bundle_id": "bad bundle"}, "IOS_BUNDLE_ID"),
         ({"android_package_name": "bad-package"}, "Android package name"),
-        (
-            {"google_oauth_client_ids": "mobile-client.apps.googleusercontent.com,bad"},
-            "GOOGLE_OAUTH_CLIENT_IDS",
-        ),
+        ({"google_ios_client_id": "bad"}, "GOOGLE_IOS_CLIENT_ID"),
+        ({"google_android_client_id": "bad"}, "GOOGLE_ANDROID_CLIENT_ID"),
     ],
 )
 def test_production_rejects_invalid_identity_list_entries(overrides, message):
@@ -198,7 +201,8 @@ def test_production_app_disables_public_docs_and_rejects_unknown_hosts(tmp_path)
         database_path=tmp_path / "production.db",
         mfa_encryption_key=base64.urlsafe_b64encode(b"k" * 32).decode(),
         turnstile_secret_key="private-turnstile-secret",
-        google_oauth_client_ids="mobile-client.apps.googleusercontent.com",
+        google_ios_client_id="ios-client.apps.googleusercontent.com",
+        google_android_client_id="android-client.apps.googleusercontent.com",
         webauthn_rp_id="pecunia.example.com",
         webauthn_allowed_origins="https://pecunia.example.com",
         android_sha256_cert_fingerprints="AA:" * 31 + "AA",
