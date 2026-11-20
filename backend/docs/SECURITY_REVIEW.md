@@ -63,14 +63,15 @@ Zidentyfikowane podczas tej pracy problemy i poprawki regresyjne:
 - challenge logowania Google i passkey ma maksymalnie pięć kosztownych prób weryfikacji; następne próby są odrzucane przed weryfikacją podpisu; sprawdza to `test_google_login_stops_verifying_after_challenge_attempt_limit`;
 - błędne `crossOrigin`/`topOrigin` jest odrzucane dla rejestracji i uwierzytelniania WebAuthn;
 - świeżość uwierzytelnienia Google jest sprawdzana w `assert_recent_authentication`; brak lub nieaktualny `auth_time` nie może autoryzować zmiany metod uwierzytelniania.
+- TOTP jest ważny tylko w bieżącym kroku 30 sekund, zgodnie z ASVS 5.0.0 V6.5.5; test endpointu potwierdza odmowę po zmianie kroku bez wydania sesji. Wdrożenie musi utrzymywać zsynchronizowany zegar serwera.
 
 Macierz zawiera indywidualny status wszystkich 253 wymagań L1+L2 z przypiętego ASVS 5.0.0, lecz nie jest formalną oceną certyfikacyjną. Wiele kontroli pozostaje częściowych lub niespełnionych; nie deklaruje się zgodności L2.
 
 ## Weryfikacja wykonana w tej iteracji
 
-- Commit `e81356d`: **214 testów zaliczonych** na Pythonie 3.11.0, 3.12.2 i 3.13.7; Ruff lint/format i mypy zaliczone na Pythonie 3.12.2. Klient mobilny: Jest 28 passed oraz `tsc --noEmit` zaliczone. Zależności Node użyto z istniejącej instalacji w głównym checkoutcie.
+- Commit `bb06d7c`: **215 testów zaliczonych** na Pythonie 3.11.0, 3.12.2 i 3.13.7; Ruff lint/format i mypy zaliczone na Pythonie 3.12.2. Klient mobilny na niezmienionym kodzie: Jest 28 passed oraz `tsc --noEmit` zaliczone. Zależności Node użyto z istniejącej instalacji w głównym checkoutcie.
 - Historyczny baseline z SHA review na Pythonie 3.11, 3.12 i 3.13: **188 testów zaliczonych** na każdej wersji. Nie jest to wynik końcowego kodu.
-- Dla commita `e6d790f` pełny `pip-audit -r requirements.lock.txt` zakończył się wynikiem `No known vulnerabilities found` (z lokalnym `--cache-dir`; bez `--no-deps`). Wynik zależy od stanu bazy podatności w dniu wykonania.
+- Pełny `pip-audit -r requirements.lock.txt` na niezmienionym lockfile zakończył się wynikiem `No known vulnerabilities found` (z lokalnym `--cache-dir`; bez `--no-deps`). Wynik zależy od stanu bazy podatności w dniu wykonania.
 - Testy obejmują aktywne sesje, cofanie sesji, świeże uwierzytelnienie, limity body, nagłówki, politykę haseł, prywatność pliku bazy, brak sekretów w logach, limity prób, rate limiting, migracje, transakcje i regresje finansowe.
 - Testy jednostkowe launchera są w `tests/test_launcher.py`, lecz nie wykonano rzeczywistego uruchomienia Windows, pełnego builda mobilnego ani testów end-to-end na iOS/Android.
 
