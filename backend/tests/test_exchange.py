@@ -10,6 +10,7 @@ from app.adapters import nbp_rates
 from app.adapters.nbp_rates import RateProviderUnavailable, RateTable
 from app.main import app
 from app.routes import exchange
+from app.services.exchange_quotes import amount_in_minor_units
 from fastapi.testclient import TestClient
 
 
@@ -360,7 +361,7 @@ def test_exchange_is_atomic_records_rate_and_replays_idempotently(client, tmp_pa
 
 
 def test_exchange_rounding_floors_positive_payouts(client):
-    assert exchange.amount_in_minor_units(3, Decimal("0.5"), Decimal(1)) == 1
+    assert amount_in_minor_units(3, Decimal("0.5"), Decimal(1)) == 1
     user = create_user(client, "rounding@example.com")
     ids = account_ids(client, user["access_token"])
     quote = client.post(
