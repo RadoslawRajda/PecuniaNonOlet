@@ -110,7 +110,16 @@ def google_reauth_nonce(session: Authenticated, request: Request) -> dict[str, o
     return {"nonce": nonce, "expires_in": CHALLENGE_TTL}
 
 
-@router.post("/reauth", response_model=AuthResponse)
+@router.post(
+    "/reauth",
+    response_model=AuthResponse,
+    summary="Ponownie potwierdź tożsamość przez Google",
+    description=(
+        "Wymaga aktywnej sesji, jednorazowego nonce i podpisanego ID tokenu z "
+        "`auth_time` nie starszym niż pięć minut. Sukces unieważnia dotychczasową "
+        "sesję i zwraca nową parę tokenów; klient musi ją zapisać."
+    ),
+)
 def google_reauthenticate(
     payload: GoogleTokenRequest, session: Authenticated, request: Request
 ) -> AuthResponse:

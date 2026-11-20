@@ -132,7 +132,16 @@ def login(payload: LoginCredentials, request: Request) -> LoginResponse:
     )
 
 
-@router.post("/api/refresh", response_model=AuthResponse)
+@router.post(
+    "/api/refresh",
+    response_model=AuthResponse,
+    summary="Odśwież sesję",
+    description=(
+        "Wymienia ważny refresh token na nową parę access/refresh. Poprzednia para "
+        "przestaje działać. Ponowne użycie zużytego refresh tokenu unieważnia całą "
+        "rodzinę sesji. Klient powinien zapisać oba nowe tokeny atomowo."
+    ),
+)
 def refresh_session(payload: RefreshTokenRequest, request: Request) -> AuthResponse:
     """Rotate a refresh credential; a reused credential revokes its session family."""
     address = client_ip(request.client.host if request.client else None)
@@ -244,7 +253,16 @@ def me(session: AuthenticatedSession = Depends(current_session)) -> User:
     return session.user
 
 
-@router.post("/api/logout", status_code=204, response_class=Response)
+@router.post(
+    "/api/logout",
+    status_code=204,
+    response_class=Response,
+    summary="Wyloguj bieżącą rodzinę sesji",
+    description=(
+        "Przyjmuje refresh token w body, także gdy access token już wygasł. "
+        "Odpowiedź 204 nie ujawnia, czy przekazany token istniał."
+    ),
+)
 def logout(payload: LogoutRequest, request: Request) -> Response:
     """Revoke the token family without revealing whether the supplied token exists."""
     address = client_ip(request.client.host if request.client else None)
