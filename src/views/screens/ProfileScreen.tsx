@@ -55,6 +55,7 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
   const [passwordMessage, setPasswordMessage] = React.useState('');
   const [isChangingPassword, setIsChangingPassword] = React.useState(false);
   const needsRecoveryCodeCopy = recoveryCodes.length > 0;
+  const isGoogleOnlyAccount = hasLocalPassword === false;
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
 
   React.useEffect(() => {
@@ -373,7 +374,14 @@ ${(data.recovery_codes ?? []).join('\n')}`,
 
           <Text style={styles.groupTitle}>Konto i bezpieczeństwo</Text>
           {!isAnalyst ? <MenuRow icon={Shield} title="Dane profilu" subtitle="Zdjęcie profilowe" onPress={() => setPage('account')} /> : null}
-          <MenuRow icon={Shield} title="Bezpieczeństwo" subtitle={`${totpEnabled ? 'TOTP włączone' : 'TOTP wyłączone'} · ${passkeys.length} passkeys`} onPress={() => setPage('security')} />
+          <MenuRow
+            icon={Shield}
+            title="Bezpieczeństwo"
+            subtitle={isGoogleOnlyAccount
+              ? 'Konto Google — dodatkowe metody niedostępne'
+              : `${totpEnabled ? 'TOTP włączone' : 'TOTP wyłączone'} · ${passkeys.length} passkeys`}
+            onPress={() => setPage('security')}
+          />
           {hasLocalPassword === true ? <MenuRow
             icon={KeyRound}
             title="Zmień hasło"
@@ -430,6 +438,17 @@ ${(data.recovery_codes ?? []).join('\n')}`,
 
       {page === 'security' ? (
         <View style={styles.pageContent}>
+          {isGoogleOnlyAccount ? (
+            <View style={styles.infoCard}>
+              <Text style={styles.userTitle}>Konto Google</Text>
+              <Text style={styles.description}>
+                To konto korzysta wyłącznie z logowania Google. Dodanie TOTP lub passkey wymagałoby niezależnego, świeżego potwierdzenia tożsamości.
+              </Text>
+              <Text style={styles.description}>
+                Nie udostępniamy tych operacji bez takiego potwierdzenia, aby przejęta sesja nie mogła dopisać własnej metody logowania.
+              </Text>
+            </View>
+          ) : <>
           <Text style={styles.groupTitle}>Passkeys</Text>
           <Text style={styles.description}>Logowanie kluczem zapisanym w pęku kluczy lub menedżerze haseł urządzenia. Przy dodawaniu lub usuwaniu aplikacja poprosi o świeże potwierdzenie przez Google, jeśli będzie potrzebne.</Text>
           <AppButton title="Dodaj passkey" onPress={addPasskey} />
@@ -480,6 +499,7 @@ ${(data.recovery_codes ?? []).join('\n')}`,
             <AppButton title="Wyloguj się i zaloguj ponownie" onPress={onLogout} />
           </> : null}
           {totpMessage ? <Text selectable style={styles.description}>{totpMessage}</Text> : null}
+          </>}
         </View>
       ) : null}
 
