@@ -2,17 +2,14 @@ import ipaddress
 import os
 import ssl
 
-from cryptography import x509
-
 from app.local_tls import MDNS_DNS_NAME, ensure_local_tls
+from cryptography import x509
 
 
 def test_local_certificates_are_persistent_and_cover_mdns_and_lan_ip(tmp_path):
     first = ensure_local_tls(tmp_path, "192.168.1.45")
     server_certificate = x509.load_pem_x509_certificate(first.certificate.read_bytes())
-    names = server_certificate.extensions.get_extension_for_class(
-        x509.SubjectAlternativeName
-    ).value
+    names = server_certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
 
     assert MDNS_DNS_NAME in names.get_values_for_type(x509.DNSName)
     assert ipaddress.ip_address("192.168.1.45") in names.get_values_for_type(x509.IPAddress)
@@ -30,9 +27,7 @@ def test_local_certificates_are_persistent_and_cover_mdns_and_lan_ip(tmp_path):
     renewed_names = renewed_certificate.extensions.get_extension_for_class(
         x509.SubjectAlternativeName
     ).value
-    assert ipaddress.ip_address("192.168.1.46") in renewed_names.get_values_for_type(
-        x509.IPAddress
-    )
+    assert ipaddress.ip_address("192.168.1.46") in renewed_names.get_values_for_type(x509.IPAddress)
     assert changed_address.ca_fingerprint_sha256 == first.ca_fingerprint_sha256
 
 
@@ -42,9 +37,7 @@ def test_generated_https_certificate_validates_for_mdns_host(tmp_path):
     server_context.load_cert_chain(
         certfile=str(tls_files.certificate), keyfile=str(tls_files.private_key)
     )
-    client_context = ssl.create_default_context(
-        cafile=str(tmp_path / "local-root-ca.pem")
-    )
+    client_context = ssl.create_default_context(cafile=str(tmp_path / "local-root-ca.pem"))
     client_in, client_out = ssl.MemoryBIO(), ssl.MemoryBIO()
     server_in, server_out = ssl.MemoryBIO(), ssl.MemoryBIO()
     client = client_context.wrap_bio(
@@ -81,9 +74,7 @@ def test_generated_https_certificate_validates_for_mdns_host(tmp_path):
     transfer(client_out, server_in)
     request = server.read(4096)
     assert b"GET /health" in request
-    server.write(
-        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
-    )
+    server.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
     transfer(server_out, client_in)
     response = client.read(4096)
 

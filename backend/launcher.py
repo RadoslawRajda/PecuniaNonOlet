@@ -14,12 +14,10 @@ from pathlib import Path
 
 import psutil
 import uvicorn
-from starlette.responses import PlainTextResponse
-from zeroconf import ServiceInfo, Zeroconf
-from uvicorn.config import Config
-
 from app.local_tls import LocalTLSFiles, ensure_local_tls
-
+from starlette.responses import PlainTextResponse
+from uvicorn.config import Config
+from zeroconf import ServiceInfo, Zeroconf
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 SERVICE_TYPE = "_pecunianonolet._tcp.local."
@@ -27,6 +25,11 @@ SERVICE_NAME = "Pecunianonolet API." + SERVICE_TYPE
 MDNS_HOSTNAME = "pecunianonolet.local."
 HTTPS_PORT = 8000
 BOOTSTRAP_HTTP_PORT = 8001
+ASSOCIATION_HTTPS_PORT = 443
+ASSOCIATION_PATHS = {
+    "/.well-known/apple-app-site-association",
+    "/.well-known/assetlinks.json",
+}
 
 
 class BootstrapOnlyApp:
@@ -37,13 +40,29 @@ class BootstrapOnlyApp:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http" and (
-            scope.get("method") != "GET"
-            or scope.get("path") not in {"/", "/local-root-ca.cer"}
+            scope.get("method") != "GET" or scope.get("path") not in {"/", "/local-root-ca.cer"}
         ):
             response = PlainTextResponse("Not Found", status_code=404)
             await response(scope, receive, send)
             return
         await self.application(scope, receive, send)
+
+
+class AssociationOnlyApp:
+    """Expose only app/domain association documents on standard HTTPS port 443."""
+
+    def __init__(self, application):
+        self.application = application
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and (
+            scope.get("method") != "GET" or scope.get("path") not in ASSOCIATION_PATHS
+        ):
+            response = PlainTextResponse("Not Found", status_code=404)
+            await response(scope, receive, send)
+            return
+        await self.application(scope, receive, send)
+
 
 SKIP_INTERFACES = (
     "docker",
@@ -229,6 +248,61 @@ def start_bootstrap_http(ip: str) -> tuple[uvicorn.Server, threading.Thread]:
     raise RuntimeError("HTTP bootstrap nie wystartował w ciągu 10 sekund.")
 
 
+def start_association_https(ip: str, tls_files: LocalTLSFiles):
+    """Serve only AASA and Android asset links on 443 for local native passkey tests."""
+    from app.main import app
+
+    config = Config(
+        AssociationOnlyApp(app),
+        host=ip,
+        port=ASSOCIATION_HTTPS_PORT,
+        ssl_certfile=str(tls_files.certificate),
+        ssl_keyfile=str(tls_files.private_key),
+        proxy_headers=False,
+        access_log=False,
+        timeout_keep_alive=5,
+        limit_concurrency=10,
+        lifespan="off",
+    )
+    server = uvicorn.Server(config)
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            server.run()
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=run, name="domain-associations", daemon=True)
+    thread.start()
+    for _ in range(100):
+        if server.started:
+            return server, thread
+        if not thread.is_alive():
+            reason = str(errors[0]) if errors else "proces serwera zakończył się"
+            raise RuntimeError(f"Serwer plików powiązań nie wystartował: {reason}.")
+        time.sleep(0.1)
+    server.should_exit = True
+    thread.join(timeout=5)
+    raise RuntimeError("Serwer plików powiązań nie wystartował w ciągu 10 sekund.")
+
+
+def run_association_server(ip: str, tls_files: LocalTLSFiles) -> int:
+    """Run the isolated privileged listener needed for iOS local Associated Domains."""
+    server, thread = start_association_https(ip, tls_files)
+    print(f"Pliki powiązań działają wyłącznie na https://{ip}:443/.well-known/.")
+    print("Ctrl+C zatrzyma serwer plików powiązań.")
+    try:
+        while thread.is_alive():
+            thread.join(timeout=0.5)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+    return 0
+
+
 def announce_service(ip: str) -> tuple[Zeroconf, ServiceInfo]:
     info = ServiceInfo(
         SERVICE_TYPE,
@@ -255,6 +329,11 @@ def announce_service(ip: str) -> tuple[Zeroconf, ServiceInfo]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="PecuniaNonOlet backend LAN")
     parser.add_argument("--ip", help="Wybierz ręcznie istniejący adres IPv4 komputera")
+    parser.add_argument(
+        "--aasa-only",
+        action="store_true",
+        help="Uruchom wyłącznie pliki powiązań domeny HTTPS na porcie 443 (testy passkeys)",
+    )
     args = parser.parse_args()
 
     print("=== PECUNIANONOLET BACKEND ===")
@@ -268,6 +347,8 @@ def main() -> int:
     try:
         ip = select_lan_ip(args.ip)
         tls_files = ensure_local_tls(PROJECT_ROOT / "data" / "tls", ip)
+        if args.aasa_only:
+            return run_association_server(ip, tls_files)
         server, thread = start_api(ip, tls_files)
         bootstrap_server, bootstrap_thread = start_bootstrap_http(ip)
         servers = [(server, thread), (bootstrap_server, bootstrap_thread)]

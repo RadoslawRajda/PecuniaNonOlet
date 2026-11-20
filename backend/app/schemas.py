@@ -3,6 +3,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 MAX_SQLITE_INTEGER = 9_223_372_036_854_775_807
+CurrencyCode = Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+TransactionDirection = Literal["incoming", "outgoing", "internal"]
+
 
 class LoginCredentials(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -32,9 +35,25 @@ class User(BaseModel):
 
 class AuthResponse(BaseModel):
     user: User
-    token: str
+    access_token: str
+    refresh_token: str
     token_type: str = "bearer"
-    expires_in: int = 7 * 24 * 60 * 60
+    expires_in: int = 15 * 60
+    refresh_expires_in: int = 30 * 24 * 60 * 60
+
+
+class RefreshTokenRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    refresh_token: str = Field(min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]{43}$")
+
+
+class LogoutRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    refresh_token: str | None = Field(
+        default=None, min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]{43}$"
+    )
 
 
 class MfaLoginChallengeResponse(BaseModel):
@@ -49,7 +68,7 @@ LoginResponse = AuthResponse | MfaLoginChallengeResponse
 class MfaSetupRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    current_password: str = Field(min_length=1, max_length=128)
+    current_password: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class MfaSetupResponse(BaseModel):
@@ -81,7 +100,7 @@ class MfaEnableResponse(BaseModel):
 
 
 class MfaDisableRequest(MfaCodeRequest):
-    current_password: str = Field(min_length=1, max_length=128)
+    current_password: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class MfaDisableResponse(BaseModel):
@@ -96,7 +115,7 @@ class MfaStatusResponse(BaseModel):
 class ChangePasswordRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    current_password: str = Field(min_length=1, max_length=128)
+    current_password: str | None = Field(default=None, min_length=1, max_length=128)
     new_password: str = Field(min_length=8, max_length=128)
 
 
@@ -107,7 +126,7 @@ class ChangePasswordResponse(BaseModel):
 
 class AccountBalance(BaseModel):
     id: int
-    currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    currency_code: CurrencyCode
     balance_minor: int
     balance: str
 
@@ -120,14 +139,14 @@ class FinancialTransaction(BaseModel):
     id: str
     type: Literal["opening", "transfer", "exchange"]
     status: Literal["completed", "reversed"]
-    direction: Literal["incoming", "outgoing", "internal"]
-    currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    direction: TransactionDirection
+    currency_code: CurrencyCode
     amount_minor: int
     amount: str
     source_account_id: int | None
     destination_account_id: int | None
-    source_currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"] | None
-    destination_currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    source_currency_code: CurrencyCode | None
+    destination_currency_code: CurrencyCode
     source_amount_minor: int | None
     source_amount: str | None
     destination_amount_minor: int
@@ -149,7 +168,7 @@ class TransferRequest(BaseModel):
 
     recipient_email: EmailStr
     source_account_id: int = Field(gt=0, le=MAX_SQLITE_INTEGER, strict=True)
-    currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    currency_code: CurrencyCode
     amount_minor: int = Field(gt=0, le=9_000_000_000_000_000, strict=True)
 
     @field_validator("recipient_email", mode="before")
@@ -161,7 +180,7 @@ class TransferRequest(BaseModel):
 class TransferResponse(BaseModel):
     transaction_id: str
     status: Literal["completed", "reversed"]
-    currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    currency_code: CurrencyCode
     amount_minor: int
     amount: str
     source_account_id: int
@@ -172,7 +191,7 @@ class TransferResponse(BaseModel):
 
 
 class ExchangeRate(BaseModel):
-    currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    currency_code: CurrencyCode
     pln_per_unit: str
 
 
@@ -196,8 +215,8 @@ class ExchangeQuoteResponse(BaseModel):
     quote_id: str
     source_account_id: int
     destination_account_id: int
-    source_currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
-    destination_currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    source_currency_code: CurrencyCode
+    destination_currency_code: CurrencyCode
     source_amount_minor: int
     source_amount: str
     destination_amount_minor: int
@@ -226,8 +245,8 @@ class ExchangeResponse(BaseModel):
     source_amount: str
     destination_amount_minor: int
     destination_amount: str
-    source_currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
-    destination_currency_code: Literal["PLN", "EUR", "USD", "GBP", "CZK"]
+    source_currency_code: CurrencyCode
+    destination_currency_code: CurrencyCode
     exchange_rate: str
     created_at: str
     idempotent_replay: bool

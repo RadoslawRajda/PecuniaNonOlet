@@ -4,7 +4,7 @@ Backend FastAPI z rejestracją, logowaniem i wylogowaniem. Konta oraz sesje są 
 
 ## Wymagania
 
-- Python 3.10 lub nowszy
+- Python 3.11 lub nowszy
 - Komputer i telefon w tej samej sieci lokalnej
 
 ## Uruchomienie
@@ -53,12 +53,17 @@ DATABASE_PATH=data/pecunia.db .venv/bin/alembic -c alembic.ini upgrade head
 
 Na Windows użyj `.venv\Scripts\alembic.exe -c alembic.ini upgrade head`.
 
+## Struktura backendu
+
+`app/main.py` składa aplikację FastAPI i middleware. Routery w `app/routes/` obsługują HTTP i walidację wejścia; operacje finansowe zmieniające stan są wykonywane przez serwisy z `app/services/`, które obejmują zapis sald, księgi i audytu jedną transakcją SQLite. Integracje zewnętrzne, takie jak NBP, Google OIDC i Turnstile, są w `app/adapters/`. Ustawienia pochodzą z `app/config.py`; migracje Alembic są samodzielną historią schematu i nie importują modeli aplikacji. Część zapytań odczytowych i logiki uwierzytelniania nadal znajduje się w routerach.
+
 ## Endpointy
 
 | Metoda | Ścieżka | Działanie |
 | --- | --- | --- |
 | `POST` | `/api/register` | Rejestracja, utworzenie rachunków walutowych i wydanie tokenu |
 | `POST` | `/api/login` | Logowanie i wydanie tokenu |
+| `POST` | `/api/refresh` | Atomowa rotacja access i refresh tokenu |
 | `GET` | `/api/mfa` | Status MFA zalogowanego użytkownika |
 | `POST` | `/api/mfa/totp/setup` | Rozpoczęcie konfiguracji aplikacji TOTP |
 | `POST` | `/api/mfa/totp/confirm` | Potwierdzenie kodu i aktywacja TOTP; zwraca kody odzyskiwania raz |
@@ -94,9 +99,11 @@ Na Windows użyj `.venv\Scripts\alembic.exe -c alembic.ini upgrade head`.
 | `GET` | `/.well-known/apple-app-site-association` | Powiązanie domeny z iOS dla passkeys |
 | `GET` | `/.well-known/assetlinks.json` | Powiązanie domeny z Androidem dla passkeys |
 
-Rejestracja przyjmuje JSON `{"email":"test@example.com","password":"haslo1234","captcha_token":"..."}`. Token CAPTCHA pochodzi z obowiązkowego widżetu Cloudflare Turnstile w aplikacji i jest weryfikowany przez backend przed utworzeniem konta. Logowanie przyjmuje e-mail i hasło. Hasło przy rejestracji musi mieć od 8 do 128 znaków. Odpowiedź zawiera `user`, `token`, `token_type` i `expires_in`. Dla `/api/me` i `/api/logout` wyślij nagłówek `Authorization: Bearer <token>`. Token wygasa po 7 dniach, a wylogowanie unieważnia go od razu.
+Rejestracja przyjmuje JSON `{"email":"test@example.com","password":"haslo1234","captcha_token":"..."}`. Token CAPTCHA pochodzi z obowiązkowego widżetu Cloudflare Turnstile w aplikacji i jest weryfikowany przez backend przed utworzeniem konta. Logowanie przyjmuje e-mail i hasło. Hasło przy rejestracji musi mieć od 8 do 128 znaków. Odpowiedź udanej rejestracji lub logowania zawiera `user`, `access_token`, `refresh_token`, `token_type`, `expires_in` i `refresh_expires_in`. Access token jest losowym tokenem opaque ważnym 15 minut; refresh token jest ważny do 30 dni bezczynności, a sesja ma limit bezwzględny 90 dni. W bazie przechowywane są wyłącznie hashe tokenów. Aplikacja mobilna zapisuje oba tokeny w Keychain/Keystore, wysyła access token w `Authorization: Bearer <access_token>` i po odpowiedzi 401 wykonuje pojedyncze współdzielone odświeżenie.
 
-Gdy użytkownik ma włączone MFA, `/api/login` zamiast tokenu zwraca `mfa_required: true`, `challenge_token` i `expires_in`. Frontend kończy logowanie przez `POST /api/login/mfa`. Szczegółowy przepływ konfiguracji, przykładowe żądania i odpowiedzi opisuje [dokumentacja MFA TOTP](docs/TOTP_MFA.md).
+Odświeżanie: `POST /api/refresh` z JSON `{"refresh_token":"..."}` zwraca nową parę. Każde odświeżenie unieważnia poprzednią parę. Ponowne użycie zużytego refresh tokenu unieważnia całą rodzinę sesji. Wylogowanie: `POST /api/logout` z JSON `{"refresh_token":"..."}` unieważnia sesję bez potrzeby ważnego access tokenu. Zmiana hasła, włączenie/wyłączenie MFA oraz wykrycie ponownego użycia refresh tokenu unieważniają aktywne sesje. Jedno konto może mieć maksymalnie pięć aktywnych sesji; utworzenie kolejnej unieważnia najstarszą. Migracja do nowego modelu wymaga jednorazowego ponownego logowania; zachowuje konta i dane finansowe, ale unieważnia dotychczasowe sesje.
+
+Gdy użytkownik ma włączone MFA, `/api/login` zamiast tokenów zwraca `mfa_required: true`, `challenge_token` i `expires_in`. Frontend kończy logowanie przez `POST /api/login/mfa`, który wydaje parę access/refresh. Szczegółowy przepływ konfiguracji, przykładowe żądania i odpowiedzi opisuje [dokumentacja MFA TOTP](docs/TOTP_MFA.md).
 
 ## Google OIDC i passkeys — lokalny development
 
@@ -104,20 +111,32 @@ Backend wczytuje `backend/.env`; aplikacja React Native wczytuje główny `.env`
 
 W `backend/.env` ustaw `GOOGLE_OAUTH_CLIENT_IDS` jako listę identyfikatorów rozdzielonych przecinkami. W głównym `.env` ustaw `GOOGLE_IOS_CLIENT_ID` i `GOOGLE_ANDROID_CLIENT_ID`. W `ios/PecuniaNonOlet/Info.plist` zastąp `REPLACE_WITH_IOS_CLIENT_ID_PREFIX`, a w `android/app/build.gradle` zastąp `REPLACE_WITH_ANDROID_CLIENT_ID_PREFIX`. Wartość prefiksu to identyfikator klienta bez końcówki `.apps.googleusercontent.com`; np. `123-example.apps.googleusercontent.com` daje schemat `com.googleusercontent.apps.123-example`. Redirect jest obsługiwany przez systemową przeglądarkę i AppAuth (Authorization Code + PKCE). Backend przyjmuje ID token, sprawdza podpis, `iss`, `aud`, `azp`, `exp`, `sub` i jednorazowy `nonce`. Token dostępu Google nie jest przechowywany jako sesja aplikacji. Istniejące konta nie są automatycznie łączone po samym adresie e-mail.
 
-Passkeys używają `py_webauthn` i natywnego menedżera poświadczeń iOS/Android. Backend wymaga świeżego logowania (do 5 minut) przed dodaniem/usunięciem passkey i wymusza resident credential oraz User Verification. Dla logowania weryfikuje jednorazowy challenge, dozwolony origin, RP ID, podpis, User Verification i licznik; TOTP pozostaje wymagane, jeśli jest włączone.
+Passkeys używają `py_webauthn` i natywnego menedżera poświadczeń iOS/Android. Backend wymaga świeżego dowodu logowania (do 5 minut) przed dodaniem/usunięciem passkey i wymusza resident credential oraz User Verification. Dla logowania weryfikuje jednorazowy challenge, dozwolony origin, RP ID, podpis, User Verification i `userHandle`; TOTP pozostaje wymagane, jeśli jest włączone. `signCount` jest przekazywany verifierowi i aktualizowany po assertion, ale backend nie wymusza wzrostu licznika: wartość zero i powtarzające się zero są prawidłowe dla synchronizowanych passkeys. Aplikacja nie podejmuje decyzji dostępu na podstawie flag BE/BS ani ich nie utrwala. Sesja zapisuje metodę, którą została uwierzytelniona. Google `auth_time` jest przechowywane osobno od czasu utworzenia sesji; bez świeżego `auth_time` sesja Google nie może autoryzować zmiany metod bezpieczeństwa.
+
+Natywny request Google zawiera żądanie claimu `auth_time`. W ustawieniach klienta Google OAuth włącz dodatkowe claimy `auth_time`; Google może go nie zwrócić, jeśli nie jest dostępny dla konfiguracji projektu. Zwykłe logowanie może wtedy nadal działać, ale operacja wymagająca świeżej reautoryzacji zostanie odrzucona. Użytkownik musi ponownie uwierzytelnić konto Google, a nie tylko odświeżyć lokalną sesję.
+
+Żądania logowania, rejestracji, Google, passkeys i MFA są ograniczane trwałymi licznikami SQLite współdzielonymi między procesami backendu. Limity IP używają adresu peer połączenia ASGI; nagłówki `X-Forwarded-For` są ignorowane. Przy proxy należy skonfigurować zaufanie na warstwie serwera i nie przekazywać niezweryfikowanych nagłówków jako adresu klienta.
 
 Dla `pecunianonolet.local` backend serwuje wymagane pliki powiązań z domyślnym Apple Team ID, identyfikatorem aplikacji oraz fingerprintem debugowego Androida z tego repozytorium. Są to ustawienia developerskie i można je nadpisać zmiennymi `APPLE_TEAM_ID`, `IOS_BUNDLE_ID`, `ANDROID_PACKAGE_NAME` i `ANDROID_SHA256_CERT_FINGERPRINTS`. Lista `WEBAUTHN_ALLOWED_ORIGINS` domyślnie dopuszcza lokalny HTTPS w przeglądarce, natywny origin iOS oraz certyfikat Android debug; dla innej domeny lub podpisu ustaw własną listę. Nie dodawaj `Origin` z żądania klienta do tej listy.
 
-Na iPhonie zainstaluj aplikację podpisaną tym samym Apple Team ID, włącz w Ustawieniach tryb developerski Associated Domains, a następnie uruchom aplikację ponownie. Entitlement testowy zawiera domenę lokalną w trybie developer oraz wariant z portem `8000`; backend serwuje AASA pod tym portem. iOS może w ten sposób pobrać plik bez publicznego CDN. Lokalny serwer nadal musi mieć certyfikat TLS zaufany przez telefon. Na Androidzie instaluj APK podpisany debugowym kluczem z repozytorium i korzystaj z tego samego lokalnego HTTPS. Sprawdź odpowiedzi:
+Na iPhonie zainstaluj aplikację developerską podpisaną tym samym Apple Team ID, włącz w Ustawieniach tryb developerski oraz `Associated Domains Development`, a następnie uruchom aplikację ponownie. Entitlement testowy zawiera `webcredentials:pecunianonolet.local?mode=developer`. Wpisuje się samą domenę, bez portu. Zgodnie z [dokumentacją Apple](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.associated-domains) tryb developer pozwala urządzeniu pobrać AASA bezpośrednio z prywatnej domeny zamiast korzystać z publicznego CDN Apple. AASA musi być dostępny przez HTTPS na standardowym porcie 443; API i Swagger nadal działają na porcie 8000.
 
-```text
-https://pecunianonolet.local:8000/.well-known/apple-app-site-association
-https://pecunianonolet.local:8000/.well-known/assetlinks.json
+Aby uruchomić ograniczony serwer AASA i Android Asset Links na porcie 443, pozostaw zwykły backend uruchomiony, otwórz drugie okno terminala i uruchom z katalogu `backend`:
+
+```sh
+sudo .venv/bin/python launcher.py --aasa-only --ip <LAN_IP>
 ```
 
-Passkeys pod `.local` są wyłącznie testowe. Produkcja wymaga publicznej domeny z prawidłowym certyfikatem, właściwym Apple Associated Domains oraz fingerprintem certyfikatu używanego do podpisania aplikacji. Nie publikuj debugowego fingerprintu jako konfiguracji produkcyjnej.
+Podaj ten sam lokalny adres IPv4 co przy starcie backendu. Ten tryb wymaga uprawnień do portu 443 i wystawia wyłącznie dwa pliki powiązań; pozostałe ścieżki zwracają 404. Zatrzymaj go przez `Ctrl+C`. W Windows uruchom terminal jako administrator i użyj `.venv\\Scripts\\python.exe launcher.py --aasa-only --ip <LAN_IP>`. Lokalny serwer musi mieć certyfikat TLS zaufany przez telefon, a nazwa `.local` musi rozwiązywać się na iPhonie. Sprawdź odpowiedzi:
 
-Przy pierwszej konfiguracji skopiuj `backend/.env.example` do `backend/.env`. Wygeneruj klucz poleceniem `.venv/bin/python -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"` (Windows: `.venv\\Scripts\\python.exe -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"`) i wklej wynik jako `MFA_ENCRYPTION_KEY`. Wartość `TURNSTILE_SECRET_KEY` w przykładzie jest publicznym kluczem testowym Cloudflare i służy wyłącznie do lokalnego developmentu; przed wdrożeniem skonfiguruj własną parę kluczy Turnstile. Możesz opcjonalnie ustawić `TURNSTILE_EXPECTED_HOSTNAME`. Launcher automatycznie wczytuje `backend/.env`; po zmianie pliku uruchom backend ponownie. Zachowaj ten sam klucz MFA po każdym restarcie, poza repozytorium. To klucz szyfrujący sekrety TOTP w bazie i nie jest tym samym co lokalny CA TLS. Zmiana klucza po włączeniu MFA uniemożliwi odszyfrowanie dotychczas zapisanych sekretów.
+```text
+https://pecunianonolet.local/.well-known/apple-app-site-association
+https://pecunianonolet.local/.well-known/assetlinks.json
+```
+
+Passkeys pod `.local` są wyłącznie testowe. Testują natywny przepływ iOS tylko przy uruchomieniu aplikacji developerskiej z prawidłowym entitlementem i włączonym trybem Associated Domains developer na telefonie; sam działający HTTPS w Safari tego nie konfiguruje. Produkcja wymaga publicznej domeny z prawidłowym certyfikatem, właściwym Apple Associated Domains oraz fingerprintem certyfikatu używanego do podpisania aplikacji. Nie publikuj debugowego fingerprintu jako konfiguracji produkcyjnej.
+
+Przy pierwszej konfiguracji skopiuj `backend/.env.example` do `backend/.env`. Typowane ustawienia Pydantic wczytują ten plik przy starcie. `APP_ENV` przyjmuje `development`, `test` lub `production`; domyślna konfiguracja jest przeznaczona wyłącznie do lokalnego developmentu. Dla produkcji ustaw jawne `TRUSTED_HOSTS` (nazwy hostów API bez wildcardów). Produkcyjny profil wyłącza publiczne `/docs`, `/redoc` i `/openapi.json` oraz odrzuca nieznane nagłówki Host. Walidacja blokuje także testowy sekret Turnstile, `.local` RP ID i debugowy fingerprint Androida. Wygeneruj klucz poleceniem `.venv/bin/python -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"` (Windows: `.venv\\Scripts\\python.exe -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"`) i wklej wynik jako `MFA_ENCRYPTION_KEY`. Wartość `TURNSTILE_SECRET_KEY` w przykładzie jest publicznym kluczem testowym Cloudflare i służy wyłącznie do lokalnego developmentu; przed wdrożeniem skonfiguruj własną parę kluczy Turnstile. Możesz opcjonalnie ustawić `TURNSTILE_EXPECTED_HOSTNAME`. Po zmianie `.env` uruchom backend ponownie. Zachowaj ten sam klucz MFA po każdym restarcie, poza repozytorium. To klucz szyfrujący sekrety TOTP w bazie i nie jest tym samym co lokalny CA TLS. Zmiana klucza po włączeniu MFA uniemożliwi odszyfrowanie dotychczas zapisanych sekretów.
 
 Frontend konfiguruje publiczny `TURNSTILE_SITE_KEY` w głównym pliku `.env` na podstawie `.env.example`. Przykład używa klucza testowego wymuszającego interakcję; klucze testowe nie chronią przed botami. Do produkcji utwórz własny widżet Turnstile i ustaw jego klucz publiczny we frontendzie oraz odpowiadający mu sekret w `backend/.env`.
 
@@ -147,8 +166,10 @@ Zdjęcie przesyłaj jako `multipart/form-data` w wymaganym polu `file` na `PUT /
 
 ## Testy
 
+Start scripts install exact runtime dependencies from `requirements-runtime.lock.txt`. Direct ranges are kept in `requirements.txt`; the lockfile records the validated resolution. CI and local test runs use `requirements.lock.txt`, which pins runtime and development dependencies.
+
 ```sh
-.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m pip install -r requirements.lock.txt
 .venv/bin/python -m pytest -q
 ```
 

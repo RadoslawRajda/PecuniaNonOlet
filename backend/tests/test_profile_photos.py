@@ -4,11 +4,10 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-from PIL import Image
-
 from app.main import app
 from app.routes.profile_photos import MAX_PROFILE_PHOTO_BYTES, photo_path
+from fastapi.testclient import TestClient
+from PIL import Image
 
 
 @pytest.fixture
@@ -25,7 +24,8 @@ def auth(token):
 
 def create_user(client, email):
     return client.post(
-        "/api/register", json={"email": email, "password": "test-password"}
+        "/api/register",
+        json={"email": email, "password": "test-password", "captcha_token": "test-token"},
     ).json()
 
 
@@ -49,18 +49,26 @@ def test_profile_photo_upload_openapi_documents_multipart_contract():
     assert {"204", "401", "403", "413", "415", "422"} <= set(operation["responses"])
 
 
+def test_profile_photo_upload_rejects_oversized_streaming_body(client):
+    response = client.put(
+        "/api/profile/photo",
+        headers={"Content-Length": str(MAX_PROFILE_PHOTO_BYTES + 64 * 1024 + 1)},
+    )
+    assert response.status_code == 413
+
+
 def test_profile_photo_upload_is_authenticated_normalized_and_private(client, tmp_path):
     user = create_user(client, "photo-owner@example.com")
     other = create_user(client, "photo-other@example.com")
     raw = image_bytes()
     upload = client.put(
         "/api/profile/photo",
-        headers=auth(user["token"]),
+        headers=auth(user["access_token"]),
         files={"file": ("arbitrary-name.png", raw, "image/png")},
     )
     assert upload.status_code == 204
 
-    photo = client.get("/api/profile/photo", headers=auth(user["token"]))
+    photo = client.get("/api/profile/photo", headers=auth(user["access_token"]))
     assert photo.status_code == 200
     assert photo.headers["content-type"] == "image/jpeg"
     assert photo.headers["cache-control"] == "private, no-store"
@@ -71,7 +79,7 @@ def test_profile_photo_upload_is_authenticated_normalized_and_private(client, tm
         assert decoded.size == (64, 48)
         assert not decoded.getexif()
 
-    assert client.get("/api/profile/photo", headers=auth(other["token"])).status_code == 404
+    assert client.get("/api/profile/photo", headers=auth(other["access_token"])).status_code == 404
     assert client.get("/api/profile/photo").status_code == 401
 
     with sqlite3.connect(tmp_path / "profile.db") as db:
@@ -88,19 +96,33 @@ def test_profile_photo_upload_is_authenticated_normalized_and_private(client, tm
 
 def test_profile_photo_upload_ignores_client_filename_and_replaces_old_image(client, tmp_path):
     user = create_user(client, "photo-replace@example.com")
-    headers = auth(user["token"])
-    assert client.put(
-        "/api/profile/photo", headers=headers,
-        files={"file": ("../../outside.svg", image_bytes(), "image/svg+xml")},
-    ).status_code == 204
+    headers = auth(user["access_token"])
+    assert (
+        client.put(
+            "/api/profile/photo",
+            headers=headers,
+            files={"file": ("../../outside.svg", image_bytes(), "image/svg+xml")},
+        ).status_code
+        == 204
+    )
     with sqlite3.connect(tmp_path / "profile.db") as db:
         old_key = db.execute("SELECT storage_key FROM profile_photos").fetchone()[0]
     old_path = photo_path(old_key)
 
-    assert client.put(
-        "/api/profile/photo", headers=headers,
-        files={"file": ("same.jpg", image_bytes(image_format="JPEG", size=(20, 30)), "application/octet-stream")},
-    ).status_code == 204
+    assert (
+        client.put(
+            "/api/profile/photo",
+            headers=headers,
+            files={
+                "file": (
+                    "same.jpg",
+                    image_bytes(image_format="JPEG", size=(20, 30)),
+                    "application/octet-stream",
+                )
+            },
+        ).status_code
+        == 204
+    )
     with sqlite3.connect(tmp_path / "profile.db") as db:
         new_key = db.execute("SELECT storage_key FROM profile_photos").fetchone()[0]
     assert new_key != old_key
@@ -110,14 +132,15 @@ def test_profile_photo_upload_ignores_client_filename_and_replaces_old_image(cli
 
 def test_profile_photo_rejects_spoofed_invalid_and_unsupported_images(client):
     user = create_user(client, "photo-invalid@example.com")
-    headers = auth(user["token"])
+    headers = auth(user["access_token"])
     for filename, content, media_type in (
         ("spoof.png", b"<script>alert(1)</script>", "image/png"),
         ("vector.svg", b"<svg xmlns='http://www.w3.org/2000/svg'/>", "image/svg+xml"),
         ("animated.gif", image_bytes(image_format="GIF"), "image/gif"),
     ):
         response = client.put(
-            "/api/profile/photo", headers=headers,
+            "/api/profile/photo",
+            headers=headers,
             files={"file": (filename, content, media_type)},
         )
         assert response.status_code == 415
@@ -126,15 +149,17 @@ def test_profile_photo_rejects_spoofed_invalid_and_unsupported_images(client):
 
 def test_profile_photo_size_and_dimension_limits(client):
     user = create_user(client, "photo-limits@example.com")
-    headers = auth(user["token"])
+    headers = auth(user["access_token"])
     oversized = client.put(
-        "/api/profile/photo", headers=headers,
+        "/api/profile/photo",
+        headers=headers,
         files={"file": ("large.png", b"x" * (MAX_PROFILE_PHOTO_BYTES + 1), "image/png")},
     )
     assert oversized.status_code == 413
 
     too_wide = client.put(
-        "/api/profile/photo", headers=headers,
+        "/api/profile/photo",
+        headers=headers,
         files={"file": ("wide.png", image_bytes(size=(8193, 1)), "image/png")},
     )
     assert too_wide.status_code == 415
@@ -151,7 +176,10 @@ def test_profile_photo_rejects_oversized_chunked_body_without_content_length(cli
     suffix = f"\r\n--{boundary}--\r\n".encode()
     response = client.put(
         "/api/profile/photo",
-        headers={**auth(user["token"]), "Content-Type": f"multipart/form-data; boundary={boundary}"},
+        headers={
+            **auth(user["access_token"]),
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
         content=iter((prefix, b"x" * (MAX_PROFILE_PHOTO_BYTES + 1), suffix)),
     )
     assert response.status_code == 413
@@ -159,29 +187,47 @@ def test_profile_photo_rejects_oversized_chunked_body_without_content_length(cli
 
 def test_profile_photo_requires_one_file_named_file_and_user_role(client):
     user = create_user(client, "photo-shape@example.com")
-    headers = auth(user["token"])
-    assert client.put(
-        "/api/profile/photo", headers=headers,
-        files={"other": ("photo.png", image_bytes(), "image/png")},
-    ).status_code == 422
-    assert client.put(
-        "/api/profile/photo", headers=headers,
-        files=[("file", ("one.png", image_bytes(), "image/png")), ("file", ("two.png", image_bytes(), "image/png"))],
-    ).status_code == 400
-    assert client.put(
-        "/api/profile/photo",
-        files={"file": ("photo.png", image_bytes(), "image/png")},
-    ).status_code == 401
+    headers = auth(user["access_token"])
+    assert (
+        client.put(
+            "/api/profile/photo",
+            headers=headers,
+            files={"other": ("photo.png", image_bytes(), "image/png")},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.put(
+            "/api/profile/photo",
+            headers=headers,
+            files=[
+                ("file", ("one.png", image_bytes(), "image/png")),
+                ("file", ("two.png", image_bytes(), "image/png")),
+            ],
+        ).status_code
+        == 400
+    )
+    assert (
+        client.put(
+            "/api/profile/photo",
+            files={"file": ("photo.png", image_bytes(), "image/png")},
+        ).status_code
+        == 401
+    )
 
 
 def test_profile_photo_delete_is_idempotent_and_removes_private_file(client, tmp_path):
     user = create_user(client, "photo-delete@example.com")
-    headers = auth(user["token"])
+    headers = auth(user["access_token"])
     assert client.delete("/api/profile/photo", headers=headers).status_code == 204
-    assert client.put(
-        "/api/profile/photo", headers=headers,
-        files={"file": ("photo.png", image_bytes(), "image/png")},
-    ).status_code == 204
+    assert (
+        client.put(
+            "/api/profile/photo",
+            headers=headers,
+            files={"file": ("photo.png", image_bytes(), "image/png")},
+        ).status_code
+        == 204
+    )
     with sqlite3.connect(tmp_path / "profile.db") as db:
         key = db.execute("SELECT storage_key FROM profile_photos").fetchone()[0]
     path: Path = photo_path(key)
@@ -199,4 +245,4 @@ def test_profile_photo_storage_key_must_be_opaque(client, tmp_path):
             "INSERT INTO profile_photos(user_id, storage_key, size_bytes, updated_at) VALUES (?, ?, 1, 1)",
             (user["user"]["id"], "../" + "a" * 33),
         )
-    assert client.get("/api/profile/photo", headers=auth(user["token"])).status_code == 404
+    assert client.get("/api/profile/photo", headers=auth(user["access_token"])).status_code == 404

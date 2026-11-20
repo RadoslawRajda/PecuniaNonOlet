@@ -3,11 +3,10 @@ import time
 import uuid
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.admin import create_analyst
 from app.main import app
 from app.routes import analytics as analytics_module
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture
@@ -19,7 +18,8 @@ def client(tmp_path, monkeypatch):
 
 def register(client, email):
     return client.post(
-        "/api/register", json={"email": email, "password": "strong-password"}
+        "/api/register",
+        json={"email": email, "password": "strong-password", "captcha_token": "test-token"},
     ).json()
 
 
@@ -72,15 +72,13 @@ def analyst_headers(client):
     login = client.post(
         "/api/login", json={"email": "analyst@example.com", "password": "analyst-password"}
     ).json()
-    return authorization(login["token"])
+    return authorization(login["access_token"])
 
 
 def test_analytics_requires_analyst_role(client):
     user = register(client, "user@example.com")
     for endpoint in ("overview", "users", "transactions"):
-        response = client.get(
-            f"/api/analytics/{endpoint}", headers=authorization(user["token"])
-        )
+        response = client.get(f"/api/analytics/{endpoint}", headers=authorization(user["access_token"]))
         assert response.status_code == 403
     assert client.get("/api/analytics/overview").status_code == 401
 
@@ -91,7 +89,7 @@ def test_analyst_can_read_aggregates_and_paginated_users_without_secrets(client,
         "/api/login", json={"email": "analyst@example.com", "password": "analyst-password"}
     ).json()
     register(client, "customer@example.com")
-    headers = authorization(analyst["token"])
+    headers = authorization(analyst["access_token"])
 
     overview = client.get("/api/analytics/overview", headers=headers)
     assert overview.status_code == 200
@@ -109,7 +107,12 @@ def test_analyst_can_read_aggregates_and_paginated_users_without_secrets(client,
     assert "password_hash" not in serialized
     assert "token" not in serialized
     with sqlite3.connect(tmp_path / "analytics.db") as db:
-        assert db.execute("SELECT count(*) FROM sessions WHERE user_id = ?", (analyst_id,)).fetchone()[0] == 1
+        assert (
+            db.execute("SELECT count(*) FROM auth_sessions WHERE user_id = ?", (analyst_id,)).fetchone()[
+                0
+            ]
+            == 1
+        )
 
 
 def test_analyst_transaction_listing_supports_bound_filters(client):
@@ -118,7 +121,7 @@ def test_analyst_transaction_listing_supports_bound_filters(client):
         "/api/login", json={"email": "analyst@example.com", "password": "analyst-password"}
     ).json()
     customer = register(client, "customer@example.com")
-    headers = authorization(analyst["token"])
+    headers = authorization(analyst["access_token"])
     response = client.get(
         f"/api/analytics/transactions?kind=opening&user_id={customer['user']['id']}",
         headers=headers,
@@ -131,9 +134,12 @@ def test_analyst_transaction_listing_supports_bound_filters(client):
     assert "password" not in response.text.lower()
     assert "token" not in response.text.lower()
 
-    assert client.get(
-        "/api/analytics/transactions?kind=opening%27%20OR%201%3D1", headers=headers
-    ).status_code == 422
+    assert (
+        client.get(
+            "/api/analytics/transactions?kind=opening%27%20OR%201%3D1", headers=headers
+        ).status_code
+        == 422
+    )
 
 
 def test_analytics_pagination_is_bounded(client):
@@ -141,14 +147,25 @@ def test_analytics_pagination_is_bounded(client):
     analyst = client.post(
         "/api/login", json={"email": "analyst@example.com", "password": "analyst-password"}
     ).json()
-    headers = authorization(analyst["token"])
+    headers = authorization(analyst["access_token"])
     assert client.get("/api/analytics/users?limit=101", headers=headers).status_code == 422
     assert client.get("/api/analytics/transactions?offset=-1", headers=headers).status_code == 422
     assert client.get("/api/analytics/users?offset=1000001", headers=headers).status_code == 422
     too_large = 9_223_372_036_854_775_808
-    assert client.get(f"/api/analytics/transactions?user_id={too_large}", headers=headers).status_code == 422
-    assert client.get(f"/api/analytics/audit-events?actor_user_id={too_large}", headers=headers).status_code == 422
-    assert client.get(f"/api/analytics/audit-events?from={too_large}", headers=headers).status_code == 422
+    assert (
+        client.get(f"/api/analytics/transactions?user_id={too_large}", headers=headers).status_code
+        == 422
+    )
+    assert (
+        client.get(
+            f"/api/analytics/audit-events?actor_user_id={too_large}", headers=headers
+        ).status_code
+        == 422
+    )
+    assert (
+        client.get(f"/api/analytics/audit-events?from={too_large}", headers=headers).status_code
+        == 422
+    )
 
 
 def test_overview_reads_one_consistent_database_snapshot(client, tmp_path, monkeypatch):
@@ -170,7 +187,10 @@ def test_user_page_total_and_rows_use_one_database_snapshot(client, tmp_path, mo
     register(client, "customer@example.com")
     database = tmp_path / "analytics.db"
     install_read_interleaving(
-        monkeypatch, database, "select count(*) from users as u", lambda: insert_extra_user(database)
+        monkeypatch,
+        database,
+        "select count(*) from users as u",
+        lambda: insert_extra_user(database),
     )
     response = client.get("/api/analytics/users?limit=100", headers=headers)
     assert response.status_code == 200
@@ -198,7 +218,13 @@ def test_transaction_page_total_and_rows_use_one_database_snapshot(client, tmp_p
                        exchange_rate, provider, idempotency_key, created_at
                    ) VALUES (?, 'opening', 'completed', ?, NULL, NULL, NULL, ?, ?,
                              NULL, 'PLN', NULL, 1, NULL, NULL, NULL, ?)""",
-                (str(uuid.uuid4()), customer["user"]["id"], account_id, customer["user"]["id"], int(time.time())),
+                (
+                    str(uuid.uuid4()),
+                    customer["user"]["id"],
+                    account_id,
+                    customer["user"]["id"],
+                    int(time.time()),
+                ),
             )
 
     install_read_interleaving(

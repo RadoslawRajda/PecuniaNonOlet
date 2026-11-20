@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
 
+from app.config import Settings, load_settings
+
 SQLITE_BUSY_TIMEOUT_MS = 5000
 
 
 def database_path() -> Path:
-    return Path(os.getenv("DATABASE_PATH", "data/pecunia.db"))
+    return load_settings().database_path
 
 
 def connect_db() -> sqlite3.Connection:
@@ -26,8 +27,8 @@ def connect_db() -> sqlite3.Connection:
     return db
 
 
-def migrate_database() -> None:
-    path = database_path().resolve()
+def migrate_database(settings: Settings | None = None) -> None:
+    path = (settings.database_path if settings is not None else database_path()).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     config_path = Path(__file__).resolve().parents[1] / "alembic.ini"
     config = Config(str(config_path))

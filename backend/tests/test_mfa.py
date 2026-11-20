@@ -1,16 +1,15 @@
 import base64
 import hashlib
-import hmac
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
 import pyotp
 import pytest
-from fastapi.testclient import TestClient
-
 from app.main import app
 from app.routes import mfa as mfa_routes
+from app.services import authentication as auth_service
 from app.totp import decrypt_secret, matching_totp_step
+from fastapi.testclient import TestClient
 
 TEST_KEY = base64.urlsafe_b64encode(b"test-only-totp-key-material-32b!").decode()
 NOW = 1_700_000_000
@@ -21,6 +20,7 @@ PASSWORD = "correct-password-123"
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "mfa-test.db"))
     monkeypatch.setenv("MFA_ENCRYPTION_KEY", TEST_KEY)
+    monkeypatch.setattr(auth_service, "current_timestamp", lambda: NOW)
     with TestClient(app) as test_client:
         yield test_client
 
@@ -30,7 +30,9 @@ def auth(token):
 
 
 def register(client, email="mfa@example.com"):
-    response = client.post("/api/register", json={"email": email, "password": PASSWORD})
+    response = client.post(
+        "/api/register", json={"email": email, "password": PASSWORD, "captcha_token": "test-token"}
+    )
     assert response.status_code == 201
     return response.json()
 
@@ -52,9 +54,7 @@ def enable_totp(client, token, monkeypatch, *, now=NOW, email="mfa@example.com")
     assert parsed.digest().name == "sha1"
     assert setup.headers["cache-control"] == "no-store"
     code = pyotp.TOTP(secret).at(now)
-    enabled = client.post(
-        "/api/mfa/totp/confirm", headers=auth(token), json={"code": code}
-    )
+    enabled = client.post("/api/mfa/totp/confirm", headers=auth(token), json={"code": code})
     assert enabled.status_code == 200, enabled.text
     return secret, enabled.json()["recovery_codes"]
 
@@ -64,7 +64,7 @@ def login_challenge(client, email="mfa@example.com", password=PASSWORD):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["mfa_required"] is True
-    assert "token" not in body
+    assert "access_token" not in body
     return body["challenge_token"]
 
 
@@ -91,11 +91,14 @@ def test_enrollment_encrypts_secret_issues_recovery_codes_and_requires_mfa_login
     client, tmp_path, monkeypatch
 ):
     registered = register(client)
-    token = registered["token"]
+    token = registered["access_token"]
     assert client.get("/api/mfa", headers=auth(token)).json() == {"totp_enabled": False}
-    assert client.post(
-        "/api/mfa/totp/setup", headers=auth(token), json={"current_password": "wrong"}
-    ).status_code == 401
+    assert (
+        client.post(
+            "/api/mfa/totp/setup", headers=auth(token), json={"current_password": "wrong"}
+        ).status_code
+        == 401
+    )
 
     secret, recovery_codes = enable_totp(client, token, monkeypatch)
     assert len(recovery_codes) == 10
@@ -119,25 +122,24 @@ def test_enrollment_encrypts_secret_issues_recovery_codes_and_requires_mfa_login
         assert db.execute(
             "SELECT 1 FROM totp_login_challenges WHERE challenge_hash = ?", (challenge_hash,)
         ).fetchone()
-        assert challenge not in {row[0] for row in db.execute("SELECT challenge_hash FROM totp_login_challenges")}
+        assert challenge not in {
+            row[0] for row in db.execute("SELECT challenge_hash FROM totp_login_challenges")
+        }
 
     monkeypatch.setattr(mfa_routes, "unix_time", lambda: NOW + 30)
     code = pyotp.TOTP(secret).at(NOW + 30)
-    completed = client.post(
-        "/api/login/mfa", json={"challenge_token": challenge, "code": code}
-    )
+    completed = client.post("/api/login/mfa", json={"challenge_token": challenge, "code": code})
     assert completed.status_code == 200, completed.text
-    session_token = completed.json()["token"]
+    session_token = completed.json()["access_token"]
     assert client.get("/api/me", headers=auth(session_token)).status_code == 200
-    assert client.post(
-        "/api/login/mfa", json={"challenge_token": challenge, "code": code}
-    ).status_code == 401
+    assert (
+        client.post("/api/login/mfa", json={"challenge_token": challenge, "code": code}).status_code
+        == 401
+    )
 
     # A valid TOTP time step cannot be replayed through a fresh password challenge.
     replay_challenge = login_challenge(client)
-    replay = client.post(
-        "/api/login/mfa", json={"challenge_token": replay_challenge, "code": code}
-    )
+    replay = client.post("/api/login/mfa", json={"challenge_token": replay_challenge, "code": code})
     assert replay.status_code == 401
 
     # Recovery codes work once, and can recover the account if the authenticator is lost.
@@ -148,17 +150,18 @@ def test_enrollment_encrypts_secret_issues_recovery_codes_and_requires_mfa_login
     )
     assert recovery_login.status_code == 200
     again_challenge = login_challenge(client)
-    assert client.post(
-        "/api/login/mfa",
-        json={"challenge_token": again_challenge, "code": recovery_codes[0]},
-    ).status_code == 401
+    assert (
+        client.post(
+            "/api/login/mfa",
+            json={"challenge_token": again_challenge, "code": recovery_codes[0]},
+        ).status_code
+        == 401
+    )
 
 
-def test_disabling_totp_requires_password_and_fresh_code_then_revokes_sessions(
-    client, monkeypatch
-):
+def test_disabling_totp_requires_password_and_fresh_code_then_revokes_sessions(client, monkeypatch):
     registered = register(client)
-    secret, _ = enable_totp(client, registered["token"], monkeypatch)
+    secret, _ = enable_totp(client, registered["access_token"], monkeypatch)
     challenge = login_challenge(client)
     now = NOW + 30
     monkeypatch.setattr(mfa_routes, "unix_time", lambda: now)
@@ -166,13 +169,16 @@ def test_disabling_totp_requires_password_and_fresh_code_then_revokes_sessions(
         "/api/login/mfa",
         json={"challenge_token": challenge, "code": pyotp.TOTP(secret).at(now)},
     ).json()
-    session_token = login["token"]
+    session_token = login["access_token"]
 
-    assert client.post(
-        "/api/mfa/totp/disable",
-        headers=auth(session_token),
-        json={"current_password": "wrong", "code": "000000"},
-    ).status_code == 401
+    assert (
+        client.post(
+            "/api/mfa/totp/disable",
+            headers=auth(session_token),
+            json={"current_password": "wrong", "code": "000000"},
+        ).status_code
+        == 401
+    )
     now += 30
     disabled = client.post(
         "/api/mfa/totp/disable",
@@ -184,12 +190,12 @@ def test_disabling_totp_requires_password_and_fresh_code_then_revokes_sessions(
     assert client.get("/api/mfa", headers=auth(session_token)).status_code == 401
     logged_in = client.post("/api/login", json={"email": "mfa@example.com", "password": PASSWORD})
     assert logged_in.status_code == 200
-    assert "token" in logged_in.json()
+    assert "access_token" in logged_in.json()
 
 
 def test_failed_codes_are_rate_limited_across_challenges(client, monkeypatch):
     registered = register(client)
-    enable_totp(client, registered["token"], monkeypatch)
+    enable_totp(client, registered["access_token"], monkeypatch)
     challenge = login_challenge(client)
     monkeypatch.setattr(mfa_routes, "unix_time", lambda: NOW)
     wrong_code = "000000"
@@ -198,22 +204,24 @@ def test_failed_codes_are_rate_limited_across_challenges(client, monkeypatch):
             "/api/login/mfa", json={"challenge_token": challenge, "code": wrong_code}
         )
         assert response.status_code == 401
-    locked = client.post(
-        "/api/login/mfa", json={"challenge_token": challenge, "code": wrong_code}
-    )
+    locked = client.post("/api/login/mfa", json={"challenge_token": challenge, "code": wrong_code})
     assert locked.status_code == 429
     assert locked.headers["Retry-After"] == "900"
-    assert client.post(
-        "/api/login", json={"email": "mfa@example.com", "password": PASSWORD}
-    ).status_code == 429
+    assert (
+        client.post(
+            "/api/login", json={"email": "mfa@example.com", "password": PASSWORD}
+        ).status_code
+        == 429
+    )
 
     monkeypatch.setattr(mfa_routes, "unix_time", lambda: NOW + 900)
+    monkeypatch.setattr(auth_service, "current_timestamp", lambda: NOW + 900)
     assert login_challenge(client)
 
 
 def test_password_change_invalidates_pre_authentication_challenges(client, monkeypatch):
     registered = register(client)
-    secret, _ = enable_totp(client, registered["token"], monkeypatch)
+    secret, _ = enable_totp(client, registered["access_token"], monkeypatch)
     monkeypatch.setattr(mfa_routes, "unix_time", lambda: NOW + 30)
     challenge = login_challenge(client)
     # The registration session was revoked at MFA activation; use a fresh completed login.
@@ -224,17 +232,23 @@ def test_password_change_invalidates_pre_authentication_challenges(client, monke
     stale_challenge = login_challenge(client)
     changed = client.post(
         "/api/change-password",
-        headers=auth(first_login["token"]),
+        headers=auth(first_login["access_token"]),
         json={"current_password": PASSWORD, "new_password": "changed-password-456"},
     )
     assert changed.status_code == 200
-    assert client.post(
-        "/api/login/mfa",
-        json={"challenge_token": stale_challenge, "code": pyotp.TOTP(secret).at(NOW + 60)},
-    ).status_code == 401
-    assert client.post(
-        "/api/login", json={"email": "mfa@example.com", "password": "changed-password-456"}
-    ).json()["mfa_required"] is True
+    assert (
+        client.post(
+            "/api/login/mfa",
+            json={"challenge_token": stale_challenge, "code": pyotp.TOTP(secret).at(NOW + 60)},
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            "/api/login", json={"email": "mfa@example.com", "password": "changed-password-456"}
+        ).json()["mfa_required"]
+        is True
+    )
 
 
 def test_missing_encryption_key_fails_closed_for_setup_and_enabled_login(client, monkeypatch):
@@ -242,18 +256,18 @@ def test_missing_encryption_key_fails_closed_for_setup_and_enabled_login(client,
     monkeypatch.delenv("MFA_ENCRYPTION_KEY")
     setup = client.post(
         "/api/mfa/totp/setup",
-        headers=auth(registered["token"]),
+        headers=auth(registered["access_token"]),
         json={"current_password": PASSWORD},
     )
     assert setup.status_code == 503
 
     monkeypatch.setenv("MFA_ENCRYPTION_KEY", TEST_KEY)
-    secret, _ = enable_totp(client, registered["token"], monkeypatch)
+    secret, _ = enable_totp(client, registered["access_token"], monkeypatch)
     monkeypatch.delenv("MFA_ENCRYPTION_KEY")
     login = client.post("/api/login", json={"email": "mfa@example.com", "password": PASSWORD})
     assert login.status_code == 200
     assert login.json()["mfa_required"] is True
-    assert "token" not in login.json()
+    assert "access_token" not in login.json()
     second_factor = client.post(
         "/api/login/mfa",
         json={
@@ -262,7 +276,7 @@ def test_missing_encryption_key_fails_closed_for_setup_and_enabled_login(client,
         },
     )
     assert second_factor.status_code == 503
-    assert "token" not in second_factor.json()
+    assert "access_token" not in second_factor.json()
 
 
 def test_expired_setup_secret_cannot_be_confirmed(client, monkeypatch):
@@ -270,28 +284,28 @@ def test_expired_setup_secret_cannot_be_confirmed(client, monkeypatch):
     monkeypatch.setattr(mfa_routes, "unix_time", lambda: NOW)
     setup = client.post(
         "/api/mfa/totp/setup",
-        headers=auth(registered["token"]),
+        headers=auth(registered["access_token"]),
         json={"current_password": PASSWORD},
     )
     assert setup.status_code == 200
     monkeypatch.setattr(mfa_routes, "unix_time", lambda: NOW + 601)
     response = client.post(
         "/api/mfa/totp/confirm",
-        headers=auth(registered["token"]),
+        headers=auth(registered["access_token"]),
         json={"code": pyotp.TOTP(setup.json()["secret"]).at(NOW + 601)},
     )
     assert response.status_code == 409
-    assert client.get("/api/mfa", headers=auth(registered["token"])).json() == {
+    assert client.get("/api/mfa", headers=auth(registered["access_token"])).json() == {
         "totp_enabled": False
     }
 
 
 def test_expired_login_challenge_cannot_issue_a_session(client, tmp_path, monkeypatch):
     registered = register(client)
-    enable_totp(client, registered["token"], monkeypatch)
+    enable_totp(client, registered["access_token"], monkeypatch)
     challenge = login_challenge(client)
     with sqlite3.connect(tmp_path / "mfa-test.db") as db:
-        sessions_before = db.execute("SELECT count(*) FROM sessions").fetchone()[0]
+        sessions_before = db.execute("SELECT count(*) FROM auth_sessions").fetchone()[0]
     monkeypatch.setattr(mfa_routes, "unix_time", lambda: NOW + 300)
 
     response = client.post(
@@ -300,25 +314,26 @@ def test_expired_login_challenge_cannot_issue_a_session(client, tmp_path, monkey
     )
 
     assert response.status_code == 401
-    assert "token" not in response.json()
+    assert "access_token" not in response.json()
     with sqlite3.connect(tmp_path / "mfa-test.db") as db:
-        assert db.execute("SELECT count(*) FROM sessions").fetchone()[0] == sessions_before
-        assert db.execute(
-            "SELECT count(*) FROM totp_login_challenges WHERE challenge_hash = ?",
-            (hashlib.sha256(challenge.encode()).hexdigest(),),
-        ).fetchone()[0] == 0
+        assert db.execute("SELECT count(*) FROM auth_sessions").fetchone()[0] == sessions_before
+        assert (
+            db.execute(
+                "SELECT count(*) FROM totp_login_challenges WHERE challenge_hash = ?",
+                (hashlib.sha256(challenge.encode()).hexdigest(),),
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_tampered_totp_ciphertext_fails_closed_without_session(client, tmp_path, monkeypatch):
     registered = register(client)
-    secret, _ = enable_totp(client, registered["token"], monkeypatch)
+    secret, _ = enable_totp(client, registered["access_token"], monkeypatch)
     with sqlite3.connect(tmp_path / "mfa-test.db") as db:
-        ciphertext = bytearray(
-            db.execute("SELECT secret_ciphertext FROM user_totp").fetchone()[0]
-        )
+        ciphertext = bytearray(db.execute("SELECT secret_ciphertext FROM user_totp").fetchone()[0])
         ciphertext[-1] ^= 1
         db.execute("UPDATE user_totp SET secret_ciphertext = ?", (bytes(ciphertext),))
-        sessions_before = db.execute("SELECT count(*) FROM sessions").fetchone()[0]
+        sessions_before = db.execute("SELECT count(*) FROM auth_sessions").fetchone()[0]
 
     first_factor = client.post(
         "/api/login", json={"email": "mfa@example.com", "password": PASSWORD}
@@ -333,14 +348,14 @@ def test_tampered_totp_ciphertext_fails_closed_without_session(client, tmp_path,
     )
 
     assert response.status_code == 503
-    assert "token" not in response.json()
+    assert "access_token" not in response.json()
     with sqlite3.connect(tmp_path / "mfa-test.db") as db:
-        assert db.execute("SELECT count(*) FROM sessions").fetchone()[0] == sessions_before
+        assert db.execute("SELECT count(*) FROM auth_sessions").fetchone()[0] == sessions_before
 
 
 def test_concurrent_challenge_submission_issues_only_one_session(client, monkeypatch):
     registered = register(client)
-    secret, _ = enable_totp(client, registered["token"], monkeypatch)
+    secret, _ = enable_totp(client, registered["access_token"], monkeypatch)
     challenge = login_challenge(client)
     monkeypatch.setattr(mfa_routes, "unix_time", lambda: NOW + 30)
     payload = {"challenge_token": challenge, "code": pyotp.TOTP(secret).at(NOW + 30)}
@@ -352,7 +367,9 @@ def test_concurrent_challenge_submission_issues_only_one_session(client, monkeyp
 
 def test_enabling_mfa_revokes_all_previous_sessions(client, monkeypatch):
     first = register(client)
-    second = client.post("/api/login", json={"email": "mfa@example.com", "password": PASSWORD}).json()
-    enable_totp(client, first["token"], monkeypatch)
-    assert client.get("/api/me", headers=auth(first["token"])).status_code == 401
-    assert client.get("/api/me", headers=auth(second["token"])).status_code == 401
+    second = client.post(
+        "/api/login", json={"email": "mfa@example.com", "password": PASSWORD}
+    ).json()
+    enable_totp(client, first["access_token"], monkeypatch)
+    assert client.get("/api/me", headers=auth(first["access_token"])).status_code == 401
+    assert client.get("/api/me", headers=auth(second["access_token"])).status_code == 401

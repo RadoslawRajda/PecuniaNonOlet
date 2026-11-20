@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import os
 import re
 import secrets
 import time
@@ -13,6 +12,8 @@ import time
 import pyotp
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+from app.config import load_settings
 
 TOTP_PERIOD_SECONDS = 30
 TOTP_DIGITS = 6
@@ -31,7 +32,7 @@ class MFAConfigurationError(RuntimeError):
 
 
 def _encryption_key() -> bytes:
-    configured = os.getenv("MFA_ENCRYPTION_KEY", "").strip()
+    configured = load_settings().mfa_encryption_key.get_secret_value().strip()
     if not configured:
         raise MFAConfigurationError("MFA_ENCRYPTION_KEY is not configured")
     try:
@@ -77,9 +78,7 @@ def matching_totp_step(secret: str, code: str, *, now: int | None = None) -> int
     if not _TOTP_CODE.fullmatch(code):
         return None
     current_step = int(time.time() if now is None else now) // TOTP_PERIOD_SECONDS
-    totp = pyotp.TOTP(
-        secret, digits=TOTP_DIGITS, interval=TOTP_PERIOD_SECONDS, digest=hashlib.sha1
-    )
+    totp = pyotp.TOTP(secret, digits=TOTP_DIGITS, interval=TOTP_PERIOD_SECONDS, digest=hashlib.sha1)
     matches: list[int] = []
     # OWASP recommends the current step and at most one previous step to
     # account for network delay. Accepting future steps can prematurely burn

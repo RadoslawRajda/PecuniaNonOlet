@@ -3,14 +3,13 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
 import pytest
-from fastapi import HTTPException
-from fastapi.testclient import TestClient
-
 from app.accounts import initialize_user_accounts
 from app.admin import create_analyst
 from app.authorization import require_roles
 from app.main import app
 from app.schemas import User
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture
@@ -48,73 +47,149 @@ def test_diagnostics_and_health(client):
     assert certificate.content
 
 
+def test_local_domain_association_documents_match_development_apps(client):
+    apple = client.get("/.well-known/apple-app-site-association")
+    assert apple.status_code == 200
+    assert apple.json() == {"webcredentials": {"apps": ["96UM85TJJ7.com.rajda.pecunianonolet"]}}
+    assert apple.headers["Cache-Control"] == "no-store"
+
+    android = client.get("/.well-known/assetlinks.json")
+    assert android.status_code == 200
+    assert android.json()[0]["target"]["package_name"] == "com.pecunianonolet"
+    assert android.json()[0]["target"]["sha256_cert_fingerprints"]
+
+
 def test_register_login_logout_and_persistence(client, tmp_path):
     payload = {"email": "TEST@example.com", "password": "test12345"}
-    registered = client.post("/api/register", json=payload)
+    registered = client.post("/api/register", json={**payload, "captcha_token": "test-token"})
     assert registered.status_code == 201
     assert registered.headers["Cache-Control"] == "no-store"
     body = registered.json()
     assert body["user"]["email"] == "test@example.com"
     assert body["token_type"] == "bearer"
-    assert body["expires_in"] == 7 * 24 * 60 * 60
-    token = body["token"]
+    assert body["expires_in"] == 15 * 60
+    assert body["refresh_expires_in"] == 30 * 24 * 60 * 60
+    token = body["access_token"]
+    refresh_token = body["refresh_token"]
     assert client.get("/api/me", headers=auth(token)).json() == body["user"]
     assert client.get("/api/me", headers=auth(token)).headers["Cache-Control"] == "no-store"
 
     with sqlite3.connect(tmp_path / "test.db") as db:
         user = db.execute("SELECT password_hash FROM users").fetchone()[0]
-        saved_token = db.execute("SELECT token_hash FROM sessions").fetchone()[0]
+        saved_token = db.execute("SELECT access_token_hash FROM auth_sessions").fetchone()[0]
     assert user != payload["password"]
     assert saved_token != token
 
-    assert client.post("/api/register", json=payload).status_code == 409
+    assert (
+        client.post("/api/register", json={**payload, "captcha_token": "test-token"}).status_code
+        == 409
+    )
     assert client.post("/api/login", json={**payload, "password": "wrongpass"}).status_code == 401
     logged_in = client.post("/api/login", json=payload)
     assert logged_in.status_code == 200
-    other_token = logged_in.json()["token"]
+    other_token = logged_in.json()["access_token"]
     assert other_token != token
 
-    assert client.post("/api/logout", headers=auth(token)).status_code == 204
+    assert (
+        client.post("/api/logout", json={"refresh_token": refresh_token}).status_code == 204
+    )
     assert client.get("/api/me", headers=auth(token)).status_code == 401
     assert client.get("/api/me", headers=auth(other_token)).status_code == 200
 
 
+def test_refresh_rotates_both_tokens_and_replay_revokes_the_session_family(client):
+    registered = client.post(
+        "/api/register",
+        json={"email": "refresh@example.com", "password": "test12345", "captcha_token": "test-token"},
+    ).json()
+    original_access = registered["access_token"]
+    original_refresh = registered["refresh_token"]
+
+    refreshed = client.post("/api/refresh", json={"refresh_token": original_refresh})
+    assert refreshed.status_code == 200
+    rotated = refreshed.json()
+    assert rotated["access_token"] != original_access
+    assert rotated["refresh_token"] != original_refresh
+    assert rotated["expires_in"] == 15 * 60
+    assert rotated["refresh_expires_in"] <= 30 * 24 * 60 * 60
+    assert client.get("/api/me", headers=auth(original_access)).status_code == 401
+    assert client.get("/api/me", headers=auth(rotated["access_token"])).status_code == 200
+
+    replay = client.post("/api/refresh", json={"refresh_token": original_refresh})
+    assert replay.status_code == 401
+    assert client.get("/api/me", headers=auth(rotated["access_token"])).status_code == 401
+
+
+def test_refresh_rejects_expired_token_and_logout_revokes_rotated_family(client, tmp_path):
+    registered = client.post(
+        "/api/register",
+        json={"email": "logout@example.com", "password": "test12345", "captcha_token": "test-token"},
+    ).json()
+    rotated = client.post("/api/refresh", json={"refresh_token": registered["refresh_token"]}).json()
+    assert client.post("/api/logout", json={"refresh_token": rotated["refresh_token"]}).status_code == 204
+    assert client.get("/api/me", headers=auth(rotated["access_token"])).status_code == 401
+    assert client.post("/api/logout", json={"refresh_token": rotated["refresh_token"]}).status_code == 204
+
+    expired = client.post(
+        "/api/register",
+        json={"email": "expired-refresh@example.com", "password": "test12345", "captcha_token": "test-token"},
+    ).json()
+    with sqlite3.connect(tmp_path / "test.db") as db:
+        db.execute("UPDATE auth_sessions SET refresh_expires_at = 1 WHERE refresh_token_hash != ''")
+    assert client.post("/api/refresh", json={"refresh_token": expired["refresh_token"]}).status_code == 401
+
+
 def test_missing_expired_and_invalid_token(client, tmp_path):
     assert client.get("/api/me").status_code == 401
-    assert client.post("/api/logout").status_code == 401
+    assert client.post("/api/logout", json={}).status_code == 204
     assert client.get("/api/me", headers=auth("invalid")).status_code == 401
 
     token = client.post(
-        "/api/register", json={"email": "user@example.com", "password": "test12345"}
-    ).json()["token"]
+        "/api/register",
+        json={"email": "user@example.com", "password": "test12345", "captcha_token": "test-token"},
+    ).json()["access_token"]
     with sqlite3.connect(tmp_path / "test.db") as db:
-        db.execute("UPDATE sessions SET expires_at = 1")
+        db.execute("UPDATE auth_sessions SET access_expires_at = 1")
     assert client.get("/api/me", headers=auth(token)).status_code == 401
 
 
 def test_registration_validation(client):
-    assert client.request(
-        "POST", "/api/register", json={"email": "ok@example.com", "password": "test12345"}
-    ).status_code == 422
+    assert (
+        client.request(
+            "POST", "/api/register", json={"email": "ok@example.com", "password": "test12345"}
+        ).status_code
+        == 422
+    )
     for payload in (
         {"email": "not-an-email", "password": "test12345"},
         {"email": "ok@example.com", "password": "short"},
     ):
-        assert client.post("/api/register", json=payload).status_code == 422
+        assert (
+            client.post(
+                "/api/register", json={**payload, "captcha_token": "test-token"}
+            ).status_code
+            == 422
+        )
 
 
 def test_user_role_is_default_and_cannot_be_selected_by_registration(client, tmp_path):
     registered = client.post(
         "/api/register",
-        json={"email": "role@example.com", "password": "test12345", "role": "analyst"},
+        json={
+            "email": "role@example.com",
+            "password": "test12345",
+            "role": "analyst",
+            "captcha_token": "test-token",
+        },
     )
     assert registered.status_code == 422
     registered = client.post(
-        "/api/register", json={"email": "role@example.com", "password": "test12345"}
+        "/api/register",
+        json={"email": "role@example.com", "password": "test12345", "captcha_token": "test-token"},
     )
     assert registered.status_code == 201
     assert registered.json()["user"]["role"] == "user"
-    token = registered.json()["token"]
+    token = registered.json()["access_token"]
     assert client.get("/api/me", headers=auth(token)).json() == {
         "id": registered.json()["user"]["id"],
         "email": "role@example.com",
@@ -130,23 +205,32 @@ def test_user_role_is_default_and_cannot_be_selected_by_registration(client, tmp
 def test_analyst_accounts_are_created_by_trusted_local_process(client, tmp_path):
     analyst_id = create_analyst("analyst@example.com", "analyst-password")
     with sqlite3.connect(tmp_path / "test.db") as db:
-        assert db.execute("SELECT role_name FROM user_roles WHERE user_id = ?", (analyst_id,)).fetchone() == ("analyst",)
+        assert db.execute(
+            "SELECT role_name FROM user_roles WHERE user_id = ?", (analyst_id,)
+        ).fetchone() == ("analyst",)
     logged_in = client.post(
         "/api/login", json={"email": "analyst@example.com", "password": "analyst-password"}
     )
     assert logged_in.status_code == 200
     assert logged_in.json()["user"]["role"] == "analyst"
-    assert client.get("/api/me", headers=auth(logged_in.json()["token"])).json()["role"] == "analyst"
+    assert (
+        client.get("/api/me", headers=auth(logged_in.json()["access_token"])).json()["role"] == "analyst"
+    )
 
 
 def test_role_dependency_denies_users_from_analyst_operations():
+    from app.authorization import AuthenticatedSession
+    from pydantic import SecretStr
+
     user = User(id=1, email="user@example.com", role="user")
     analyst = User(id=2, email="analyst@example.com", role="analyst")
-    assert require_roles("user")(("token", user)) == user
+    user_session = AuthenticatedSession("session-user", user, SecretStr("opaque-token"))
+    analyst_session = AuthenticatedSession("session-analyst", analyst, SecretStr("opaque-token"))
+    assert require_roles("user")(user_session) == user
     with pytest.raises(HTTPException) as error:
-        require_roles("analyst")(("token", user))
+        require_roles("analyst")(user_session)
     assert getattr(error.value, "status_code", None) == 403
-    assert require_roles("analyst")(("token", analyst)) == analyst
+    assert require_roles("analyst")(analyst_session) == analyst
 
 
 def test_analyst_creation_rejects_invalid_password_and_duplicate_email(client):
@@ -159,15 +243,20 @@ def test_analyst_creation_rejects_invalid_password_and_duplicate_email(client):
 
 def test_change_password_revokes_all_sessions_and_requires_reauthentication(client):
     payload = {"email": "password@example.com", "password": "old-password"}
-    first = client.post("/api/register", json=payload).json()
+    first = client.post("/api/register", json={**payload, "captcha_token": "test-token"}).json()
     second = client.post("/api/login", json=payload).json()
     other = client.post(
-        "/api/register", json={"email": "other@example.com", "password": "other-password"}
+        "/api/register",
+        json={
+            "email": "other@example.com",
+            "password": "other-password",
+            "captcha_token": "test-token",
+        },
     ).json()
 
     response = client.post(
         "/api/change-password",
-        headers=auth(first["token"]),
+        headers=auth(first["access_token"]),
         json={"current_password": "old-password", "new_password": "new-password"},
     )
     assert response.status_code == 200
@@ -175,9 +264,9 @@ def test_change_password_revokes_all_sessions_and_requires_reauthentication(clie
         "message": "Hasło zostało zmienione. Zaloguj się ponownie.",
         "reauthentication_required": True,
     }
-    assert client.get("/api/me", headers=auth(first["token"])).status_code == 401
-    assert client.get("/api/me", headers=auth(second["token"])).status_code == 401
-    assert client.get("/api/me", headers=auth(other["token"])).status_code == 200
+    assert client.get("/api/me", headers=auth(first["access_token"])).status_code == 401
+    assert client.get("/api/me", headers=auth(second["access_token"])).status_code == 401
+    assert client.get("/api/me", headers=auth(other["access_token"])).status_code == 200
     assert client.post("/api/login", json=payload).status_code == 401
     new_login = client.post(
         "/api/login", json={"email": "password@example.com", "password": "new-password"}
@@ -186,11 +275,13 @@ def test_change_password_revokes_all_sessions_and_requires_reauthentication(clie
 
 
 def test_login_racing_password_change_does_not_issue_a_stale_session(client, monkeypatch):
-    from app import main
+    from app.routes import auth as auth_routes
 
     credentials = {"email": "racing-password@example.com", "password": "old-password"}
-    registered = client.post("/api/register", json=credentials).json()
-    original_hasher = main.password_hasher
+    registered = client.post(
+        "/api/register", json={**credentials, "captcha_token": "test-token"}
+    ).json()
+    original_hasher = auth_routes.password_hasher
     login_verified_old_hash = Event()
     resume_login = Event()
 
@@ -205,13 +296,13 @@ def test_login_racing_password_change_does_not_issue_a_stale_session(client, mon
                 assert resume_login.wait(timeout=10)
             return result
 
-    monkeypatch.setattr(main, "password_hasher", PausingHasher())
+    monkeypatch.setattr(auth_routes, "password_hasher", PausingHasher())
     with ThreadPoolExecutor(max_workers=1) as executor:
         pending_login = executor.submit(client.post, "/api/login", json=credentials)
         assert login_verified_old_hash.wait(timeout=10)
         changed = client.post(
             "/api/change-password",
-            headers=auth(registered["token"]),
+            headers=auth(registered["access_token"]),
             json={"current_password": "old-password", "new_password": "new-password"},
         )
         assert changed.status_code == 200
@@ -219,20 +310,33 @@ def test_login_racing_password_change_does_not_issue_a_stale_session(client, mon
         login_response = pending_login.result(timeout=10)
 
     assert login_response.status_code == 401
-    assert client.post(
-        "/api/login",
-        json={"email": credentials["email"], "password": "new-password"},
-    ).status_code == 200
+    assert (
+        client.post(
+            "/api/login",
+            json={"email": credentials["email"], "password": "new-password"},
+        ).status_code
+        == 200
+    )
 
 
 def test_database_write_contention_returns_retryable_503(client, tmp_path, monkeypatch):
     from app import database
 
     sender = client.post(
-        "/api/register", json={"email": "busy-sender@example.com", "password": "password-123"}
+        "/api/register",
+        json={
+            "email": "busy-sender@example.com",
+            "password": "password-123",
+            "captcha_token": "test-token",
+        },
     ).json()
     client.post(
-        "/api/register", json={"email": "busy-recipient@example.com", "password": "password-123"}
+        "/api/register",
+        json={
+            "email": "busy-recipient@example.com",
+            "password": "password-123",
+            "captcha_token": "test-token",
+        },
     )
     monkeypatch.setattr(database, "SQLITE_BUSY_TIMEOUT_MS", 20)
     lock = sqlite3.connect(tmp_path / "test.db", timeout=1)
@@ -241,7 +345,7 @@ def test_database_write_contention_returns_retryable_503(client, tmp_path, monke
         lock.execute("UPDATE accounts SET balance_minor = balance_minor WHERE id = 1")
         response = client.post(
             "/api/transfers",
-            headers={**auth(sender["token"]), "Idempotency-Key": "db-busy-test"},
+            headers={**auth(sender["access_token"]), "Idempotency-Key": "db-busy-test"},
             json={
                 "recipient_email": "busy-recipient@example.com",
                 "source_account_id": 1,
@@ -257,12 +361,17 @@ def test_database_write_contention_returns_retryable_503(client, tmp_path, monke
 
 
 def test_change_password_requires_session_and_current_password(client):
-    assert client.post(
-        "/api/change-password",
-        json={"current_password": "old-password", "new_password": "new-password"},
-    ).status_code == 401
+    assert (
+        client.post(
+            "/api/change-password",
+            json={"current_password": "old-password", "new_password": "new-password"},
+        ).status_code
+        == 401
+    )
     credentials = {"email": "wrong-current@example.com", "password": "old-password"}
-    token = client.post("/api/register", json=credentials).json()["token"]
+    token = client.post(
+        "/api/register", json={**credentials, "captcha_token": "test-token"}
+    ).json()["access_token"]
     response = client.post(
         "/api/change-password",
         headers=auth(token),
@@ -275,7 +384,9 @@ def test_change_password_requires_session_and_current_password(client):
 
 def test_change_password_validates_new_password_and_rejects_reuse(client):
     credentials = {"email": "validation@example.com", "password": "old-password"}
-    token = client.post("/api/register", json=credentials).json()["token"]
+    token = client.post(
+        "/api/register", json={**credentials, "captcha_token": "test-token"}
+    ).json()["access_token"]
     headers = auth(token)
     for password in ("short", "x" * 129):
         response = client.post(
@@ -295,7 +406,9 @@ def test_change_password_validates_new_password_and_rejects_reuse(client):
 
 def test_change_password_rolls_back_session_revocation_if_password_update_fails(client, tmp_path):
     credentials = {"email": "atomic@example.com", "password": "old-password"}
-    token = client.post("/api/register", json=credentials).json()["token"]
+    token = client.post(
+        "/api/register", json={**credentials, "captcha_token": "test-token"}
+    ).json()["access_token"]
     with sqlite3.connect(tmp_path / "test.db") as db:
         db.execute(
             """
@@ -315,7 +428,12 @@ def test_change_password_rolls_back_session_revocation_if_password_update_fails(
 
 def test_registration_creates_independent_currency_accounts_and_initial_ledger(client, tmp_path):
     response = client.post(
-        "/api/register", json={"email": "accounts@example.com", "password": "test12345"}
+        "/api/register",
+        json={
+            "email": "accounts@example.com",
+            "password": "test12345",
+            "captcha_token": "test-token",
+        },
     )
     assert response.status_code == 201
     user_id = response.json()["user"]["id"]
@@ -338,7 +456,12 @@ def test_registration_creates_independent_currency_accounts_and_initial_ledger(c
 
 def test_initial_account_provisioning_is_idempotent(client, tmp_path):
     response = client.post(
-        "/api/register", json={"email": "idempotent@example.com", "password": "test12345"}
+        "/api/register",
+        json={
+            "email": "idempotent@example.com",
+            "password": "test12345",
+            "captcha_token": "test-token",
+        },
     )
     user_id = response.json()["user"]["id"]
     with sqlite3.connect(tmp_path / "test.db") as db:
@@ -353,12 +476,19 @@ def test_initial_account_provisioning_is_idempotent(client, tmp_path):
             (user_id,),
         ).fetchall()
         assert {row["currency_code"]: row["balance_minor"] for row in balances} == {
-            "CZK": 0, "EUR": 250, "GBP": 0, "PLN": 100_000, "USD": 0
+            "CZK": 0,
+            "EUR": 250,
+            "GBP": 0,
+            "PLN": 100_000,
+            "USD": 0,
         }
-        assert db.execute(
-            "SELECT count(*) FROM transactions WHERE sender_user_id = ? AND idempotency_key = ?",
-            (user_id, "opening-balance-pln-v1"),
-        ).fetchone()[0] == 1
+        assert (
+            db.execute(
+                "SELECT count(*) FROM transactions WHERE sender_user_id = ? AND idempotency_key = ?",
+                (user_id, "opening-balance-pln-v1"),
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_registration_rolls_back_user_accounts_and_grant_on_ledger_failure(client, tmp_path):
@@ -371,18 +501,39 @@ def test_registration_rolls_back_user_accounts_and_grant_on_ledger_failure(clien
         )
     with pytest.raises(sqlite3.IntegrityError):
         client.post(
-            "/api/register", json={"email": "rollback@example.com", "password": "test12345"}
+            "/api/register",
+            json={
+                "email": "rollback@example.com",
+                "password": "test12345",
+                "captcha_token": "test-token",
+            },
         )
     with sqlite3.connect(tmp_path / "test.db") as db:
-        assert db.execute("SELECT count(*) FROM users WHERE email = 'rollback@example.com'").fetchone() == (0,)
+        assert db.execute(
+            "SELECT count(*) FROM users WHERE email = 'rollback@example.com'"
+        ).fetchone() == (0,)
         assert db.execute("SELECT count(*) FROM accounts").fetchone() == (0,)
         assert db.execute("SELECT count(*) FROM transactions").fetchone() == (0,)
 
 
 def add_financial_transaction(
-    db, *, transaction_id, sender_id, recipient_id, source_account, source_owner,
-    destination_account, destination_owner, kind, source_currency, destination_currency,
-    source_minor, destination_minor, exchange_rate, idempotency_key, created_at,
+    db,
+    *,
+    transaction_id,
+    sender_id,
+    recipient_id,
+    source_account,
+    source_owner,
+    destination_account,
+    destination_owner,
+    kind,
+    source_currency,
+    destination_currency,
+    source_minor,
+    destination_minor,
+    exchange_rate,
+    idempotency_key,
+    created_at,
 ):
     db.execute(
         """
@@ -396,9 +547,21 @@ def add_financial_transaction(
         ) VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            transaction_id, kind, sender_id, recipient_id, source_account, source_owner,
-            destination_account, destination_owner, source_currency, destination_currency,
-            source_minor, destination_minor, exchange_rate, idempotency_key, created_at,
+            transaction_id,
+            kind,
+            sender_id,
+            recipient_id,
+            source_account,
+            source_owner,
+            destination_account,
+            destination_owner,
+            source_currency,
+            destination_currency,
+            source_minor,
+            destination_minor,
+            exchange_rate,
+            idempotency_key,
+            created_at,
         ),
     )
     if source_account is not None:
@@ -414,37 +577,63 @@ def add_financial_transaction(
 
 def test_accounts_endpoint_returns_each_currency_for_the_authenticated_owner(client):
     first = client.post(
-        "/api/register", json={"email": "first-account@example.com", "password": "test12345"}
+        "/api/register",
+        json={
+            "email": "first-account@example.com",
+            "password": "test12345",
+            "captcha_token": "test-token",
+        },
     ).json()
     second = client.post(
-        "/api/register", json={"email": "second-account@example.com", "password": "test12345"}
+        "/api/register",
+        json={
+            "email": "second-account@example.com",
+            "password": "test12345",
+            "captcha_token": "test-token",
+        },
     ).json()
-    first_response = client.get("/api/accounts", headers=auth(first["token"]))
+    first_response = client.get("/api/accounts", headers=auth(first["access_token"]))
     assert first_response.status_code == 200
     accounts = first_response.json()["accounts"]
     assert {row["currency_code"]: row["balance"] for row in accounts} == {
-        "PLN": "1000.00", "EUR": "0.00", "USD": "0.00", "GBP": "0.00", "CZK": "0.00"
+        "PLN": "1000.00",
+        "EUR": "0.00",
+        "USD": "0.00",
+        "GBP": "0.00",
+        "CZK": "0.00",
     }
     assert all(isinstance(row["balance_minor"], int) for row in accounts)
     second_account_ids = {
-        row["id"] for row in client.get("/api/accounts", headers=auth(second["token"])).json()["accounts"]
+        row["id"]
+        for row in client.get("/api/accounts", headers=auth(second["access_token"])).json()["accounts"]
     }
     assert not ({row["id"] for row in accounts} & second_account_ids)
     assert client.get("/api/accounts").status_code == 401
     analyst_id = create_analyst("read-only-analyst@example.com", "analyst-password")
     assert analyst_id > 0
     analyst_login = client.post(
-        "/api/login", json={"email": "read-only-analyst@example.com", "password": "analyst-password"}
+        "/api/login",
+        json={"email": "read-only-analyst@example.com", "password": "analyst-password"},
     ).json()
-    assert client.get("/api/accounts", headers=auth(analyst_login["token"])).status_code == 403
+    assert client.get("/api/accounts", headers=auth(analyst_login["access_token"])).status_code == 403
 
 
 def test_transaction_history_is_paginated_sorted_and_shows_both_transfer_sides(client, tmp_path):
     sender = client.post(
-        "/api/register", json={"email": "sender@example.com", "password": "test12345"}
+        "/api/register",
+        json={
+            "email": "sender@example.com",
+            "password": "test12345",
+            "captcha_token": "test-token",
+        },
     ).json()
     recipient = client.post(
-        "/api/register", json={"email": "recipient@example.com", "password": "test12345"}
+        "/api/register",
+        json={
+            "email": "recipient@example.com",
+            "password": "test12345",
+            "captcha_token": "test-token",
+        },
     ).json()
     sender_id = sender["user"]["id"]
     recipient_id = recipient["user"]["id"]
@@ -460,30 +649,62 @@ def test_transaction_history_is_paginated_sorted_and_shows_both_transfer_sides(c
         ).fetchone()[0]
         created_at = 2_000_000_000
         add_financial_transaction(
-            db, transaction_id="transfer-a", sender_id=sender_id, recipient_id=recipient_id,
-            source_account=sender_pln, source_owner=sender_id, destination_account=recipient_pln,
-            destination_owner=recipient_id, kind="transfer", source_currency="PLN",
-            destination_currency="PLN", source_minor=1_000, destination_minor=1_000,
-            exchange_rate=None, idempotency_key="transfer-a", created_at=created_at,
+            db,
+            transaction_id="transfer-a",
+            sender_id=sender_id,
+            recipient_id=recipient_id,
+            source_account=sender_pln,
+            source_owner=sender_id,
+            destination_account=recipient_pln,
+            destination_owner=recipient_id,
+            kind="transfer",
+            source_currency="PLN",
+            destination_currency="PLN",
+            source_minor=1_000,
+            destination_minor=1_000,
+            exchange_rate=None,
+            idempotency_key="transfer-a",
+            created_at=created_at,
         )
         add_financial_transaction(
-            db, transaction_id="transfer-z", sender_id=sender_id, recipient_id=recipient_id,
-            source_account=sender_pln, source_owner=sender_id, destination_account=recipient_pln,
-            destination_owner=recipient_id, kind="transfer", source_currency="PLN",
-            destination_currency="PLN", source_minor=500, destination_minor=500,
-            exchange_rate=None, idempotency_key="transfer-z", created_at=created_at,
+            db,
+            transaction_id="transfer-z",
+            sender_id=sender_id,
+            recipient_id=recipient_id,
+            source_account=sender_pln,
+            source_owner=sender_id,
+            destination_account=recipient_pln,
+            destination_owner=recipient_id,
+            kind="transfer",
+            source_currency="PLN",
+            destination_currency="PLN",
+            source_minor=500,
+            destination_minor=500,
+            exchange_rate=None,
+            idempotency_key="transfer-z",
+            created_at=created_at,
         )
         add_financial_transaction(
-            db, transaction_id="exchange-1", sender_id=sender_id, recipient_id=None,
-            source_account=sender_pln, source_owner=sender_id, destination_account=sender_eur,
-            destination_owner=sender_id, kind="exchange", source_currency="PLN",
-            destination_currency="EUR", source_minor=2_500, destination_minor=610,
-            exchange_rate="0.2440000000000000001", idempotency_key="exchange-1",
+            db,
+            transaction_id="exchange-1",
+            sender_id=sender_id,
+            recipient_id=None,
+            source_account=sender_pln,
+            source_owner=sender_id,
+            destination_account=sender_eur,
+            destination_owner=sender_id,
+            kind="exchange",
+            source_currency="PLN",
+            destination_currency="EUR",
+            source_minor=2_500,
+            destination_minor=610,
+            exchange_rate="0.2440000000000000001",
+            idempotency_key="exchange-1",
             created_at=created_at + 1,
         )
 
     first_page = client.get(
-        "/api/transactions?limit=2&offset=0", headers=auth(sender["token"])
+        "/api/transactions?limit=2&offset=0", headers=auth(sender["access_token"])
     ).json()
     assert first_page["total"] == 4
     assert [item["id"] for item in first_page["transactions"]] == ["exchange-1", "transfer-z"]
@@ -503,28 +724,39 @@ def test_transaction_history_is_paginated_sorted_and_shows_both_transfer_sides(c
     assert transfer["created_at"].endswith("Z")
 
     second_page = client.get(
-        "/api/transactions?limit=2&offset=2", headers=auth(sender["token"])
+        "/api/transactions?limit=2&offset=2", headers=auth(sender["access_token"])
     ).json()
     assert second_page["transactions"][0]["id"] == "transfer-a"
     assert second_page["transactions"][1]["type"] == "opening"
-    incoming = client.get(
-        "/api/transactions", headers=auth(recipient["token"])
-    ).json()
+    incoming = client.get("/api/transactions", headers=auth(recipient["access_token"])).json()
     transfer_records = [item for item in incoming["transactions"] if item["type"] == "transfer"]
     assert len(transfer_records) == 2
     assert all(item["direction"] == "incoming" for item in transfer_records)
     assert all(item["counterparty_email"] == "sender@example.com" for item in transfer_records)
-    assert client.get(
-        f"/api/transactions/{incoming['transactions'][-1]['id']}", headers=auth(sender["token"])
-    ).status_code == 404
+    assert (
+        client.get(
+            f"/api/transactions/{incoming['transactions'][-1]['id']}", headers=auth(sender["access_token"])
+        ).status_code
+        == 404
+    )
 
 
 def test_transaction_details_are_owner_scoped_and_pagination_is_validated(client, tmp_path):
     sender = client.post(
-        "/api/register", json={"email": "detail-sender@example.com", "password": "test12345"}
+        "/api/register",
+        json={
+            "email": "detail-sender@example.com",
+            "password": "test12345",
+            "captcha_token": "test-token",
+        },
     ).json()
     recipient = client.post(
-        "/api/register", json={"email": "detail-recipient@example.com", "password": "test12345"}
+        "/api/register",
+        json={
+            "email": "detail-recipient@example.com",
+            "password": "test12345",
+            "captcha_token": "test-token",
+        },
     ).json()
     sender_id, recipient_id = sender["user"]["id"], recipient["user"]["id"]
     with sqlite3.connect(tmp_path / "test.db") as db:
@@ -535,39 +767,68 @@ def test_transaction_details_are_owner_scoped_and_pagination_is_validated(client
             "SELECT id FROM accounts WHERE user_id = ? AND currency_code = 'EUR'", (recipient_id,)
         ).fetchone()[0]
         add_financial_transaction(
-            db, transaction_id="visible-transfer", sender_id=sender_id,
-            recipient_id=recipient_id, source_account=sender_account, source_owner=sender_id,
-            destination_account=recipient_account, destination_owner=recipient_id,
-            kind="transfer", source_currency="EUR", destination_currency="EUR",
-            source_minor=2_000, destination_minor=2_000, exchange_rate=None,
-            idempotency_key="visible-transfer", created_at=123,
+            db,
+            transaction_id="visible-transfer",
+            sender_id=sender_id,
+            recipient_id=recipient_id,
+            source_account=sender_account,
+            source_owner=sender_id,
+            destination_account=recipient_account,
+            destination_owner=recipient_id,
+            kind="transfer",
+            source_currency="EUR",
+            destination_currency="EUR",
+            source_minor=2_000,
+            destination_minor=2_000,
+            exchange_rate=None,
+            idempotency_key="visible-transfer",
+            created_at=123,
         )
-    detail = client.get(
-        "/api/transactions/visible-transfer", headers=auth(recipient["token"])
-    )
+    detail = client.get("/api/transactions/visible-transfer", headers=auth(recipient["access_token"]))
     assert detail.status_code == 200
     assert detail.json()["direction"] == "incoming"
     assert detail.json()["amount"] == "20.00"
-    assert client.get(
-        "/api/transactions/visible-transfer", headers=auth(sender["token"])
-    ).status_code == 200
-    assert client.get(
-        f"/api/transactions/{sender['user']['id']}", headers=auth(recipient["token"])
-    ).status_code == 404
-    assert client.get("/api/transactions", headers=auth(sender["token"]), params={"limit": 101}).status_code == 422
-    assert client.get("/api/transactions?offset=-1", headers=auth(sender["token"])).status_code == 422
+    assert (
+        client.get("/api/transactions/visible-transfer", headers=auth(sender["access_token"])).status_code
+        == 200
+    )
+    assert (
+        client.get(
+            f"/api/transactions/{sender['user']['id']}", headers=auth(recipient["access_token"])
+        ).status_code
+        == 404
+    )
+    assert (
+        client.get(
+            "/api/transactions", headers=auth(sender["access_token"]), params={"limit": 101}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.get("/api/transactions?offset=-1", headers=auth(sender["access_token"])).status_code == 422
+    )
 
 
 def test_transfer_moves_same_currency_atomically_and_replays_idempotently(client, tmp_path):
     sender = client.post(
-        "/api/register", json={"email": "transfer-sender@example.com", "password": "test12345"}
+        "/api/register",
+        json={
+            "email": "transfer-sender@example.com",
+            "password": "test12345",
+            "captcha_token": "test-token",
+        },
     ).json()
     recipient = client.post(
-        "/api/register", json={"email": "transfer-recipient@example.com", "password": "test12345"}
+        "/api/register",
+        json={
+            "email": "transfer-recipient@example.com",
+            "password": "test12345",
+            "captcha_token": "test-token",
+        },
     ).json()
     source_id = next(
         account["id"]
-        for account in client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
+        for account in client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
         if account["currency_code"] == "PLN"
     )
     payload = {
@@ -576,7 +837,7 @@ def test_transfer_moves_same_currency_atomically_and_replays_idempotently(client
         "currency_code": "PLN",
         "amount_minor": 2_000,
     }
-    headers = {**auth(sender["token"]), "Idempotency-Key": "transfer-request-001"}
+    headers = {**auth(sender["access_token"]), "Idempotency-Key": "transfer-request-001"}
     response = client.post("/api/transfers", headers=headers, json=payload)
     assert response.status_code == 201
     body = response.json()
@@ -586,10 +847,17 @@ def test_transfer_moves_same_currency_atomically_and_replays_idempotently(client
     assert body["recipient_email"] == "transfer-recipient@example.com"
     assert body["idempotent_replay"] is False
 
-    sender_accounts = client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
-    recipient_accounts = client.get("/api/accounts", headers=auth(recipient["token"])).json()["accounts"]
-    assert next(a["balance_minor"] for a in sender_accounts if a["currency_code"] == "PLN") == 98_000
-    assert next(a["balance_minor"] for a in recipient_accounts if a["currency_code"] == "PLN") == 102_000
+    sender_accounts = client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
+    recipient_accounts = client.get("/api/accounts", headers=auth(recipient["access_token"])).json()[
+        "accounts"
+    ]
+    assert (
+        next(a["balance_minor"] for a in sender_accounts if a["currency_code"] == "PLN") == 98_000
+    )
+    assert (
+        next(a["balance_minor"] for a in recipient_accounts if a["currency_code"] == "PLN")
+        == 102_000
+    )
 
     replay = client.post("/api/transfers", headers=headers, json=payload)
     assert replay.status_code == 201
@@ -611,27 +879,43 @@ def test_transfer_moves_same_currency_atomically_and_replays_idempotently(client
         assert entries == [(-2_000,), (2_000,)]
         assert sum(row[0] for row in entries) == 0
 
-    sender_history = client.get("/api/transactions", headers=auth(sender["token"])).json()
-    recipient_history = client.get("/api/transactions", headers=auth(recipient["token"])).json()
-    sent = next(item for item in sender_history["transactions"] if item["id"] == body["transaction_id"])
-    received = next(item for item in recipient_history["transactions"] if item["id"] == body["transaction_id"])
+    sender_history = client.get("/api/transactions", headers=auth(sender["access_token"])).json()
+    recipient_history = client.get("/api/transactions", headers=auth(recipient["access_token"])).json()
+    sent = next(
+        item for item in sender_history["transactions"] if item["id"] == body["transaction_id"]
+    )
+    received = next(
+        item for item in recipient_history["transactions"] if item["id"] == body["transaction_id"]
+    )
     assert sent["direction"] == "outgoing"
     assert received["direction"] == "incoming"
 
 
 def test_transfer_rejects_invalid_targets_currency_and_insufficient_funds(client):
     sender = client.post(
-        "/api/register", json={"email": "validation-sender@example.com", "password": "test12345"}
+        "/api/register",
+        json={
+            "email": "validation-sender@example.com",
+            "password": "test12345",
+            "captcha_token": "test-token",
+        },
     ).json()
     recipient = client.post(
-        "/api/register", json={"email": "validation-recipient@example.com", "password": "test12345"}
+        "/api/register",
+        json={
+            "email": "validation-recipient@example.com",
+            "password": "test12345",
+            "captcha_token": "test-token",
+        },
     ).json()
-    sender_accounts = client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
-    recipient_accounts = client.get("/api/accounts", headers=auth(recipient["token"])).json()["accounts"]
+    sender_accounts = client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
+    recipient_accounts = client.get("/api/accounts", headers=auth(recipient["access_token"])).json()[
+        "accounts"
+    ]
     pln_id = next(a["id"] for a in sender_accounts if a["currency_code"] == "PLN")
     eur_id = next(a["id"] for a in sender_accounts if a["currency_code"] == "EUR")
     recipient_pln_id = next(a["id"] for a in recipient_accounts if a["currency_code"] == "PLN")
-    headers = auth(sender["token"])
+    headers = auth(sender["access_token"])
     valid = {
         "recipient_email": "validation-recipient@example.com",
         "source_account_id": pln_id,
@@ -639,32 +923,57 @@ def test_transfer_rejects_invalid_targets_currency_and_insufficient_funds(client
         "amount_minor": 100,
     }
     assert client.post("/api/transfers", headers=headers, json=valid).status_code == 422
-    assert client.post(
-        "/api/transfers", headers={**headers, "Idempotency-Key": "self"},
-        json={**valid, "recipient_email": "validation-sender@example.com"},
-    ).status_code == 400
-    assert client.post(
-        "/api/transfers", headers={**headers, "Idempotency-Key": "missing"},
-        json={**valid, "recipient_email": "nobody@example.com"},
-    ).status_code == 404
-    assert client.post(
-        "/api/transfers", headers={**headers, "Idempotency-Key": "foreign-account"},
-        json={**valid, "source_account_id": recipient_pln_id},
-    ).status_code == 404
-    assert client.post(
-        "/api/transfers", headers={**headers, "Idempotency-Key": "currency-mismatch"},
-        json={**valid, "currency_code": "EUR"},
-    ).status_code == 422
-    assert client.post(
-        "/api/transfers", headers={**headers, "Idempotency-Key": "invalid-currency"},
-        json={**valid, "currency_code": "CAD"},
-    ).status_code == 422
-    assert client.post(
-        "/api/transfers", headers={**headers, "Idempotency-Key": "negative"},
-        json={**valid, "amount_minor": -1},
-    ).status_code == 422
+    assert (
+        client.post(
+            "/api/transfers",
+            headers={**headers, "Idempotency-Key": "self"},
+            json={**valid, "recipient_email": "validation-sender@example.com"},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            "/api/transfers",
+            headers={**headers, "Idempotency-Key": "missing"},
+            json={**valid, "recipient_email": "nobody@example.com"},
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/api/transfers",
+            headers={**headers, "Idempotency-Key": "foreign-account"},
+            json={**valid, "source_account_id": recipient_pln_id},
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/api/transfers",
+            headers={**headers, "Idempotency-Key": "currency-mismatch"},
+            json={**valid, "currency_code": "EUR"},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/transfers",
+            headers={**headers, "Idempotency-Key": "invalid-currency"},
+            json={**valid, "currency_code": "CAD"},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/transfers",
+            headers={**headers, "Idempotency-Key": "negative"},
+            json={**valid, "amount_minor": -1},
+        ).status_code
+        == 422
+    )
     no_eur_fallback = client.post(
-        "/api/transfers", headers={**headers, "Idempotency-Key": "no-fallback"},
+        "/api/transfers",
+        headers={**headers, "Idempotency-Key": "no-fallback"},
         json={**valid, "source_account_id": eur_id, "currency_code": "EUR", "amount_minor": 1},
     )
     assert no_eur_fallback.status_code == 409
@@ -675,21 +984,36 @@ def test_transfer_rejects_invalid_targets_currency_and_insufficient_funds(client
     analyst = client.post(
         "/api/login", json={"email": "transfer-analyst@example.com", "password": "analyst-password"}
     ).json()
-    assert client.post(
-        "/api/transfers", headers={**auth(analyst["token"]), "Idempotency-Key": "analyst"},
-        json=valid,
-    ).status_code == 403
+    assert (
+        client.post(
+            "/api/transfers",
+            headers={**auth(analyst["access_token"]), "Idempotency-Key": "analyst"},
+            json=valid,
+        ).status_code
+        == 403
+    )
 
 
 def test_transfer_rejects_recipient_balance_overflow(client, tmp_path):
     sender = client.post(
-        "/api/register", json={"email": "overflow-sender@example.com", "password": "test12345"}
+        "/api/register",
+        json={
+            "email": "overflow-sender@example.com",
+            "password": "test12345",
+            "captcha_token": "test-token",
+        },
     ).json()
     recipient = client.post(
-        "/api/register", json={"email": "overflow-recipient@example.com", "password": "test12345"}
+        "/api/register",
+        json={
+            "email": "overflow-recipient@example.com",
+            "password": "test12345",
+            "captcha_token": "test-token",
+        },
     ).json()
     source_id = next(
-        a["id"] for a in client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
+        a["id"]
+        for a in client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
         if a["currency_code"] == "PLN"
     )
     with sqlite3.connect(tmp_path / "test.db") as db:
@@ -699,7 +1023,7 @@ def test_transfer_rejects_recipient_balance_overflow(client, tmp_path):
         )
     response = client.post(
         "/api/transfers",
-        headers={**auth(sender["token"]), "Idempotency-Key": "overflow"},
+        headers={**auth(sender["access_token"]), "Idempotency-Key": "overflow"},
         json={
             "recipient_email": recipient["user"]["email"],
             "source_account_id": source_id,
@@ -708,29 +1032,40 @@ def test_transfer_rejects_recipient_balance_overflow(client, tmp_path):
         },
     )
     assert response.status_code == 409
-    sender_after = client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
+    sender_after = client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
     assert next(a["balance_minor"] for a in sender_after if a["currency_code"] == "PLN") == 100_000
 
 
 def test_concurrent_transfers_cannot_overdraw_source_account(client):
     sender = client.post(
-        "/api/register", json={"email": "race-sender@example.com", "password": "test12345"}
+        "/api/register",
+        json={
+            "email": "race-sender@example.com",
+            "password": "test12345",
+            "captcha_token": "test-token",
+        },
     ).json()
     recipients = [
         client.post(
-            "/api/register", json={"email": f"race-{index}@example.com", "password": "test12345"}
+            "/api/register",
+            json={
+                "email": f"race-{index}@example.com",
+                "password": "test12345",
+                "captcha_token": "test-token",
+            },
         ).json()
         for index in range(2)
     ]
     pln_id = next(
-        a["id"] for a in client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
+        a["id"]
+        for a in client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
         if a["currency_code"] == "PLN"
     )
 
     def send(index):
         return client.post(
             "/api/transfers",
-            headers={**auth(sender["token"]), "Idempotency-Key": f"race-{index}"},
+            headers={**auth(sender["access_token"]), "Idempotency-Key": f"race-{index}"},
             json={
                 "recipient_email": recipients[index]["user"]["email"],
                 "source_account_id": pln_id,
@@ -742,12 +1077,16 @@ def test_concurrent_transfers_cannot_overdraw_source_account(client):
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(send, range(2)))
     assert sorted(response.status_code for response in results) == [201, 409]
-    sender_accounts = client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
-    assert next(a["balance_minor"] for a in sender_accounts if a["currency_code"] == "PLN") == 30_000
+    sender_accounts = client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
+    assert (
+        next(a["balance_minor"] for a in sender_accounts if a["currency_code"] == "PLN") == 30_000
+    )
     received_totals = [
         next(
             a["balance_minor"]
-            for a in client.get("/api/accounts", headers=auth(recipient["token"])).json()["accounts"]
+            for a in client.get("/api/accounts", headers=auth(recipient["access_token"])).json()[
+                "accounts"
+            ]
             if a["currency_code"] == "PLN"
         )
         - 100_000
@@ -758,13 +1097,24 @@ def test_concurrent_transfers_cannot_overdraw_source_account(client):
 
 def test_transfer_failure_after_balance_updates_rolls_back_everything(client, tmp_path):
     sender = client.post(
-        "/api/register", json={"email": "rollback-sender@example.com", "password": "test12345"}
+        "/api/register",
+        json={
+            "email": "rollback-sender@example.com",
+            "password": "test12345",
+            "captcha_token": "test-token",
+        },
     ).json()
     recipient = client.post(
-        "/api/register", json={"email": "rollback-recipient@example.com", "password": "test12345"}
+        "/api/register",
+        json={
+            "email": "rollback-recipient@example.com",
+            "password": "test12345",
+            "captcha_token": "test-token",
+        },
     ).json()
     pln_id = next(
-        a["id"] for a in client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
+        a["id"]
+        for a in client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
         if a["currency_code"] == "PLN"
     )
     with sqlite3.connect(tmp_path / "test.db") as db:
@@ -777,7 +1127,8 @@ def test_transfer_failure_after_balance_updates_rolls_back_everything(client, tm
         )
     with pytest.raises(sqlite3.IntegrityError):
         client.post(
-            "/api/transfers", headers={**auth(sender["token"]), "Idempotency-Key": "rollback"},
+            "/api/transfers",
+            headers={**auth(sender["access_token"]), "Idempotency-Key": "rollback"},
             json={
                 "recipient_email": recipient["user"]["email"],
                 "source_account_id": pln_id,
@@ -785,8 +1136,12 @@ def test_transfer_failure_after_balance_updates_rolls_back_everything(client, tm
                 "amount_minor": 1_000,
             },
         )
-    sender_after = client.get("/api/accounts", headers=auth(sender["token"])).json()["accounts"]
-    recipient_after = client.get("/api/accounts", headers=auth(recipient["token"])).json()["accounts"]
+    sender_after = client.get("/api/accounts", headers=auth(sender["access_token"])).json()["accounts"]
+    recipient_after = client.get("/api/accounts", headers=auth(recipient["access_token"])).json()[
+        "accounts"
+    ]
     assert next(a["balance_minor"] for a in sender_after if a["currency_code"] == "PLN") == 100_000
-    assert next(a["balance_minor"] for a in recipient_after if a["currency_code"] == "PLN") == 100_000
-    assert client.get("/api/transactions", headers=auth(sender["token"])).json()["total"] == 1
+    assert (
+        next(a["balance_minor"] for a in recipient_after if a["currency_code"] == "PLN") == 100_000
+    )
+    assert client.get("/api/transactions", headers=auth(sender["access_token"])).json()["total"] == 1

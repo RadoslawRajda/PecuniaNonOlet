@@ -4,111 +4,30 @@ from __future__ import annotations
 
 import io
 import os
-import re
 import tempfile
 import time
 import uuid
 from contextlib import closing
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from PIL import Image, ImageOps, UnidentifiedImageError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
-from starlette.responses import JSONResponse
 
 from app.authorization import require_roles
-from app.database import connect_db, database_path
+from app.database import connect_db
+from app.photo_storage import STORAGE_KEY_PATTERN, photo_path, profile_photo_directory
 from app.schemas import User
 
 router = APIRouter(prefix="/api/profile/photo")
 AuthenticatedUser = Annotated[User, Depends(require_roles("user"))]
 MAX_PROFILE_PHOTO_BYTES = 2 * 1024 * 1024
-MAX_PROFILE_PHOTO_REQUEST_BYTES = MAX_PROFILE_PHOTO_BYTES + 64 * 1024
 MAX_PROFILE_PHOTO_PIXELS = 20_000_000
 MAX_PROFILE_PHOTO_DIMENSION = 8_192
 MAX_STORED_DIMENSION = 1_024
-STORAGE_KEY_PATTERN = re.compile(r"^[0-9a-f]{32}\.jpg$")
 ALLOWED_IMAGE_FORMATS = ("JPEG", "PNG", "WEBP")
-
-
-class ProfilePhotoBodyLimitMiddleware:
-    """Reject oversized requests without buffering their multipart bodies."""
-
-    def __init__(self, app: Any) -> None:
-        self.app = app
-
-    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-        if (
-            scope.get("type") != "http"
-            or scope.get("method") != "PUT"
-            or scope.get("path") != "/api/profile/photo"
-        ):
-            await self.app(scope, receive, send)
-            return
-
-        headers = {key.lower(): value for key, value in scope.get("headers", [])}
-        content_length = headers.get(b"content-length")
-        if content_length is not None:
-            try:
-                if int(content_length) > MAX_PROFILE_PHOTO_REQUEST_BYTES:
-                    await JSONResponse(
-                        {"detail": "Zdjęcie przekracza dozwolony rozmiar."},
-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    )(scope, receive, send)
-                    return
-            except ValueError:
-                pass
-
-        with tempfile.SpooledTemporaryFile(max_size=512 * 1024, mode="w+b") as body_file:
-            total_bytes = 0
-            while True:
-                message = await receive()
-                if message["type"] == "http.disconnect":
-                    return
-                if message["type"] == "http.request":
-                    body = message.get("body", b"")
-                    total_bytes += len(body)
-                    if total_bytes > MAX_PROFILE_PHOTO_REQUEST_BYTES:
-                        await JSONResponse(
-                            {"detail": "Zdjęcie przekracza dozwolony rozmiar."},
-                            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        )(scope, receive, send)
-                        return
-                    body_file.write(body)
-                    if not message.get("more_body", False):
-                        break
-
-            body_file.seek(0)
-
-            async def buffered_receive() -> dict[str, Any]:
-                chunk = body_file.read(64 * 1024)
-                return {
-                    "type": "http.request",
-                    "body": chunk,
-                    "more_body": body_file.tell() < total_bytes,
-                }
-
-            await self.app(scope, buffered_receive, send)
-
-
-def profile_photo_directory() -> Path:
-    configured = os.getenv("PROFILE_PHOTO_DIR")
-    directory = Path(configured) if configured else database_path().parent / "profile_photos"
-    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    resolved = directory.resolve()
-    if not resolved.is_dir():
-        raise RuntimeError("Profile photo storage is not a directory")
-    if os.name != "nt":
-        os.chmod(resolved, 0o700)
-    return resolved
-
-
-def photo_path(storage_key: str) -> Path:
-    if not STORAGE_KEY_PATTERN.fullmatch(storage_key):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Nie znaleziono zdjęcia profilowego.")
-    return profile_photo_directory() / storage_key
 
 
 def normalize_profile_photo(content: bytes) -> bytes:
@@ -116,7 +35,10 @@ def normalize_profile_photo(content: bytes) -> bytes:
         with Image.open(io.BytesIO(content), formats=ALLOWED_IMAGE_FORMATS) as source:
             if source.format not in ALLOWED_IMAGE_FORMATS:
                 raise ValueError("Unsupported image format")
-            if source.width > MAX_PROFILE_PHOTO_DIMENSION or source.height > MAX_PROFILE_PHOTO_DIMENSION:
+            if (
+                source.width > MAX_PROFILE_PHOTO_DIMENSION
+                or source.height > MAX_PROFILE_PHOTO_DIMENSION
+            ):
                 raise ValueError("Image dimensions exceed the limit")
             if source.width * source.height > MAX_PROFILE_PHOTO_PIXELS:
                 raise ValueError("Image pixel count exceeds the limit")
@@ -231,10 +153,14 @@ async def upload_profile_photo(request: Request, user: AuthenticatedUser) -> Res
     ) as form:
         items = form.multi_items()
         if len(items) != 1 or items[0][0] != "file" or not isinstance(items[0][1], UploadFile):
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Prześlij jedno zdjęcie w polu `file`.")
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, "Prześlij jedno zdjęcie w polu `file`."
+            )
         content = await items[0][1].read(MAX_PROFILE_PHOTO_BYTES + 1)
         if len(content) > MAX_PROFILE_PHOTO_BYTES:
-            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Zdjęcie przekracza limit 2 MiB.")
+            raise HTTPException(
+                status.HTTP_413_CONTENT_TOO_LARGE, "Zdjęcie przekracza limit 2 MiB."
+            )
     normalized = await run_in_threadpool(normalize_profile_photo, content)
     await run_in_threadpool(store_photo, user.id, normalized)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -251,7 +177,9 @@ def get_profile_photo(user: AuthenticatedUser) -> Response:
     try:
         image_bytes = photo_path(row["storage_key"]).read_bytes()
     except FileNotFoundError as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Nie znaleziono zdjęcia profilowego.") from exc
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "Nie znaleziono zdjęcia profilowego."
+        ) from exc
     return Response(
         content=image_bytes,
         media_type="image/jpeg",
@@ -282,7 +210,11 @@ def get_recipient_photo(
         content = photo_path(row["storage_key"]).read_bytes()
     except FileNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Zdjęcie niedostępne.") from exc
-    return Response(content=content, media_type="image/jpeg", headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+    return Response(
+        content=content,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.delete("", status_code=204, response_class=Response)

@@ -103,7 +103,9 @@ def overview(_: Analyst) -> Overview:
             )
         }
         active_sessions = db.execute(
-            "SELECT count(*) FROM sessions WHERE expires_at > unixepoch()"
+            "SELECT count(*) FROM auth_sessions WHERE revoked_at IS NULL "
+            "AND access_expires_at > unixepoch() AND refresh_expires_at > unixepoch() "
+            "AND absolute_expires_at > unixepoch()"
         ).fetchone()[0]
         transactions_total = db.execute("SELECT count(*) FROM transactions").fetchone()[0]
         transactions_by_kind = {
@@ -112,7 +114,9 @@ def overview(_: Analyst) -> Overview:
         }
         transactions_by_status = {
             row["status"]: row["total"]
-            for row in db.execute("SELECT status, count(*) AS total FROM transactions GROUP BY status")
+            for row in db.execute(
+                "SELECT status, count(*) AS total FROM transactions GROUP BY status"
+            )
         }
     return Overview(
         users_total=users_total,
@@ -218,9 +222,7 @@ def list_transactions(
         ).fetchall()
     return TransactionPage(
         transactions=[
-            AnalystTransaction(
-                **{**dict(row), "created_at": timestamp(row["created_at"])}
-            )
+            AnalystTransaction(**{**dict(row), "created_at": timestamp(row["created_at"])})
             for row in rows
         ],
         limit=limit,
@@ -241,7 +243,7 @@ def list_audit_events(
     to_timestamp: int | None = Query(default=None, ge=0, le=MAX_SQLITE_INTEGER, alias="to"),
 ) -> AuditEventPage:
     if from_timestamp is not None and to_timestamp is not None and from_timestamp > to_timestamp:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Nieprawidłowy zakres czasu.")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Nieprawidłowy zakres czasu.")
     filters: list[str] = []
     params: list[int | str] = []
     for field, value in (
