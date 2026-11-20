@@ -27,13 +27,12 @@ from app.rate_limits import client_ip, enforce_rate_limit, ip_bucket
 from app.schemas import LoginResponse
 from app.services.authentication import (
     assert_recent_authentication,
-    claim_auth_challenge_attempt,
 )
 from app.services.google_accounts import (
     VerifiedGoogleIdentity,
-    consume_google_challenge,
     link_google_identity,
     login_with_google,
+    reauthenticate_google_identity,
 )
 
 router = APIRouter(prefix="/api/auth/google", tags=["authentication"])
@@ -115,57 +114,10 @@ def google_reauth_nonce(session: Authenticated, request: Request) -> dict[str, o
 def google_reauthenticate(
     payload: GoogleTokenRequest, session: Authenticated, request: Request
 ) -> Response:
-    """Refresh session authentication evidence after a new Google ceremony."""
     enforce_rate_limit(
         [ip_bucket("google_reauth", client_ip(request.client.host if request.client else None))]
     )
-    now = int(time.time())
-    with closing(connect_db()) as db, db:
-        db.execute("BEGIN IMMEDIATE")
-        allowed = claim_auth_challenge_attempt(
-            db,
-            "google_reauth",
-            payload.nonce,
-            now=now,
-            user_id=session.user.id,
-            session_id=session.session_id,
-        )
-    if not allowed:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wyzwanie Google wygasło.")
-
-    identity = _verify_google_id_token(payload)
-    if (
-        identity.authenticated_at is None
-        or identity.authenticated_at > now + 30
-        or now - identity.authenticated_at > 300
-    ):
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, "Google nie potwierdził świeżego logowania."
-        )
-
-    with closing(connect_db()) as db, db:
-        db.execute("BEGIN IMMEDIATE")
-        consume_google_challenge(
-            db, "google_reauth", payload.nonce, session.user.id, session.session_id
-        )
-        linked = db.execute(
-            """SELECT 1 FROM oauth_identities
-               WHERE user_id=? AND provider='google' AND issuer=? AND subject=?""",
-            (session.user.id, identity.issuer, identity.subject),
-        ).fetchone()
-        if linked is None:
-            raise HTTPException(
-                status.HTTP_401_UNAUTHORIZED, "To konto Google nie należy do użytkownika."
-            )
-        updated = db.execute(
-            """UPDATE auth_sessions
-               SET authentication_method='google', authenticated_at=?, provider_authenticated_at=?
-               WHERE session_id=? AND user_id=? AND access_expires_at>?
-                 AND refresh_expires_at>? AND absolute_expires_at>? AND revoked_at IS NULL""",
-            (now, identity.authenticated_at, session.session_id, session.user.id, now, now, now),
-        ).rowcount
-        if updated != 1:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesja jest nieważna lub wygasła.")
+    reauthenticate_google_identity(payload.nonce, session, lambda: _verify_google_id_token(payload))
     return Response(status_code=204)
 
 

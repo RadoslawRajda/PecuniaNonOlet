@@ -242,3 +242,53 @@ def link_google_identity(
                 status.HTTP_409_CONFLICT,
                 "To konto Google jest już połączone z innym użytkownikiem.",
             ) from None
+
+
+def reauthenticate_google_identity(
+    nonce: str,
+    session: AuthenticatedSession,
+    verify_identity: Callable[[], VerifiedGoogleIdentity],
+) -> None:
+    """Refresh one session's Google authentication evidence after a fresh ceremony.
+
+    Count the bound challenge attempt before token verification; consume it only
+    after matching the verified issuer and subject to this user and live session.
+    """
+    now = int(time.time())
+    with closing(connect_db()) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        allowed = claim_auth_challenge_attempt(
+            db,
+            "google_reauth",
+            nonce,
+            now=now,
+            user_id=session.user.id,
+            session_id=session.session_id,
+        )
+    if not allowed:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wyzwanie Google wygasło.")
+    identity = verify_identity()
+    if (
+        identity.authenticated_at is None
+        or identity.authenticated_at > now + 30
+        or now - identity.authenticated_at > 300
+    ):
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Google nie potwierdził świeżego logowania."
+        )
+    with closing(connect_db()) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        consume_google_challenge(db, "google_reauth", nonce, session.user.id, session.session_id)
+        if _google_user_id(db, identity) != session.user.id:
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED, "To konto Google nie należy do użytkownika."
+            )
+        updated = db.execute(
+            """UPDATE auth_sessions
+               SET authentication_method='google', authenticated_at=?, provider_authenticated_at=?
+               WHERE session_id=? AND user_id=? AND access_expires_at>?
+                 AND refresh_expires_at>? AND absolute_expires_at>? AND revoked_at IS NULL""",
+            (now, identity.authenticated_at, session.session_id, session.user.id, now, now, now),
+        ).rowcount
+        if updated != 1:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesja jest nieważna lub wygasła.")
