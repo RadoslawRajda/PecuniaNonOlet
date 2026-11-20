@@ -64,14 +64,15 @@ Zidentyfikowane podczas tej pracy problemy i poprawki regresyjne:
 - błędne `crossOrigin`/`topOrigin` jest odrzucane dla rejestracji i uwierzytelniania WebAuthn;
 - świeżość uwierzytelnienia Google jest sprawdzana w `assert_recent_authentication`; brak lub nieaktualny `auth_time` nie może autoryzować zmiany metod uwierzytelniania.
 
-Macierz zawiera indywidualny status i uzasadnienie dla wszystkich 183 wymagań L2, lecz nie jest formalną oceną certyfikacyjną. Wiele kontroli pozostaje częściowych lub niespełnionych; nie deklaruje się zgodności L2.
+Macierz zawiera indywidualny status wszystkich 253 wymagań L1+L2 z przypiętego ASVS 5.0.0, lecz nie jest formalną oceną certyfikacyjną. Wiele kontroli pozostaje częściowych lub niespełnionych; nie deklaruje się zgodności L2.
 
 ## Weryfikacja wykonana w tej iteracji
 
-- Python 3.11, 3.12 i 3.13, przypięte `requirements.lock.txt`: **188 testów zaliczonych na każdej wersji**; Ruff lint, Ruff format oraz mypy zaliczone na każdej wersji.
-- `pip-audit -r requirements.lock.txt`: **brak znanych podatności** przy ostatnim uruchomieniu. To wynik bazy advisory w chwili audytu, nie gwarancja bezpieczeństwa zależności.
+- Bieżący stan lokalny: **213 testów zaliczonych** na Pythonie 3.11.0, 3.12.2 i 3.13.7; Ruff lint/format oraz mypy zaliczone na Pythonie 3.12.2. Wynik trzeba ponowić po dalszych zmianach kodu.
+- Historyczny baseline z SHA review na Pythonie 3.11, 3.12 i 3.13: **188 testów zaliczonych** na każdej wersji. Nie jest to wynik końcowego kodu.
+- Bieżący `pip-audit -r requirements.lock.txt` nie zakończył się oceną: izolowane środowisko nie rozwiązuje `pypi.org`, również przy `--disable-pip --no-deps`. Historyczny wynik bez znanych podatności nie dowodzi stanu bieżącego lockfile.
 - Testy obejmują aktywne sesje, cofanie sesji, świeże uwierzytelnienie, limity body, nagłówki, politykę haseł, prywatność pliku bazy, brak sekretów w logach, limity prób, rate limiting, migracje, transakcje i regresje finansowe.
-- Nie wykonano testu launchera, pełnego builda mobilnego ani testów end-to-end na iOS/Android.
+- Testy jednostkowe launchera są w `tests/test_launcher.py`, lecz nie wykonano rzeczywistego uruchomienia Windows, pełnego builda mobilnego ani testów end-to-end na iOS/Android.
 
 Źródła standardów: [OWASP ASVS 5.0.0](https://github.com/OWASP/ASVS/tree/v5.0.0), [WebAuthn Level 3](https://www.w3.org/TR/webauthn-3/), [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html), [OAuth Security BCP RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html), [PKCE RFC 7636](https://www.rfc-editor.org/rfc/rfc7636.html), [Native Apps RFC 8252](https://www.rfc-editor.org/rfc/rfc8252.html) i [JWT BCP RFC 8725](https://www.rfc-editor.org/rfc/rfc8725.html).
 
