@@ -133,7 +133,7 @@ Limity są egzekwowane per konto w bazie, także przy tworzeniu nowych challenge
 ## Reguły implementacji
 
 - Sekret TOTP: losowy Base32, 160 bitów; szyfrowanie AES-GCM 256 bitów z nonce per zapis i AAD powiązanym z użytkownikiem oraz przeznaczeniem.
-- TOTP: SHA-1 zgodnie z interoperacyjnością RFC 6238, 6 cyfr, krok 30 sekund, bieżący krok oraz najwyżej jeden poprzedni krok dla opóźnienia sieciowego. Przyszłe kroki nie są akceptowane. Zaakceptowany krok nie może zostać użyty ponownie.
+- TOTP: SHA-1 zgodnie z interoperacyjnością RFC 6238, 6 cyfr i wyłącznie bieżący krok 30 sekund. Poprzednie i przyszłe kroki nie są akceptowane; zapewnia to maksymalny czas ważności 30 sekund wymagany w ASVS 5.0.0 V6.5.5. Serwer wymaga zsynchronizowanego zegara. Zaakceptowany krok nie może zostać użyty ponownie.
 - Challenge i kody odzyskiwania: losowe wartości; w SQLite zapisują się wyłącznie SHA-256 hashe. Nowe kody odzyskiwania mają 128 bitów entropii, więc nie wymagają wolnego hashowania przeznaczonego dla słabych, zgadywalnych sekretów. Wcześniej wydane kody 16-znakowe mają 96 bitów; pozostają ważne dla kompatybilności i nie można ich bezpiecznie przekształcić bez znajomości wartości jawnej. Są ograniczeniem migracyjnym do rozwiązania przez bezpieczną rotację kodów.
 - Sesje są tworzone dopiero po poprawnym drugim kroku MFA. Aktywacja/wyłączenie unieważnia wszystkie sesje.
 - Zmiana hasła usuwa challenge logowania i niepotwierdzony sekret konfiguracji.
@@ -147,7 +147,7 @@ Z katalogu `backend/` uruchom:
 .venv/bin/python -m pytest -q
 ```
 
-Testy MFA obejmują wektory RFC 6238, zgodność parametrów provisioning URI, bieżący/poprzedni/przyszły krok, setup i wygaśnięcie setupu oraz challenge, brak sekretu jawnego w bazie, brak tokenu po pierwszym kroku logowania, jednorazowość challenge/TOTP/kodów odzyskiwania, blokadę prób, unieważnianie sesji, brak klucza, modyfikację ciphertext oraz równoległe wykorzystanie challenge.
+Testy MFA obejmują wektory RFC 6238, zgodność parametrów provisioning URI, akceptację bieżącego oraz odrzucanie poprzedniego i przyszłego kroku, setup i wygaśnięcie setupu oraz challenge, brak sekretu jawnego w bazie, brak tokenu po pierwszym kroku logowania, jednorazowość challenge/TOTP/kodów odzyskiwania, blokadę prób, unieważnianie sesji, brak klucza, modyfikację ciphertext oraz równoległe wykorzystanie challenge.
 
 ## Podstawa zaleceń
 

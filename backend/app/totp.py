@@ -17,7 +17,6 @@ from app.config import load_settings
 
 TOTP_PERIOD_SECONDS = 30
 TOTP_DIGITS = 6
-TOTP_WINDOW_STEPS = 1
 TOTP_SETUP_LIFETIME_SECONDS = 10 * 60
 LOGIN_CHALLENGE_LIFETIME_SECONDS = 5 * 60
 MFA_FAILURE_WINDOW_SECONDS = 15 * 60
@@ -74,20 +73,17 @@ def provisioning_uri(secret: str, email: str) -> str:
 
 
 def matching_totp_step(secret: str, code: str, *, now: int | None = None) -> int | None:
-    """Return the matched 30-second counter, within one step of server time."""
+    """Return the current 30-second counter if the code matches that counter.
+
+    Keeping the validity period to one step enforces ASVS 5.0.0 V6.5.5's
+    maximum TOTP lifetime of 30 seconds. The server clock must be synchronized.
+    """
     if not _TOTP_CODE.fullmatch(code):
         return None
     current_step = int(time.time() if now is None else now) // TOTP_PERIOD_SECONDS
     totp = pyotp.TOTP(secret, digits=TOTP_DIGITS, interval=TOTP_PERIOD_SECONDS, digest=hashlib.sha1)
-    matches: list[int] = []
-    # OWASP recommends the current step and at most one previous step to
-    # account for network delay. Accepting future steps can prematurely burn
-    # a code and increases the validity window without helping delayed requests.
-    for step in range(max(0, current_step - TOTP_WINDOW_STEPS), current_step + 1):
-        if step >= 0 and hmac.compare_digest(totp.at(step * TOTP_PERIOD_SECONDS), code):
-            matches.append(step)
-    # Choosing the oldest matching counter errs toward rejecting ambiguous replay.
-    return min(matches) if matches else None
+    expected = totp.at(current_step * TOTP_PERIOD_SECONDS)
+    return current_step if hmac.compare_digest(expected, code) else None
 
 
 def challenge_hash(challenge: str) -> str:

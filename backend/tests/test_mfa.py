@@ -70,7 +70,7 @@ def login_challenge(client, email="mfa@example.com", password=PASSWORD):
     return body["challenge_token"]
 
 
-def test_rfc6238_sha1_vectors_and_adjacent_step_window():
+def test_rfc6238_sha1_vectors_and_single_step_lifetime():
     secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
     vectors = (
         (59, "287082"),
@@ -82,11 +82,28 @@ def test_rfc6238_sha1_vectors_and_adjacent_step_window():
     )
     for timestamp, code in vectors:
         assert matching_totp_step(secret, code, now=timestamp) == timestamp // 30
-    assert matching_totp_step(secret, "287082", now=59 + 30) == 59 // 30
-    # OWASP's window is current plus one previous step, not a symmetric window.
+    # ASVS 5.0.0 V6.5.5 permits at most one 30-second validity interval.
+    assert matching_totp_step(secret, "287082", now=59 + 30) is None
     assert matching_totp_step(secret, pyotp.TOTP(secret).at(60), now=59) is None
     assert matching_totp_step(secret, "287082", now=59 + 60) is None
     assert matching_totp_step(secret, "bad-code", now=59) is None
+
+
+def test_mfa_login_rejects_code_after_its_30_second_step(client, tmp_path, monkeypatch):
+    registered = register(client)
+    secret, _ = enable_totp(client, registered["access_token"], monkeypatch)
+    challenge = login_challenge(client)
+    expired_code = pyotp.TOTP(secret).at(NOW)
+    monkeypatch.setattr(mfa_routes, "unix_time", lambda: NOW + 30)
+
+    with sqlite3.connect(tmp_path / "mfa-test.db") as db:
+        sessions_before = db.execute("SELECT count(*) FROM auth_sessions").fetchone()[0]
+    response = client.post(
+        "/api/login/mfa", json={"challenge_token": challenge, "code": expired_code}
+    )
+    assert response.status_code == 401
+    with sqlite3.connect(tmp_path / "mfa-test.db") as db:
+        assert db.execute("SELECT count(*) FROM auth_sessions").fetchone()[0] == sessions_before
 
 
 def test_enrollment_encrypts_secret_issues_recovery_codes_and_requires_mfa_login(
