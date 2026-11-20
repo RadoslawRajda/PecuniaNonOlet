@@ -31,7 +31,9 @@ from app.services.authentication import (
     assert_password_or_recent_federated_identity,
     create_login_challenge,
 )
+from app.services.mfa import mfa_unavailable, verify_active_mfa_code
 from app.sessions import issue_session, revoke_user_sessions, rotate_refresh_token
+from app.totp import MFAConfigurationError
 
 router = APIRouter(tags=["authentication"])
 
@@ -172,9 +174,21 @@ def refresh_session(payload: RefreshTokenRequest, request: Request) -> AuthRespo
 @router.post("/api/change-password", response_model=ChangePasswordResponse)
 def change_password(
     payload: ChangePasswordRequest,
+    request: Request,
     session: AuthenticatedSession = Depends(current_session),
 ) -> ChangePasswordResponse:
+    """Change a password after primary reauthentication and, when enabled, MFA.
+
+    A TOTP/recovery code is consumed under the same write lock as the credential
+    update. Failed-code counters intentionally commit before their HTTP error is
+    returned, preventing a client from bypassing the MFA lockout by retrying.
+    """
     user = session.user
+    address = client_ip(request.client.host if request.client else None)
+    enforce_rate_limit(
+        [ip_bucket("password_change", address), identity_bucket("password_change", str(user.id))],
+        limits=[20, 10],
+    )
     with closing(connect_db()) as read_db:
         row = read_db.execute(
             "SELECT password_hash,has_local_password,password_origin FROM users WHERE id = ?",
@@ -197,51 +211,64 @@ def change_password(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nowe hasło musi różnić się od obecnego.")
     expected_hash = row["password_hash"]
     new_hash = password_hasher.hash(payload.new_password)
-    with closing(connect_db()) as db, db:
-        db.execute("BEGIN IMMEDIATE")
-        active_session = db.execute(
-            """SELECT 1 FROM auth_sessions WHERE session_id = ? AND user_id = ?
-               AND access_expires_at > ? AND refresh_expires_at > ?
-               AND absolute_expires_at > ? AND revoked_at IS NULL""",
-            (
-                session.session_id,
-                user.id,
-                int(time.time()),
-                int(time.time()),
-                int(time.time()),
-            ),
-        ).fetchone()
-        if active_session is None:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesja jest nieważna lub wygasła.")
-        current = db.execute(
-            "SELECT password_hash,has_local_password,password_origin FROM users WHERE id = ?",
-            (user.id,),
-        ).fetchone()
-        if (
-            current is None
-            or current["password_hash"] != expected_hash
-            or current["has_local_password"] != row["has_local_password"]
-            or current["password_origin"] != row["password_origin"]
-        ):
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "Hasło zostało już zmienione. Zaloguj się ponownie."
-            )
-        if not payload.current_password:
-            assert_password_or_recent_federated_identity(
-                db,
-                current,
-                None,
-                session_id=session.session_id,
-                user_id=user.id,
-                now=int(time.time()),
-            )
-        revoke_user_sessions(db, user.id, now=int(time.time()))
-        db.execute(
-            "UPDATE users SET password_hash = ?,has_local_password=1,password_origin='local' WHERE id = ?",
-            (new_hash, user.id),
-        )
-        db.execute("DELETE FROM totp_login_challenges WHERE user_id = ?", (user.id,))
-        db.execute("DELETE FROM user_totp WHERE user_id = ? AND enabled_at IS NULL", (user.id,))
+    mfa_error: HTTPException | None = None
+    try:
+        with closing(connect_db()) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            now = int(time.time())
+            active_session = db.execute(
+                """SELECT 1 FROM auth_sessions WHERE session_id = ? AND user_id = ?
+                   AND access_expires_at > ? AND refresh_expires_at > ?
+                   AND absolute_expires_at > ? AND revoked_at IS NULL""",
+                (session.session_id, user.id, now, now, now),
+            ).fetchone()
+            if active_session is None:
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED, "Sesja jest nieważna lub wygasła."
+                )
+            current = db.execute(
+                "SELECT password_hash,has_local_password,password_origin FROM users WHERE id = ?",
+                (user.id,),
+            ).fetchone()
+            if (
+                current is None
+                or current["password_hash"] != expected_hash
+                or current["has_local_password"] != row["has_local_password"]
+                or current["password_origin"] != row["password_origin"]
+            ):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "Hasło zostało już zmienione. Zaloguj się ponownie."
+                )
+            if not payload.current_password:
+                assert_password_or_recent_federated_identity(
+                    db,
+                    current,
+                    None,
+                    session_id=session.session_id,
+                    user_id=user.id,
+                    now=now,
+                )
+
+            mfa_enabled = db.execute(
+                "SELECT 1 FROM user_totp WHERE user_id = ? AND enabled_at IS NOT NULL",
+                (user.id,),
+            ).fetchone()
+            if mfa_enabled is not None:
+                mfa_error = verify_active_mfa_code(db, user.id, payload.mfa_code, now=now)
+            if mfa_error is None:
+                revoke_user_sessions(db, user.id, now=now)
+                db.execute(
+                    "UPDATE users SET password_hash = ?,has_local_password=1,password_origin='local' WHERE id = ?",
+                    (new_hash, user.id),
+                )
+                db.execute("DELETE FROM totp_login_challenges WHERE user_id = ?", (user.id,))
+                db.execute(
+                    "DELETE FROM user_totp WHERE user_id = ? AND enabled_at IS NULL", (user.id,)
+                )
+    except MFAConfigurationError as exc:
+        raise mfa_unavailable() from exc
+    if mfa_error is not None:
+        raise mfa_error
     return ChangePasswordResponse(
         message="Hasło zostało zmienione. Zaloguj się ponownie.",
         reauthentication_required=True,

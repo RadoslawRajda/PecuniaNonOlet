@@ -26,7 +26,7 @@ from app.totp import (
 )
 
 
-def _unavailable() -> HTTPException:
+def mfa_unavailable() -> HTTPException:
     return HTTPException(
         status.HTTP_503_SERVICE_UNAVAILABLE,
         "Uwierzytelnianie MFA jest chwilowo niedostępne.",
@@ -200,6 +200,32 @@ def _consume_login_code(
     _reset_failed_attempts(db, user_id)
 
 
+def verify_active_mfa_code(
+    db: sqlite3.Connection, user_id: int, code: str | None, *, now: int
+) -> HTTPException | None:
+    """Consume a current TOTP or recovery code for a sensitive authenticated action.
+
+    The caller must hold a write transaction and raise a returned error only after
+    that transaction commits. This preserves failed-attempt counters and lockouts
+    instead of rolling them back with the HTTP exception.
+    """
+    credential = _load_active_credential(db, user_id)
+    if credential is None or credential["secret_ciphertext"] is None:
+        return HTTPException(status.HTTP_409_CONFLICT, "MFA nie jest włączone.")
+    if code is None:
+        return HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Podaj aktualny kod MFA, aby zmienić hasło.",
+        )
+
+    _assert_not_locked(credential, now)
+    valid, matched_step, used_recovery = _verify_login_code(db, credential, user_id, code, now)
+    if not valid:
+        return _wrong_code(locked=_record_failed_attempt(db, user_id, now))
+    _consume_login_code(db, user_id, code, matched_step, used_recovery, now)
+    return None
+
+
 def _issue_authenticated_session(db: sqlite3.Connection, challenge: sqlite3.Row) -> AuthResponse:
     user_id = challenge["user_id"]
     identity = db.execute(
@@ -260,7 +286,7 @@ def complete_mfa_login(challenge_token: str, code: str, *, now: int | None = Non
             db.execute("BEGIN IMMEDIATE")
             outcome = _finish_login_in_transaction(db, digest, code, now)
     except MFAConfigurationError as exc:
-        raise _unavailable() from exc
+        raise mfa_unavailable() from exc
     if outcome.error is not None:
         raise outcome.error
     if outcome.response is None:

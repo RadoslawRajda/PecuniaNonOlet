@@ -154,6 +154,13 @@ class ChangePasswordRequest(BaseModel):
 
     current_password: str | None = Field(default=None, min_length=1, max_length=128, repr=False)
     new_password: str = Field(min_length=8, max_length=128, repr=False)
+    mfa_code: str | None = Field(
+        default=None,
+        min_length=6,
+        max_length=22,
+        pattern=r"^(?:[0-9]{6}|(?:[A-Za-z0-9_-]{16}|[A-Za-z0-9_-]{22}))$",
+        repr=False,
+    )
 
     @model_validator(mode="after")
     def reject_common_password(self) -> ChangePasswordRequest:

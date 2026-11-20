@@ -31,9 +31,10 @@ from app.services.mfa import (
     _assert_not_locked,
     _record_failed_attempt,
     _reset_failed_attempts,
-    _unavailable,
     _wrong_code,
     complete_mfa_login,
+    mfa_unavailable,
+    verify_active_mfa_code,
 )
 from app.sessions import revoke_user_sessions
 from app.totp import (
@@ -88,7 +89,7 @@ def setup_totp(payload: MfaSetupRequest, session: Authenticated) -> MfaSetupResp
     try:
         pending_ciphertext = encrypt_secret(user.id, secret, purpose="pending")
     except MFAConfigurationError as exc:
-        raise _unavailable() from exc
+        raise mfa_unavailable() from exc
     now = unix_time()
     expires_at = now + TOTP_SETUP_LIFETIME_SECONDS
     with closing(connect_db()) as db, db:
@@ -194,7 +195,7 @@ def confirm_totp(payload: MfaTotpCodeRequest, session: Authenticated) -> MfaEnab
                         created_at=now,
                     )
     except MFAConfigurationError as exc:
-        raise _unavailable() from exc
+        raise mfa_unavailable() from exc
     if pending_error is not None:
         raise pending_error
     return MfaEnableResponse(recovery_codes=recovery_codes)
@@ -256,37 +257,8 @@ def disable_totp(payload: MfaDisableRequest, session: Authenticated) -> MfaDisab
                     user_id=user.id,
                     now=now,
                 )
-            credential = db.execute(
-                "SELECT * FROM user_totp WHERE user_id = ? AND enabled_at IS NOT NULL",
-                (user.id,),
-            ).fetchone()
-            if credential is None or credential["secret_ciphertext"] is None:
-                raise HTTPException(status.HTTP_409_CONFLICT, "MFA nie jest włączone.")
-            _assert_not_locked(credential, now)
-            used_recovery_code = False
-            matched_step: int | None = None
-            if re.fullmatch(r"[0-9]{6}", payload.code):
-                secret = decrypt_secret(user.id, credential["secret_ciphertext"], purpose="active")
-                matched_step = matching_totp_step(secret, payload.code, now=now)
-                valid_code = (
-                    matched_step is not None and matched_step > credential["last_used_step"]
-                )
-            else:
-                recovery = db.execute(
-                    "SELECT code_hash FROM totp_recovery_codes WHERE user_id = ? AND code_hash = ?",
-                    (user.id, recovery_code_hash(payload.code)),
-                ).fetchone()
-                valid_code = recovery is not None
-                used_recovery_code = valid_code
-
-            if not valid_code:
-                pending_error = _wrong_code(locked=_record_failed_attempt(db, user.id, now))
-            else:
-                if used_recovery_code:
-                    db.execute(
-                        "DELETE FROM totp_recovery_codes WHERE user_id = ? AND code_hash = ?",
-                        (user.id, recovery_code_hash(payload.code)),
-                    )
+            pending_error = verify_active_mfa_code(db, user.id, payload.code, now=now)
+            if pending_error is None:
                 db.execute("DELETE FROM user_totp WHERE user_id = ?", (user.id,))
                 revoke_user_sessions(db, user.id, now=now)
                 db.execute("DELETE FROM totp_login_challenges WHERE user_id = ?", (user.id,))
@@ -297,11 +269,13 @@ def disable_totp(payload: MfaDisableRequest, session: Authenticated) -> MfaDisab
                     action="auth.mfa_totp_disabled",
                     entity_type="user",
                     entity_id=str(user.id),
-                    details={"used_recovery_code": used_recovery_code},
+                    details={
+                        "used_recovery_code": not bool(re.fullmatch(r"[0-9]{6}", payload.code))
+                    },
                     created_at=now,
                 )
     except MFAConfigurationError as exc:
-        raise _unavailable() from exc
+        raise mfa_unavailable() from exc
     if pending_error is not None:
         raise pending_error
     return MfaDisableResponse()

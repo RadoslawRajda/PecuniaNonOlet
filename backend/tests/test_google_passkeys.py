@@ -455,6 +455,7 @@ def test_google_only_account_has_undisclosed_local_credential_and_cannot_passwor
         json={"code": pyotp.TOTP(secret).at(totp_now)},
     )
     assert confirmed.status_code == 200, confirmed.text
+    recovery_code = confirmed.json()["recovery_codes"][0]
 
     login_nonce = client.post("/api/auth/google/nonce").json()["nonce"]
     claims = {
@@ -501,7 +502,10 @@ def test_google_only_account_has_undisclosed_local_credential_and_cannot_passwor
     first_password = client.post(
         "/api/change-password",
         headers=headers,
-        json={"new_password": "new-local-violet-bridge-2026!"},
+        json={
+            "new_password": "new-local-violet-bridge-2026!",
+            "mfa_code": recovery_code,
+        },
     )
     assert first_password.status_code == 200, first_password.text
     assert (

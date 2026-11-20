@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import sqlite3
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pyotp
@@ -253,7 +254,11 @@ def test_password_change_invalidates_pre_authentication_challenges(client, monke
     changed = client.post(
         "/api/change-password",
         headers=auth(first_login["access_token"]),
-        json={"current_password": PASSWORD, "new_password": "amber-river-2027#"},
+        json={
+            "current_password": PASSWORD,
+            "new_password": "amber-river-2027#",
+            "mfa_code": pyotp.TOTP(secret).now(),
+        },
     )
     assert changed.status_code == 200
     assert (
@@ -266,6 +271,140 @@ def test_password_change_invalidates_pre_authentication_challenges(client, monke
     assert (
         client.post(
             "/api/login", json={"email": "mfa@example.com", "password": "amber-river-2027#"}
+        ).json()["mfa_required"]
+        is True
+    )
+
+
+def test_password_change_requires_and_consumes_mfa_when_totp_is_enabled(
+    client, tmp_path, monkeypatch
+):
+    registered = register(client, email="password-step-up@example.com")
+    secret, _ = enable_totp(
+        client,
+        registered["access_token"],
+        monkeypatch,
+        email="password-step-up@example.com",
+    )
+    challenge = login_challenge(client, email="password-step-up@example.com")
+    monkeypatch.setattr(mfa_routes, "unix_time", lambda: NOW + 30)
+    login = client.post(
+        "/api/login/mfa",
+        json={"challenge_token": challenge, "code": pyotp.TOTP(secret).at(NOW + 30)},
+    ).json()
+    headers = auth(login["access_token"])
+    payload = {"current_password": PASSWORD, "new_password": "amber-river-2027#"}
+
+    missing_code = client.post("/api/change-password", headers=headers, json=payload)
+    assert missing_code.status_code == 401
+    assert "kod MFA" in missing_code.json()["detail"]
+    assert client.get("/api/me", headers=headers).status_code == 200
+    assert (
+        client.post(
+            "/api/login", json={"email": "password-step-up@example.com", "password": PASSWORD}
+        ).json()["mfa_required"]
+        is True
+    )
+
+    invalid_code = client.post(
+        "/api/change-password", headers=headers, json={**payload, "mfa_code": "000000"}
+    )
+    assert invalid_code.status_code == 401
+    with sqlite3.connect(tmp_path / "mfa-test.db") as db:
+        assert (
+            db.execute(
+                "SELECT failed_attempts FROM user_totp WHERE user_id=?", (registered["user"]["id"],)
+            ).fetchone()[0]
+            == 1
+        )
+
+    changed = client.post(
+        "/api/change-password",
+        headers=headers,
+        json={**payload, "mfa_code": pyotp.TOTP(secret).now()},
+    )
+    assert changed.status_code == 200, changed.text
+    assert client.get("/api/me", headers=headers).status_code == 401
+    assert (
+        client.post(
+            "/api/login",
+            json={"email": "password-step-up@example.com", "password": "amber-river-2027#"},
+        ).json()["mfa_required"]
+        is True
+    )
+
+
+def test_password_change_consumes_a_recovery_code_when_totp_is_enabled(
+    client, tmp_path, monkeypatch
+):
+    registered = register(client, email="password-recovery@example.com")
+    secret, recovery_codes = enable_totp(
+        client,
+        registered["access_token"],
+        monkeypatch,
+        email="password-recovery@example.com",
+    )
+    challenge = login_challenge(client, email="password-recovery@example.com")
+    monkeypatch.setattr(mfa_routes, "unix_time", lambda: NOW + 30)
+    login = client.post(
+        "/api/login/mfa",
+        json={"challenge_token": challenge, "code": pyotp.TOTP(secret).at(NOW + 30)},
+    ).json()
+    recovery_code = recovery_codes[0]
+    response = client.post(
+        "/api/change-password",
+        headers=auth(login["access_token"]),
+        json={
+            "current_password": PASSWORD,
+            "new_password": "amber-river-2027#",
+            "mfa_code": recovery_code,
+        },
+    )
+    assert response.status_code == 200, response.text
+    with sqlite3.connect(tmp_path / "mfa-test.db") as db:
+        assert (
+            db.execute(
+                "SELECT 1 FROM totp_recovery_codes WHERE code_hash=?",
+                (hashlib.sha256(recovery_code.encode()).hexdigest(),),
+            ).fetchone()
+            is None
+        )
+
+
+def test_password_change_rejects_a_replayed_totp_code(client, tmp_path, monkeypatch):
+    registered = register(client, email="password-replay@example.com")
+    secret, recovery_codes = enable_totp(
+        client,
+        registered["access_token"],
+        monkeypatch,
+        email="password-replay@example.com",
+    )
+    challenge = login_challenge(client, email="password-replay@example.com")
+    login = client.post(
+        "/api/login/mfa",
+        json={"challenge_token": challenge, "code": recovery_codes[0]},
+    ).json()
+    now = int(time.time())
+    with sqlite3.connect(tmp_path / "mfa-test.db") as db:
+        db.execute(
+            "UPDATE user_totp SET last_used_step=? WHERE user_id=?",
+            (now // 30, registered["user"]["id"]),
+        )
+
+    response = client.post(
+        "/api/change-password",
+        headers=auth(login["access_token"]),
+        json={
+            "current_password": PASSWORD,
+            "new_password": "amber-river-2027#",
+            "mfa_code": pyotp.TOTP(secret).at(now),
+        },
+    )
+    assert response.status_code == 401
+    assert client.get("/api/me", headers=auth(login["access_token"])).status_code == 200
+    assert (
+        client.post(
+            "/api/login", json={"email": "password-replay@example.com", "password": PASSWORD}
         ).json()["mfa_required"]
         is True
     )
