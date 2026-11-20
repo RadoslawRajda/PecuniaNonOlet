@@ -53,6 +53,12 @@ DATABASE_PATH=data/pecunia.db .venv/bin/alembic -c alembic.ini upgrade head
 
 Na Windows użyj `.venv\Scripts\alembic.exe -c alembic.ini upgrade head`.
 
+Konfiguracja jest odczytywana przy starcie instancji. Wartość podana jawnie przez
+`create_app(Settings(...))` ma pierwszeństwo przed zmiennymi środowiskowymi, a te
+przed `backend/.env` i wartościami domyślnymi. Migracje uruchomione ręcznie przez
+Alembic używają tej samej konfiguracji env/`.env`; żądania, limiter i rejestr
+zdarzeń bezpieczeństwa korzystają z konfiguracji własnej instancji aplikacji.
+
 ## Struktura backendu
 
 `app/main.py` składa aplikację FastAPI i middleware. Routery w `app/routes/` obsługują HTTP i walidację wejścia; operacje finansowe zmieniające stan są wykonywane przez serwisy z `app/services/`, które obejmują zapis sald, księgi i audytu jedną transakcją SQLite. Integracje zewnętrzne, takie jak NBP, Google OIDC i Turnstile, są w `app/adapters/`. Ustawienia pochodzą z `app/config.py`; migracje Alembic są samodzielną historią schematu i nie importują modeli aplikacji. Część zapytań odczytowych i logiki uwierzytelniania nadal znajduje się w routerach.

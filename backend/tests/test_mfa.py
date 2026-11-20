@@ -5,7 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pyotp
 import pytest
-from app.main import app
+from app.config import Settings
+from app.main import app, create_app
 from app.routes import mfa as mfa_routes
 from app.services import authentication as auth_service
 from app.totp import decrypt_secret, matching_totp_step
@@ -252,32 +253,38 @@ def test_password_change_invalidates_pre_authentication_challenges(client, monke
     )
 
 
-def test_missing_encryption_key_fails_closed_for_setup_and_enabled_login(client, monkeypatch):
+def test_missing_encryption_key_fails_closed_for_setup_and_enabled_login(
+    client, monkeypatch, tmp_path
+):
     registered = register(client)
-    monkeypatch.delenv("MFA_ENCRYPTION_KEY")
-    setup = client.post(
-        "/api/mfa/totp/setup",
-        headers=auth(registered["access_token"]),
-        json={"current_password": PASSWORD},
+    no_key_app = create_app(
+        Settings(app_env="test", database_path=tmp_path / "mfa-test.db", mfa_encryption_key="")
     )
-    assert setup.status_code == 503
+    with TestClient(no_key_app) as no_key_client:
+        setup = no_key_client.post(
+            "/api/mfa/totp/setup",
+            headers=auth(registered["access_token"]),
+            json={"current_password": PASSWORD},
+        )
+        assert setup.status_code == 503
 
-    monkeypatch.setenv("MFA_ENCRYPTION_KEY", TEST_KEY)
     secret, _ = enable_totp(client, registered["access_token"], monkeypatch)
-    monkeypatch.delenv("MFA_ENCRYPTION_KEY")
-    login = client.post("/api/login", json={"email": "mfa@example.com", "password": PASSWORD})
-    assert login.status_code == 200
-    assert login.json()["mfa_required"] is True
-    assert "access_token" not in login.json()
-    second_factor = client.post(
-        "/api/login/mfa",
-        json={
-            "challenge_token": login.json()["challenge_token"],
-            "code": pyotp.TOTP(secret).at(NOW),
-        },
-    )
-    assert second_factor.status_code == 503
-    assert "access_token" not in second_factor.json()
+    with TestClient(no_key_app) as no_key_client:
+        login = no_key_client.post(
+            "/api/login", json={"email": "mfa@example.com", "password": PASSWORD}
+        )
+        assert login.status_code == 200
+        assert login.json()["mfa_required"] is True
+        assert "access_token" not in login.json()
+        second_factor = no_key_client.post(
+            "/api/login/mfa",
+            json={
+                "challenge_token": login.json()["challenge_token"],
+                "code": pyotp.TOTP(secret).at(NOW),
+            },
+        )
+        assert second_factor.status_code == 503
+        assert "access_token" not in second_factor.json()
 
 
 def test_expired_setup_secret_cannot_be_confirmed(client, monkeypatch):

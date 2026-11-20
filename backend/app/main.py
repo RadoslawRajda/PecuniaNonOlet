@@ -90,12 +90,13 @@ async def prevent_api_response_caching(request: Request, call_next):
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the API with explicit runtime configuration and migration lifecycle."""
-    configured = settings
-    startup_settings = configured or Settings()
+    startup_settings = settings if settings is not None else Settings()
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI):
-        migrate_database(configured)
+    async def lifespan(application: FastAPI):
+        effective_settings = settings if settings is not None else Settings()
+        application.state.settings = effective_settings
+        migrate_database(effective_settings)
         yield
 
     is_production = startup_settings.app_env == "production"
@@ -106,7 +107,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url=None if is_production else "/redoc",
         openapi_url=None if is_production else "/openapi.json",
     )
-    application.state.settings = configured
+    application.state.settings = settings
     if is_production:
         application.add_middleware(
             TrustedHostMiddleware,

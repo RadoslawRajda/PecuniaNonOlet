@@ -1,4 +1,5 @@
 import base64
+import sqlite3
 
 import pytest
 from app.config import Settings, load_settings
@@ -73,6 +74,46 @@ def test_app_factory_uses_injected_database_path(tmp_path):
         assert client.get("/health").json() == {"status": "ok"}
 
     assert database.is_file()
+
+
+def test_explicit_instance_settings_override_environment_for_migrations_and_events(
+    tmp_path, monkeypatch
+):
+    environment_db = tmp_path / "environment.db"
+    first_db = tmp_path / "first.db"
+    second_db = tmp_path / "second.db"
+    monkeypatch.setenv("DATABASE_PATH", str(environment_db))
+    first = create_app(Settings(app_env="test", database_path=first_db))
+    second = create_app(Settings(app_env="test", database_path=second_db))
+    registration = {
+        "email": "isolated@example.com",
+        "password": "violet-bridge-2026!",
+        "captcha_token": "test-token",
+    }
+
+    with TestClient(first) as first_client, TestClient(second) as second_client:
+        assert first_client.post("/api/register", json=registration).status_code == 201
+        assert second_client.post("/api/register", json=registration).status_code == 201
+        assert (
+            first_client.post(
+                "/api/login", json={"email": registration["email"], "password": "wrong"}
+            ).status_code
+            == 401
+        )
+        assert (
+            second_client.post(
+                "/api/login", json={"email": registration["email"], "password": "wrong"}
+            ).status_code
+            == 401
+        )
+
+    assert not environment_db.exists()
+    for path in (first_db, second_db):
+        with sqlite3.connect(path) as db:
+            assert db.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
+            assert db.execute("SELECT COUNT(*) FROM auth_sessions").fetchone()[0] == 1
+            assert db.execute("SELECT COUNT(*) FROM auth_rate_limits").fetchone()[0] >= 2
+            assert db.execute("SELECT COUNT(*) FROM security_events").fetchone()[0] == 2
 
 
 def test_production_app_disables_public_docs_and_rejects_unknown_hosts(tmp_path):

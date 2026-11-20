@@ -9,7 +9,9 @@ from contextlib import closing
 from typing import Literal
 
 from fastapi import Request
+from starlette.concurrency import run_in_threadpool
 
+from app.config import Settings
 from app.database import connect_db
 
 logger = logging.getLogger(__name__)
@@ -51,9 +53,10 @@ def _record_event(
     outcome: EventOutcome,
     endpoint: str,
     user_id: int | None,
+    settings: Settings,
 ) -> None:
     try:
-        with closing(connect_db()) as db, db:
+        with closing(connect_db(settings)) as db, db:
             db.execute(
                 """INSERT INTO security_events(
                        event_type,outcome,authentication_method,endpoint,user_id,occurred_at
@@ -74,18 +77,21 @@ def _record_event(
 async def log_security_event(request: Request, call_next):
     """Log auth flows and access denials without capturing request payloads or tokens."""
     path = request.url.path
+    settings: Settings = request.app.state.settings
     try:
         response = await call_next(request)
     except Exception:
         classification = _event_details(path, 500)
         if classification is not None:
             route = request.scope.get("route")
-            _record_event(
+            await run_in_threadpool(
+                _record_event,
                 event_type=classification[0],
                 authentication_method=classification[1],
                 outcome="failure",
                 endpoint=getattr(route, "path", "/unmatched"),
                 user_id=getattr(request.state, "security_user_id", None),
+                settings=settings,
             )
         raise
 
@@ -96,11 +102,13 @@ async def log_security_event(request: Request, call_next):
     route = request.scope.get("route")
     endpoint = getattr(route, "path", "/unmatched")
     outcome: EventOutcome = "success" if response.status_code < 400 else "failure"
-    _record_event(
+    await run_in_threadpool(
+        _record_event,
         event_type=classification[0],
         authentication_method=classification[1],
         outcome=outcome,
         endpoint=endpoint,
         user_id=getattr(request.state, "security_user_id", None),
+        settings=settings,
     )
     return response

@@ -36,8 +36,8 @@ def database_path() -> Path:
     return load_settings().database_path
 
 
-def connect_db() -> sqlite3.Connection:
-    path = database_path()
+def connect_db(settings: Settings | None = None) -> sqlite3.Connection:
+    path = settings.database_path if settings is not None else database_path()
     _prepare_database_file(path)
     db = sqlite3.connect(path, timeout=10)
     db.row_factory = sqlite3.Row
@@ -54,5 +54,6 @@ def migrate_database(settings: Settings | None = None) -> None:
     config = Config(str(config_path))
     url = f"sqlite:///{path.as_posix()}".replace("%", "%%")
     config.set_main_option("sqlalchemy.url", url)
+    config.attributes["database_path"] = path
     config.set_main_option("script_location", str(config_path.parent / "migrations"))
     command.upgrade(config, "head")
