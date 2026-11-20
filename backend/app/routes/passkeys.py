@@ -19,13 +19,12 @@ from app.authorization import AuthenticatedSession, current_session
 from app.config import load_settings
 from app.database import connect_db
 from app.rate_limits import client_ip, enforce_rate_limit, ip_bucket
-from app.schemas import AuthResponse, LoginResponse, User
+from app.schemas import LoginResponse
 from app.services.authentication import (
     assert_recent_authentication,
-    claim_auth_challenge_attempt,
-    create_login_challenge,
 )
-from app.sessions import issue_session
+from app.services.passkey_authentication import authenticate_passkey
+from app.services.passkey_registration import register_passkey
 
 router = APIRouter(prefix="/api/passkeys", tags=["passkeys"])
 CHALLENGE_TTL = 300
@@ -237,11 +236,6 @@ def registration_options(session: Authenticated, request: Request) -> dict[str, 
 def registration_verify(
     payload: CredentialBody, session: Authenticated, request: Request
 ) -> dict[str, object]:
-    from webauthn import verify_registration_response
-    from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
-    from webauthn.helpers.exceptions import WebAuthnException
-
-    user = session.user
     enforce_rate_limit(
         [
             ip_bucket(
@@ -250,79 +244,16 @@ def registration_verify(
             )
         ]
     )
-    credential = payload.credential
-    challenge = _challenge_from_client(credential, "webauthn.create")
-    now = int(time.time())
-    with closing(connect_db()) as db:
-        pending = db.execute(
-            "SELECT session_hash FROM auth_challenges WHERE challenge_hash=? AND kind='passkey_register' AND challenge_value=? AND user_id=? AND expires_at>?",
-            (_digest(challenge), challenge, user.id, now),
-        ).fetchone()
-    if pending is None or pending["session_hash"] != session.session_id:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "Wyzwanie passkey wygasło lub zostało już użyte."
-        )
-    try:
-        verification = verify_registration_response(
-            credential=credential,
-            expected_challenge=base64url_to_bytes(challenge),
-            expected_rp_id=_rp_id(),
-            expected_origin=_origins(),
-            require_user_verification=True,
-        )
-    except (TypeError, ValueError, KeyError, WebAuthnException):
-        _discard_challenge("passkey_register", challenge, user.id)
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "Rejestracja passkey nie powiodła się."
-        ) from None
-    credential_id = bytes_to_base64url(verification.credential_id)
-    transports = credential.get("response", {}).get("transports", [])
-    if not isinstance(transports, list) or any(
-        not isinstance(item, str) or len(item) > 32 for item in transports
-    ):
-        transports = []
-    with closing(connect_db()) as db, db:
-        db.execute("BEGIN IMMEDIATE")
-        _fresh_session(db, session.session_id, user.id, now)
-        _consume_challenge(db, "passkey_register", challenge, user.id)
-        try:
-            db.execute(
-                "INSERT INTO passkeys(credential_id,user_id,public_key,sign_count,label,transports,created_at) VALUES (?,?,?,?,?,?,?)",
-                (
-                    credential_id,
-                    user.id,
-                    verification.credential_public_key,
-                    verification.sign_count,
-                    payload.label.strip(),
-                    json.dumps(transports),
-                    now,
-                ),
-            )
-            write_audit_event(
-                db,
-                actor_user_id=user.id,
-                actor_role=user.role,
-                action="auth.passkey_registered",
-                entity_type="user",
-                entity_id=str(user.id),
-                details={
-                    "authenticator_key_hash": hashlib.sha256(credential_id.encode()).hexdigest()
-                },
-                created_at=now,
-            )
-        except sqlite3.IntegrityError:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "Ta passkey jest już zarejestrowana."
-            ) from None
-    return {"id": credential_id, "label": payload.label.strip(), "created_at": now}
-
-
-def _discard_challenge(kind: str, value: str, user_id: int) -> None:
-    with closing(connect_db()) as db, db:
-        db.execute(
-            "DELETE FROM auth_challenges WHERE challenge_hash=? AND kind=? AND user_id=?",
-            (_digest(value), kind, user_id),
-        )
+    challenge = _challenge_from_client(payload.credential, "webauthn.create")
+    result = register_passkey(
+        session,
+        payload.credential,
+        challenge,
+        payload.label,
+        rp_id=_rp_id(),
+        origins=_origins(),
+    )
+    return {"id": result.credential_id, "label": result.label, "created_at": result.created_at}
 
 
 @router.post("/authentication/options")
@@ -345,130 +276,11 @@ def authentication_options(request: Request) -> dict[str, object]:
 
 @router.post("/authentication/verify", response_model=LoginResponse)
 def authentication_verify(payload: PasskeyAssertionBody, request: Request) -> LoginResponse:
-    from webauthn import verify_authentication_response
-    from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
-    from webauthn.helpers.exceptions import WebAuthnException
-
     enforce_rate_limit(
         [ip_bucket("passkey_verify", client_ip(request.client.host if request.client else None))]
     )
-    credential = payload.credential
-    challenge = _challenge_from_client(credential, "webauthn.get")
-    credential_id = credential.get("id")
-    raw_id = credential.get("rawId")
-    try:
-        from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
-
-        if not isinstance(raw_id, str) or len(raw_id) > 1024:
-            raise ValueError
-        normalized_raw_id = bytes_to_base64url(base64url_to_bytes(raw_id))
-    except (TypeError, ValueError):
-        normalized_raw_id = ""
-    if (
-        not isinstance(credential_id, str)
-        or len(credential_id) > 1024
-        or credential_id != normalized_raw_id
-    ):
-        _discard_login_challenge(challenge)
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Nie udało się uwierzytelnić passkey.")
-    now = int(time.time())
-    with closing(connect_db()) as db, db:
-        db.execute("BEGIN IMMEDIATE")
-        attempt_allowed = claim_auth_challenge_attempt(db, "passkey_login", challenge, now=now)
-        challenge_row = (
-            db.execute(
-                """SELECT 1 FROM auth_challenges WHERE challenge_hash=?
-                   AND kind='passkey_login' AND challenge_value=? AND user_id IS NULL
-                   AND expires_at>?""",
-                (_digest(challenge), challenge, now),
-            ).fetchone()
-            if attempt_allowed
-            else None
-        )
-        row = (
-            db.execute("SELECT * FROM passkeys WHERE credential_id=?", (credential_id,)).fetchone()
-            if challenge_row is not None
-            else None
-        )
-    if challenge_row is None or row is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Nie udało się uwierzytelnić passkey.")
-    user_handle = credential.get("response", {}).get("userHandle")
-    try:
-        if not isinstance(user_handle, str) or not user_handle:
-            raise ValueError
-        with closing(connect_db()) as db:
-            expected_user_handle = _user_handle(db, row["user_id"])
-        if base64url_to_bytes(user_handle) != expected_user_handle:
-            raise ValueError
-    except (TypeError, ValueError, binascii.Error):
-        _discard_login_challenge(challenge)
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, "Nie udało się uwierzytelnić passkey."
-        ) from None
-    try:
-        verification = verify_authentication_response(
-            credential=credential,
-            expected_challenge=base64url_to_bytes(challenge),
-            expected_rp_id=_rp_id(),
-            expected_origin=_origins(),
-            credential_public_key=row["public_key"],
-            credential_current_sign_count=row["sign_count"],
-            require_user_verification=True,
-        )
-    except (TypeError, ValueError, KeyError, WebAuthnException):
-        _discard_login_challenge(challenge)
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, "Nie udało się uwierzytelnić passkey."
-        ) from None
-    with closing(connect_db()) as db, db:
-        db.execute("BEGIN IMMEDIATE")
-        current = db.execute(
-            "SELECT sign_count,user_id FROM passkeys WHERE credential_id=?", (credential_id,)
-        ).fetchone()
-        live = db.execute(
-            "SELECT 1 FROM auth_challenges WHERE challenge_hash=? AND kind='passkey_login' AND expires_at>?",
-            (_digest(challenge), int(time.time())),
-        ).fetchone()
-        if (
-            current is None
-            or current["user_id"] != row["user_id"]
-            or current["sign_count"] != row["sign_count"]
-            or live is None
-        ):
-            db.execute("DELETE FROM auth_challenges WHERE challenge_hash=?", (_digest(challenge),))
-            raise HTTPException(
-                status.HTTP_401_UNAUTHORIZED, "Nie udało się uwierzytelnić passkey."
-            )
-        db.execute("DELETE FROM auth_challenges WHERE challenge_hash=?", (_digest(challenge),))
-        db.execute(
-            "UPDATE passkeys SET sign_count=?,last_used_at=? WHERE credential_id=?",
-            (verification.new_sign_count, int(time.time()), credential_id),
-        )
-        mfa = db.execute(
-            "SELECT enabled_at FROM user_totp WHERE user_id=?", (row["user_id"],)
-        ).fetchone()
-        if mfa and mfa["enabled_at"] is not None:
-            return create_login_challenge(db, row["user_id"], authentication_method="passkey")
-        user_row = db.execute(
-            "SELECT u.id,u.email,r.role_name FROM users u JOIN user_roles r ON r.user_id=u.id WHERE u.id=?",
-            (row["user_id"],),
-        ).fetchone()
-        tokens = issue_session(db, row["user_id"], authentication_method="passkey")
-        return AuthResponse(
-            user=User(id=user_row["id"], email=user_row["email"], role=user_row["role_name"]),
-            access_token=tokens.access_token,
-            refresh_token=tokens.refresh_token,
-            expires_in=tokens.expires_in,
-            refresh_expires_in=tokens.refresh_expires_in,
-        )
-
-
-def _discard_login_challenge(value: str) -> None:
-    with closing(connect_db()) as db, db:
-        db.execute(
-            "DELETE FROM auth_challenges WHERE challenge_hash=? AND kind='passkey_login'",
-            (_digest(value),),
-        )
+    challenge = _challenge_from_client(payload.credential, "webauthn.get")
+    return authenticate_passkey(payload.credential, challenge, rp_id=_rp_id(), origins=_origins())
 
 
 @router.delete("/{credential_id}", status_code=204)
