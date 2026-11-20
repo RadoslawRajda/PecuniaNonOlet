@@ -39,6 +39,10 @@ export async function signInWithGoogle(linkToken?: string) {
   }, linkToken);
 }
 
+export async function getGoogleConnectionStatus(accessToken: string): Promise<{linked: boolean}> {
+  return request('/api/auth/google/status', undefined, accessToken);
+}
+
 async function authorizeGoogle(nonce: string) {
   const clientId = Platform.OS === 'ios' ? GOOGLE_IOS_CLIENT_ID : GOOGLE_ANDROID_CLIENT_ID;
   if (!clientId) {
@@ -73,7 +77,9 @@ export function buildGoogleAuthorizationOptions(clientId: string, nonce: string)
       claims: JSON.stringify({id_token: {auth_time: {essential: true}}}),
     },
     usePKCE: true,
-    useNonce: false,
+    // AppAuth passes this exact backend-issued nonce to Google only when enabled.
+    // The backend verifies the nonce claim in the returned ID token before login.
+    useNonce: true,
   };
 }
 
