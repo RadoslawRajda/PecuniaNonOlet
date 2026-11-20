@@ -1,4 +1,5 @@
 import json
+import sqlite3
 
 import pytest
 from app.main import app
@@ -74,6 +75,76 @@ async def test_auth_body_limit_counts_streamed_chunks_without_content_length():
     starts = [message for message in sent if message["type"] == "http.response.start"]
     assert len(starts) == 1
     assert starts[0]["status"] == 413
-    assert "http.disconnect" in received
+    assert received == []
     body = next(message["body"] for message in sent if message["type"] == "http.response.body")
     assert json.loads(body)["detail"]
+
+
+@pytest.mark.anyio
+async def test_final_oversized_chunk_does_not_register_user(client, tmp_path):
+    payload = json.dumps(
+        {
+            "email": "oversized@example.com",
+            "password": "A strong unique password 2026!",
+            "captcha_token": "test-token",
+        }
+    ).encode()
+    body = payload + b" " * (MAX_AUTH_REQUEST_BYTES + 1 - len(payload))
+    events = [
+        {"type": "http.request", "body": payload, "more_body": True},
+        {"type": "http.request", "body": body[len(payload) :], "more_body": False},
+    ]
+    sent = []
+
+    async def receive():
+        return events.pop(0)
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/api/register",
+        "raw_path": b"/api/register",
+        "query_string": b"",
+        "headers": [(b"content-type", b"application/json")],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+    }
+    await client.app(scope, receive, send)
+
+    assert [event["status"] for event in sent if event["type"] == "http.response.start"] == [413]
+    with sqlite3.connect(tmp_path / "request-limits.db") as db:
+        assert (
+            db.execute(
+                "SELECT COUNT(*) FROM users WHERE email=?", ("oversized@example.com",)
+            ).fetchone()[0]
+            == 0
+        )
+        assert db.execute("SELECT COUNT(*) FROM auth_sessions").fetchone()[0] == 0
+
+
+def test_valid_registration_at_body_limit(client, tmp_path):
+    payload = json.dumps(
+        {
+            "email": "boundary@example.com",
+            "password": "A strong unique password 2026!",
+            "captcha_token": "test-token",
+        }
+    ).encode()
+    body = payload + b" " * (MAX_AUTH_REQUEST_BYTES - len(payload))
+    response = client.post(
+        "/api/register", content=body, headers={"Content-Type": "application/json"}
+    )
+    assert response.status_code == 201
+    with sqlite3.connect(tmp_path / "request-limits.db") as db:
+        assert (
+            db.execute(
+                "SELECT COUNT(*) FROM users WHERE email=?", ("boundary@example.com",)
+            ).fetchone()[0]
+            == 1
+        )

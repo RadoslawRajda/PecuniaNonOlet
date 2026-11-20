@@ -62,27 +62,28 @@ class RequestBodyLimitMiddleware:
             except ValueError:
                 pass
 
-        total_bytes = 0
-        too_large = False
-
-        async def limited_receive() -> Message:
-            nonlocal total_bytes, too_large
-            if too_large:
-                return {"type": "http.disconnect"}
+        body = bytearray()
+        while True:
             event = await receive()
-            if event["type"] == "http.request":
-                total_bytes += len(event.get("body", b""))
-                too_large = total_bytes > max_bytes
-            return event
+            if event["type"] == "http.disconnect":
+                return
+            if event["type"] != "http.request":
+                continue
+            chunk = event.get("body", b"")
+            if len(chunk) > max_bytes - len(body):
+                await send_too_large()
+                return
+            body.extend(chunk)
+            if not event.get("more_body", False):
+                break
 
-        async def tracked_send(event: Message) -> None:
-            if not too_large:
-                await send(event)
+        delivered = False
 
-        try:
-            await self.app(scope, limited_receive, tracked_send)
-        except Exception:
-            if not too_large:
-                raise
-        if too_large:
-            await send_too_large()
+        async def buffered_receive() -> Message:
+            nonlocal delivered
+            if delivered:
+                return await receive()
+            delivered = True
+            return {"type": "http.request", "body": bytes(body), "more_body": False}
+
+        await self.app(scope, buffered_receive, send)
