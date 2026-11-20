@@ -4,7 +4,7 @@ Backend FastAPI z rejestracją, logowaniem i wylogowaniem. Konta oraz sesje są 
 
 ## Wymagania
 
-- Python 3.11 lub nowszy
+- Python 3.11, 3.12 lub 3.13
 - Komputer i telefon w tej samej sieci lokalnej
 
 ## Uruchomienie
@@ -20,6 +20,8 @@ W katalogu `backend/`:
 ```
 
 Skrypt tworzy środowisko `.venv`, instaluje biblioteki, wybiera adres IP, przygotowuje lokalny certyfikat TLS i uruchamia FastAPI po HTTPS na porcie 8000. Przy starcie backend automatycznie wykonuje oczekujące migracje Alembic. Jeśli komputer ma kilka adresów, poprosi o wybór. Adres można podać ręcznie:
+
+Skrypt sprawdza wersję Pythona w istniejącym `.venv` przed instalacją i uruchomieniem. Jeśli środowisko korzysta z niewspieranej wersji lub jest uszkodzone, zatrzyma się z instrukcją. Zmień wtedy nazwę `backend/.venv` na kopię zapasową i uruchom skrypt ponownie; utworzy nowe środowisko na dostępnym Pythonie 3.11–3.13. Nie usuwaj katalogu `data/` — zawiera bazę i lokalny CA TLS.
 
 ```sh
 ./start-unix.sh --ip 192.168.1.45
