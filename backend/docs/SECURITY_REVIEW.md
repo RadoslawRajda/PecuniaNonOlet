@@ -26,19 +26,32 @@ Przegląd dotyczy backendu na branchu `feature/backend-hardening` oraz bieżący
 | Baza | Plik bazy tworzony jako prywatny na POSIX; odrzucane dowiązanie symboliczne; parametryzowane SQL i transakcje finansowe | SQLite nie szyfruje pliku w spoczynku; uprawnienia systemu plików zależą od platformy |
 | Rejestr zdarzeń | Loguje wynik auth, sesji, zmian poświadczeń i odmów 401/403; nie zapisuje haseł, tokenów, body ani e-maili; wpisy niezmienne przez SQL trigger | Lokalna baza nie jest odseparowanym centralnym systemem. Brak retencji/alertowania i centralnego monitoringu; ASVS 16.4.3 pozostaje otwarty |
 | Request validation | Odpowiedzi 422 nie odbijają wejściowych wartości, aby nie ujawnić haseł i tokenów | Wymaga dalszego przeglądu pozostałych ścieżek logowania i wyjątków |
-| Operacje finansowe | Transakcje DB, idempotencja, kontrola właściciela rachunku, blokada współbieżności i audyt w tej samej transakcji | Pełne testy regresji w tej iteracji nie mogły zostać uruchomione |
+| Operacje finansowe | Transakcje DB, idempotencja, kontrola właściciela rachunku, blokada współbieżności i audyt w tej samej transakcji | SQLite jest przeznaczone dla lokalnego MVP; zakres testów opisano niżej |
+
+## Konkretne kontrole i testy ASVS
+
+Kontrole dotyczące sesji i uwierzytelniania zostały sprawdzone w kodzie oraz testach, w tym rotacja refresh tokenu, wykrywanie jego ponownego użycia, unieważnianie rodziny, ograniczenia liczby sesji, świeżość reautoryzacji, weryfikacja OIDC, WebAuthn UV i wyzwania jednorazowe. Testy integracyjne znajdują się przede wszystkim w `tests/test_app.py`, `tests/test_google_passkeys.py`, `tests/test_mfa.py` i `tests/test_rate_limits.py`. Kontrole finansowe oraz spójność transakcji są pokryte w `tests/test_exchange.py`, `tests/test_audit.py` i `tests/test_analytics.py`.
+
+Zidentyfikowane podczas tej pracy problemy i poprawki regresyjne:
+
+- wyczerpanie limitu jednego klucza limiterów nie zwiększa już innych kluczy, co ogranicza niezamierzone blokowanie wspólnego adresu IP; sprawdza to `test_blocked_request_does_not_consume_other_rate_limit_buckets`;
+- challenge logowania Google i passkey ma maksymalnie pięć kosztownych prób weryfikacji; następne próby są odrzucane przed weryfikacją podpisu; sprawdza to `test_google_login_stops_verifying_after_challenge_attempt_limit`;
+- błędne `crossOrigin`/`topOrigin` jest odrzucane dla rejestracji i uwierzytelniania WebAuthn;
+- świeżość uwierzytelnienia Google jest sprawdzana w `assert_recent_authentication`; brak lub nieaktualny `auth_time` nie może autoryzować zmiany metod uwierzytelniania.
+
+To nie stanowi pełnej oceny wszystkich 183 wymagań L2. Szczegółowa macierz rozróżnia wymagania otwarte od N/D; w tej iteracji nie deklaruje się certyfikacji ani pełnej zgodności.
 
 ## Weryfikacja wykonana w tej iteracji
 
-- `ruff check app tests`: **zaliczone**.
-- `python3 -m compileall -q app migrations tests`: **zaliczone**.
-- `python3 -m pytest -q tests`: **nie uruchomiło testów** — interpreter nie ma modułu `pydantic_settings`. Nie jest to wynik fail/pass suite; przed akceptacją należy uruchomić testy w środowisku z `requirements.lock.txt`.
-- Nowe testy obejmują listę aktywnych sesji, cofanie innej sesji, wymaganie świeżego uwierzytelnienia, body limits, nagłówki HTTP, hasła popularne/kontekstowe, uprawnienia pliku bazy i logi bez sekretów. Są dodane, ale wymagają rzeczywistego uruchomienia pytest.
+- Python 3.11, przypięte `requirements.lock.txt`: **188 testów zaliczonych**; Ruff lint, Ruff format oraz mypy zaliczone.
+- Python 3.12 i 3.13, przypięte `requirements.lock.txt`: bazowy stan sprzed ostatnich zmian przeszedł **184 testy** na każdej wersji; po poprawkach limitów prób i limiterów należy powtórzyć pełny przebieg.
+- `pip-audit -r requirements.lock.txt`: **brak znanych podatności** przy ostatnim uruchomieniu. To wynik bazy advisory w chwili audytu, nie gwarancja bezpieczeństwa zależności.
+- Testy obejmują aktywne sesje, cofanie sesji, świeże uwierzytelnienie, limity body, nagłówki, politykę haseł, prywatność pliku bazy, brak sekretów w logach, limity prób, rate limiting, migracje, transakcje i regresje finansowe.
 - Nie wykonano testu launchera, pełnego builda mobilnego ani testów end-to-end na iOS/Android.
 
 ## Otwarte punkty przed deklaracją zgodności ASVS L2
 
-1. Uruchomić pełny zestaw testów na przypiętych zależnościach i w CI; obecny brak `pydantic_settings` blokuje lokalną weryfikację.
+1. Powtórzyć pełny zestaw na Pythonie 3.11–3.13 po ostatnich zmianach i potwierdzić wykonanie w CI.
 2. Uzupełnić ocenę każdej pozycji w [macierzy L2](ASVS_5.0.0_L2_MATRIX.md). Pozycje „Nieocenione” są otwarte, nie zaliczone.
 3. Dodać centralne, rozdzielone od bazy aplikacji logowanie, retencję, alertowanie i monitoring błędów TLS.
 4. Ustalić szyfrowanie danych SQLite w spoczynku i zarządzanie/rotację `MFA_ENCRYPTION_KEY` dla docelowego wdrożenia.
@@ -48,4 +61,4 @@ Przegląd dotyczy backendu na branchu `feature/backend-hardening` oraz bieżący
 
 ## Wniosek
 
-Krótkie access tokeny i rotowane refresh tokeny są zaimplementowane z atomowym odświeżaniem, wykrywaniem replay i unieważnianiem rodziny sesji. Dodano również API do przeglądu i cofania sesji. Nie deklaruję jeszcze pełnej zgodności OWASP ASVS L2: uruchomienie testów backendu jest zablokowane zależnością środowiska, a macierz zawiera wymagania nieocenione.
+Krótkie access tokeny i rotowane refresh tokeny są zaimplementowane z atomowym odświeżaniem, wykrywaniem replay i unieważnianiem rodziny sesji. Dodano również API do przeglądu i cofania sesji. Nie deklaruję pełnej zgodności OWASP ASVS L2: macierz nadal zawiera wymagania nieocenione, a konfiguracja produkcyjna i aplikacje mobilne wymagają osobnych testów.

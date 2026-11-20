@@ -10,7 +10,17 @@
 - **N/D** — wymaganie nie ma zastosowania do aktualnej architektury; uzasadnienie jest obowiązkowe.
 - **Nieocenione** — nie ma wystarczającego dowodu. Nie jest to status zaliczenia.
 
-W tej iteracji pełne uruchomienie backendowego pytest jest zablokowane brakiem `pydantic_settings` w dostępnej instalacji Pythona. Dlatego nowe implementacje są opisane w [przeglądzie bezpieczeństwa](SECURITY_REVIEW.md), a nie oznaczone jako zweryfikowana zgodność. N/D przypisano wyłącznie wymaganiom WebRTC (V17): backend nie implementuje połączeń RTC, sygnalizacji ani mediów. Pozostałe kontrole wymagają oceny względem konkretnego wdrożenia i testów.
+W tej iteracji uruchomiono testy na przypiętych zależnościach dla Python 3.11, 3.12 i 3.13. To potwierdza działanie testów aplikacji, ale nie jest samodzielnym dowodem zgodności z każdym wymaganiem ASVS. N/D przypisano wyłącznie wymaganiom WebRTC (V17): backend nie implementuje połączeń RTC, sygnalizacji ani mediów. Pozostałe kontrole wymagają oceny względem konkretnego wdrożenia i testów.
+
+## Wyniki testów dla backendu
+
+- Python 3.11: `pytest` 188 passed; Ruff lint, Ruff format i mypy zaliczone.
+- Python 3.12: `pytest` 188 passed; Ruff lint, Ruff format i mypy zaliczone.
+- Python 3.13: `pytest` 188 passed; Ruff lint, Ruff format i mypy zaliczone.
+- `pip-audit -r requirements.lock.txt`: brak znanych podatności w zablokowanych zależnościach przy ostatnim sprawdzeniu.
+- Zakres nie obejmuje iOS/Android end-to-end, rzeczywistych zewnętrznych Google/Cloudflare/NBP, produkcyjnej konfiguracji TLS ani operacyjnego monitoringu.
+
+Weryfikacje krytyczne wraz z dowodami są opisane w [przeglądzie bezpieczeństwa](SECURITY_REVIEW.md). Pozycje nadal oznaczone jako „Nieocenione” pozostają otwarte i nie są zaliczone.
 
 | ASVS 5.0.0 ID | Status | Dowód / uzasadnienie |
 |---|---|---|
