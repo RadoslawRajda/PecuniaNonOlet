@@ -1,7 +1,13 @@
 import {Passkey} from 'react-native-passkey';
 import {authorize} from 'react-native-app-auth';
 
-import {buildGoogleAuthorizationOptions, changePassword, reauthenticateWithGoogle, signInWithPasskey} from '../src/auth/authMethods';
+import {
+  buildGoogleAuthorizationOptions,
+  changePassword,
+  getApiErrorMessage,
+  reauthenticateWithGoogle,
+  signInWithPasskey,
+} from '../src/auth/authMethods';
 import {authenticatedFetch, saveSessionTokens} from '../src/auth/session';
 
 jest.mock('../src/auth/session', () => ({authenticatedFetch: jest.fn(), saveSessionTokens: jest.fn()}));
@@ -108,5 +114,26 @@ describe('native authentication methods', () => {
         }),
       }),
     );
+  });
+
+  it('renders FastAPI validation errors as text instead of an object', async () => {
+    const authenticatedFetchMock = authenticatedFetch as jest.Mock;
+    authenticatedFetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 422,
+      json: async () => ({
+        detail: [{msg: 'Hasło jest zbyt popularne lub znajduje się na liście haseł wyciekłych.'}],
+      }),
+    });
+
+    await expect(changePassword('current-access-token', {
+      current_password: 'current-password',
+      new_password: 'password123',
+    })).rejects.toThrow('Hasło jest zbyt popularne lub znajduje się na liście haseł wyciekłych.');
+  });
+
+  it('uses a safe fallback for malformed API errors', () => {
+    expect(getApiErrorMessage([{unexpected: true}], 'Nie udało się zapisać danych.'))
+      .toBe('Nie udało się zapisać danych.');
   });
 });

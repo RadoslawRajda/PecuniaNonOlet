@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {signInWithGoogle, signInWithPasskey} from '../auth/authMethods';
+import {getApiErrorMessage, signInWithGoogle, signInWithPasskey} from '../auth/authMethods';
 import {authenticatedFetch, clearSessionTokens, loadSessionTokens, logoutRemoteSession, saveSessionTokens, subscribeAccessToken} from '../auth/session';
 
 import { API_URL } from '@env';
@@ -291,14 +291,7 @@ export function useAppController() {
       } else {
         Alert.alert(
           'Błąd',
-          JSON.stringify(
-            responseData?.detail || {
-              status: response.status,
-              ok: response.ok,
-            },
-            null,
-            2
-          )
+          getApiErrorMessage(responseData?.detail, `Serwer odrzucił logowanie (HTTP ${response.status}).`),
         );
       }
     } catch (e: any) {
@@ -377,14 +370,7 @@ export function useAppController() {
       } else {
         Alert.alert(
           'Błąd',
-          JSON.stringify(
-            responseData?.detail || {
-              status: response.status,
-              ok: response.ok,
-            },
-            null,
-            2
-          )
+          getApiErrorMessage(responseData?.detail, `Serwer odrzucił rejestrację (HTTP ${response.status}).`),
         );
       }
     } catch (e: any) {

@@ -6,6 +6,29 @@ import {authenticatedFetch, saveSessionTokens} from './session';
 import {API_URL, GOOGLE_ANDROID_CLIENT_ID, GOOGLE_IOS_CLIENT_ID} from '@env';
 
 const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
+
+type ValidationErrorDetail = {
+  msg?: unknown;
+};
+
+/** Convert API error details into text that can be safely shown in the UI. */
+export function getApiErrorMessage(detail: unknown, fallback: string): string {
+  if (typeof detail === 'string' && detail.trim()) return detail;
+
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map(item => {
+        if (item === null || typeof item !== 'object') return null;
+        const message = (item as ValidationErrorDetail).msg;
+        return typeof message === 'string' && message.trim() ? message.trim() : null;
+      })
+      .filter((message): message is string => Boolean(message));
+    if (messages.length > 0) return [...new Set(messages)].join('\n');
+  }
+
+  return fallback;
+}
+
 const request = async (path: string, init?: RequestInit, accessToken?: string) => {
   const headers = {'Content-Type': 'application/json', ...(init?.headers ?? {})};
   const response = await (accessToken
@@ -15,7 +38,9 @@ const request = async (path: string, init?: RequestInit, accessToken?: string) =
     headers,
   }));
   const data = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(data?.detail ?? `Błąd serwera (${response.status}).`);
+  if (!response.ok) {
+    throw new Error(getApiErrorMessage(data?.detail, `Błąd serwera (${response.status}).`));
+  }
   return data;
 };
 
