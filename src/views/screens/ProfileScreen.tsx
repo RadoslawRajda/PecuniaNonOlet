@@ -1,17 +1,18 @@
 import {authenticatedFetch} from '../../auth/session';
 import React from 'react';
-import {Alert, BackHandler, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {Alert, BackHandler, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import ChevronRight from 'lucide-react-native/icons/chevron-right';
 import MapPin from 'lucide-react-native/icons/map-pin';
 import Palette from 'lucide-react-native/icons/palette';
 import Shield from 'lucide-react-native/icons/shield';
 import CircleHelp from 'lucide-react-native/icons/circle-question-mark';
 import LogOut from 'lucide-react-native/icons/log-out';
+import KeyRound from 'lucide-react-native/icons/key-round';
 import QRCode from 'react-native-qrcode-svg';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {launchImageLibrary, type ImageLibraryOptions} from 'react-native-image-picker';
 import {API_URL} from '@env';
-import {createPasskey, getGoogleConnectionStatus, getPasskeys, reauthenticateWithGoogle, removePasskey, signInWithGoogle} from '../../auth/authMethods';
+import {changePassword, createPasskey, getGoogleConnectionStatus, getPasskeys, reauthenticateWithGoogle, removePasskey, signInWithGoogle} from '../../auth/authMethods';
 
 import {AppButton, BrandLogo, FormInput} from '../components/Ui';
 import {COLORS, createThemedStyles, type ColorScheme} from '../theme';
@@ -19,7 +20,7 @@ import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPrefe
 import type {Account} from '../../types/Account';
 import type {UserRole} from '../../models/auth';
 
-type ProfilePage = 'main' | 'currency' | 'appearance' | 'account' | 'help' | 'security';
+type ProfilePage = 'main' | 'currency' | 'appearance' | 'account' | 'help' | 'security' | 'password';
 
 export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {username?: string; role: UserRole | null; onLogout: () => void}) {
   const isAnalyst = role === 'analyst';
@@ -44,6 +45,12 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
   const [googleLinked, setGoogleLinked] = React.useState<boolean | null>(null);
   const [passkeyMessage, setPasskeyMessage] = React.useState('');
   const [recoveryCodes, setRecoveryCodes] = React.useState<string[]>([]);
+  const [currentPassword, setCurrentPassword] = React.useState('');
+  const [newPassword, setNewPassword] = React.useState('');
+  const [newPasswordConfirmation, setNewPasswordConfirmation] = React.useState('');
+  const [passwordMfaCode, setPasswordMfaCode] = React.useState('');
+  const [passwordMessage, setPasswordMessage] = React.useState('');
+  const [isChangingPassword, setIsChangingPassword] = React.useState(false);
   const needsRecoveryCodeCopy = recoveryCodes.length > 0;
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
 
@@ -194,6 +201,60 @@ ${(data.recovery_codes ?? []).join('\n')}`,
     } catch (error) { setTotpMessage(error instanceof Error ? error.message : 'Nie udało się wyłączyć TOTP.'); }
   }
 
+  function clearPasswordForm() {
+    setCurrentPassword('');
+    setNewPassword('');
+    setNewPasswordConfirmation('');
+    setPasswordMfaCode('');
+    setPasswordMessage('');
+  }
+
+  async function submitPasswordChange() {
+    if (!token || isChangingPassword) return;
+    if (newPassword.length < 8) {
+      setPasswordMessage('Nowe hasło musi mieć co najmniej 8 znaków.');
+      return;
+    }
+    if (newPassword !== newPasswordConfirmation) {
+      setPasswordMessage('Nowe hasła nie są identyczne.');
+      return;
+    }
+    if (totpEnabled && !passwordMfaCode.trim()) {
+      setPasswordMessage('Podaj aktualny kod z Authenticatora albo kod odzyskiwania.');
+      return;
+    }
+
+    const payload = {
+      current_password: currentPassword || undefined,
+      new_password: newPassword,
+      mfa_code: totpEnabled ? passwordMfaCode.trim() || undefined : undefined,
+    };
+    setIsChangingPassword(true);
+    setPasswordMessage('Potwierdzam zmianę hasła…');
+    try {
+      try {
+        await changePassword(token, payload);
+      } catch (error) {
+        if (!googleLinked || !needsFreshGoogleAuthentication(error)) throw error;
+        setPasswordMessage('Potwierdzam tożsamość przez Google…');
+        await reauthenticateWithGoogle(token);
+        setPasswordMessage('Tożsamość potwierdzona. Kończę zmianę hasła…');
+        await changePassword(token, payload);
+      }
+      clearPasswordForm();
+      Alert.alert(
+        'Hasło zmienione',
+        'Ze względów bezpieczeństwa nastąpi wylogowanie ze wszystkich urządzeń.',
+        [{text: 'Zaloguj się ponownie', onPress: onLogout}],
+        {cancelable: false},
+      );
+    } catch (error) {
+      setPasswordMessage(error instanceof Error ? error.message : 'Nie udało się zmienić hasła.');
+    } finally {
+      setIsChangingPassword(false);
+    }
+  }
+
   React.useEffect(() => {
     if (!token || isAnalyst) return;
     let active = true;
@@ -250,6 +311,7 @@ ${(data.recovery_codes ?? []).join('\n')}`,
   const title: Record<ProfilePage, string> = {
     main: 'Profil', currency: 'Waluta i lokalizacja', appearance: 'Wygląd',
     account: 'Dane profilu', help: 'Pomoc i informacje', security: 'Bezpieczeństwo',
+    password: 'Zmień hasło',
   };
   const selectManualCurrency = (currency: string) => {
     if (locationCurrencyEnabled) setLocationCurrencyEnabled(false);
@@ -261,7 +323,14 @@ ${(data.recovery_codes ?? []).join('\n')}`,
 
   return (
     <View style={styles.screen}>
-    <ScrollView contentContainerStyle={styles.container}>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={styles.keyboardAvoiding}>
+    <ScrollView
+      automaticallyAdjustKeyboardInsets
+      contentContainerStyle={styles.container}
+      keyboardDismissMode="interactive"
+      keyboardShouldPersistTaps="handled">
       <View style={styles.headerRow}>
         <View style={styles.backPlaceholder} />
         <Text style={styles.headerTitle}>{title[page]}</Text>
@@ -281,10 +350,10 @@ ${(data.recovery_codes ?? []).join('\n')}`,
           {!isAnalyst ? <MenuRow icon={MapPin} title="Waluta i lokalizacja" subtitle={preferredCurrency ?? 'Wybierz preferencje'} onPress={() => setPage('currency')} /> : null}
           <MenuRow icon={Palette} title="Wygląd aplikacji" subtitle={THEME_LABELS[colorScheme]} onPress={() => setPage('appearance')} />
 
-          {!isAnalyst ? <Text style={styles.groupTitle}>Konto i bezpieczeństwo</Text> : null}
+          <Text style={styles.groupTitle}>Konto i bezpieczeństwo</Text>
           {!isAnalyst ? <MenuRow icon={Shield} title="Dane profilu" subtitle="Zdjęcie profilowe" onPress={() => setPage('account')} /> : null}
-
           <MenuRow icon={Shield} title="Bezpieczeństwo" subtitle={`${totpEnabled ? 'TOTP włączone' : 'TOTP wyłączone'} · ${passkeys.length} passkeys`} onPress={() => setPage('security')} />
+          <MenuRow icon={KeyRound} title="Zmień hasło" subtitle={totpEnabled ? 'Wymagane hasło i kod MFA' : 'Potwierdź obecnym hasłem'} onPress={() => setPage('password')} />
           <Text style={styles.groupTitle}>Inne</Text>
           <MenuRow icon={CircleHelp} title="Pomoc i informacje" onPress={() => setPage('help')} />
           <Pressable accessibilityRole="button" accessibilityLabel="Wyloguj się z aplikacji" onPress={signOut} style={({pressed}) => [styles.logoutRow, pressed && styles.pressed]}>
@@ -390,6 +459,73 @@ ${(data.recovery_codes ?? []).join('\n')}`,
         </View>
       ) : null}
 
+      {page === 'password' ? (
+        <View style={styles.pageContent}>
+          <View style={styles.infoCard}>
+            <Text style={styles.userTitle}>Potwierdzenie tożsamości</Text>
+            <Text style={styles.description}>
+              Zmiana hasła zakończy wszystkie aktywne sesje. {totpEnabled
+                ? 'Aby chronić konto, wymagamy obecnego hasła i jednorazowego kodu MFA.'
+                : 'Potwierdź operację obecnym hasłem.'}
+            </Text>
+          </View>
+          <FormInput
+            autoCapitalize="none"
+            autoComplete="current-password"
+            autoCorrect={false}
+            editable={!isChangingPassword}
+            label="Obecne hasło"
+            onChangeText={setCurrentPassword}
+            secureTextEntry
+            textContentType="password"
+            value={currentPassword}
+          />
+          <Text style={styles.description}>
+            Konto utworzone przez Google może potwierdzić tożsamość świeżym logowaniem Google i pozostawić to pole puste.
+          </Text>
+          <FormInput
+            autoCapitalize="none"
+            autoComplete="new-password"
+            autoCorrect={false}
+            editable={!isChangingPassword}
+            label="Nowe hasło"
+            onChangeText={setNewPassword}
+            secureTextEntry
+            textContentType="newPassword"
+            value={newPassword}
+          />
+          <FormInput
+            autoCapitalize="none"
+            autoComplete="new-password"
+            autoCorrect={false}
+            editable={!isChangingPassword}
+            label="Powtórz nowe hasło"
+            onChangeText={setNewPasswordConfirmation}
+            secureTextEntry
+            textContentType="newPassword"
+            value={newPasswordConfirmation}
+          />
+          {totpEnabled ? (
+            <FormInput
+              autoCapitalize="characters"
+              autoComplete="one-time-code"
+              autoCorrect={false}
+              editable={!isChangingPassword}
+              label="Kod z Authenticatora lub kod odzyskiwania"
+              onChangeText={setPasswordMfaCode}
+              textContentType="oneTimeCode"
+              value={passwordMfaCode}
+            />
+          ) : null}
+          {passwordMessage ? <Text accessibilityLiveRegion="polite" style={styles.statusMessage}>{passwordMessage}</Text> : null}
+          <AppButton
+            disabled={isChangingPassword}
+            onPress={submitPasswordChange}
+            title={isChangingPassword ? 'Zmieniam hasło…' : 'Zmień hasło i wyloguj'}
+          />
+        </View>
+      ) : null}
+
       {page === 'help' ? (
         <View style={styles.pageContent}>
           <View style={styles.infoCard}>
@@ -400,6 +536,7 @@ ${(data.recovery_codes ?? []).join('\n')}`,
       ) : null}
     </ScrollView>
     {page !== 'main' && !needsRecoveryCodeCopy ? <View style={styles.stickyFooter}><AppButton title="Wróć do profilu" onPress={() => setPage('main')} secondary /></View> : null}
+    </KeyboardAvoidingView>
     </View>
   );
 }
@@ -425,6 +562,7 @@ const PERMISSION_LABELS = {GRANTED: 'przyznane', DENIED: 'odmówione', BLOCKED: 
 
 const styles = createThemedStyles(() => StyleSheet.create({
   screen: {flex: 1},
+  keyboardAvoiding: {flex: 1},
   container: {flexGrow: 1, paddingHorizontal: 22, paddingTop: 18, paddingBottom: 28, gap: 10},
   headerRow: {minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8},
   headerTitle: {color: COLORS.white, fontSize: 22, fontWeight: '800', flex: 1, textAlign: 'center'},
@@ -444,6 +582,7 @@ const styles = createThemedStyles(() => StyleSheet.create({
   pageContent: {gap: 12},
   statusText: {color: COLORS.muted, fontSize: 13},
   locationMessage: {color: COLORS.muted, fontSize: 14, lineHeight: 20},
+  statusMessage: {color: COLORS.yellow, fontSize: 14, lineHeight: 20},
   infoCard: {backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 14, padding: 16, gap: 8},
   authenticatorLink: {alignSelf: 'center', paddingVertical: 6, paddingHorizontal: 10},
   authenticatorLinkText: {color: COLORS.yellow, fontSize: 14, fontWeight: '700', textDecorationLine: 'underline'},

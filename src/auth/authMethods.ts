@@ -63,6 +63,16 @@ export async function reauthenticateWithGoogle(accessToken: string): Promise<voi
   await saveSessionTokens(session);
 }
 
+export async function changePassword(
+  accessToken: string,
+  payload: {current_password?: string; new_password: string; mfa_code?: string},
+): Promise<void> {
+  await request('/api/change-password', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }, accessToken);
+}
+
 export function buildGoogleAuthorizationOptions(clientId: string, nonce: string): AuthConfiguration {
   const clientIdPrefix = clientId.replace(/\.apps\.googleusercontent\.com$/, '');
   return {

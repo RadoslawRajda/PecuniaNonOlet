@@ -1,7 +1,7 @@
 import {Passkey} from 'react-native-passkey';
 import {authorize} from 'react-native-app-auth';
 
-import {buildGoogleAuthorizationOptions, reauthenticateWithGoogle, signInWithPasskey} from '../src/auth/authMethods';
+import {buildGoogleAuthorizationOptions, changePassword, reauthenticateWithGoogle, signInWithPasskey} from '../src/auth/authMethods';
 import {authenticatedFetch, saveSessionTokens} from '../src/auth/session';
 
 jest.mock('../src/auth/session', () => ({authenticatedFetch: jest.fn(), saveSessionTokens: jest.fn()}));
@@ -23,7 +23,7 @@ describe('native authentication methods', () => {
       clientId: 'ios-client.apps.googleusercontent.com',
       redirectUrl: 'com.googleusercontent.apps.ios-client:/oauth2redirect/google',
       usePKCE: true,
-      useNonce: false,
+      useNonce: true,
       scopes: ['openid', 'email', 'profile'],
       additionalParameters: {
         nonce,
@@ -82,6 +82,30 @@ describe('native authentication methods', () => {
       expect.objectContaining({
         method: 'POST', accessToken: 'current-access-token',
         body: JSON.stringify({id_token: 'signed-google-id-token', nonce: 'server-nonce'}),
+      }),
+    );
+  });
+
+  it('sends the password-change proof only in an authenticated JSON body', async () => {
+    const authenticatedFetchMock = authenticatedFetch as jest.Mock;
+    authenticatedFetchMock.mockResolvedValueOnce({ok: true, json: async () => ({})});
+
+    await changePassword('current-access-token', {
+      current_password: 'current-password',
+      new_password: 'new-password',
+      mfa_code: '123456',
+    });
+
+    expect(authenticatedFetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/change-password'),
+      expect.objectContaining({
+        method: 'POST',
+        accessToken: 'current-access-token',
+        body: JSON.stringify({
+          current_password: 'current-password',
+          new_password: 'new-password',
+          mfa_code: '123456',
+        }),
       }),
     );
   });
