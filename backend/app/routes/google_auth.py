@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
+import json
 import secrets
 import sqlite3
 import time
@@ -141,6 +144,7 @@ def _verify_google_id_token(payload: GoogleTokenRequest) -> VerifiedGoogleIdenti
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE, "Logowanie Google nie jest skonfigurowane."
         )
+    _require_google_rs256_header(payload.id_token)
     try:
         from google.auth.exceptions import GoogleAuthError
         from google.oauth2 import id_token
@@ -214,6 +218,27 @@ def _verify_google_id_token(payload: GoogleTokenRequest) -> VerifiedGoogleIdenti
         authoritative_mailbox=authoritative,
         authenticated_at=authenticated_at,
     )
+
+
+def _require_google_rs256_header(token: str) -> None:
+    """Reject non-Google JWT algorithms before asking the verifier to fetch keys.
+
+    The untrusted header is used only as an allowlist gate; google-auth still
+    verifies the signature and claims before any identity data is accepted.
+    """
+    parts = token.split(".")
+    if len(parts) != 3 or not 1 <= len(parts[0]) <= 1024:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Nieprawidłowy token Google.")
+    encoded = parts[0]
+    try:
+        header_bytes = base64.b64decode(
+            encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True
+        )
+        header = json.loads(header_bytes)
+    except (ValueError, UnicodeDecodeError, binascii.Error):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Nieprawidłowy token Google.") from None
+    if not isinstance(header, dict) or header.get("alg") != "RS256" or "crit" in header:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Nieprawidłowy token Google.")
 
 
 @router.post("/login", response_model=LoginResponse)

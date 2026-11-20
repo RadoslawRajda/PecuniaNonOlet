@@ -14,6 +14,8 @@ from app.main import app
 from app.sessions import issue_session
 from fastapi.testclient import TestClient
 
+FAKE_GOOGLE_TOKEN = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.e30.c2ln"
+
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
@@ -51,6 +53,40 @@ def google_claims(monkeypatch, claims):
     from google.oauth2 import id_token
 
     monkeypatch.setattr(id_token, "verify_oauth2_token", lambda *args, **kwargs: claims)
+
+
+@pytest.mark.parametrize("algorithm", ["none", "HS256", "ES256"])
+def test_google_login_rejects_non_rs256_algorithm_before_verifier(client, monkeypatch, algorithm):
+    from google.oauth2 import id_token
+
+    def must_not_verify(*_args, **_kwargs):
+        raise AssertionError("disallowed JWT algorithm reached signature verifier")
+
+    monkeypatch.setattr(id_token, "verify_oauth2_token", must_not_verify)
+    nonce = client.post("/api/auth/google/nonce").json()["nonce"]
+    header = base64.urlsafe_b64encode(json.dumps({"alg": algorithm}).encode()).decode().rstrip("=")
+    candidate = f"{header}.e30.c2ln"
+    response = client.post("/api/auth/google/login", json={"id_token": candidate, "nonce": nonce})
+    assert response.status_code == 401
+
+
+def test_google_login_rejects_unhandled_critical_jwt_header(client, monkeypatch):
+    from google.oauth2 import id_token
+
+    def must_not_verify(*_args, **_kwargs):
+        raise AssertionError("critical JWT header reached signature verifier")
+
+    monkeypatch.setattr(id_token, "verify_oauth2_token", must_not_verify)
+    nonce = client.post("/api/auth/google/nonce").json()["nonce"]
+    header = (
+        base64.urlsafe_b64encode(json.dumps({"alg": "RS256", "crit": ["unsupported"]}).encode())
+        .decode()
+        .rstrip("=")
+    )
+    response = client.post(
+        "/api/auth/google/login", json={"id_token": f"{header}.e30.c2ln", "nonce": nonce}
+    )
+    assert response.status_code == 401
 
 
 def credential_json(challenge, *, origin="https://pecunianonolet.local"):
@@ -193,13 +229,13 @@ def test_google_oidc_nonce_audience_email_and_replay(client, monkeypatch):
     }
     google_claims(monkeypatch, claims)
     response = client.post(
-        "/api/auth/google/login", json={"id_token": "signed-token-placeholder-long", "nonce": nonce}
+        "/api/auth/google/login", json={"id_token": FAKE_GOOGLE_TOKEN, "nonce": nonce}
     )
     assert response.status_code == 200
     assert response.json()["user"]["email"] == "person@gmail.com"
     assert response.json()["access_token"]
     replay = client.post(
-        "/api/auth/google/login", json={"id_token": "signed-token-placeholder-long", "nonce": nonce}
+        "/api/auth/google/login", json={"id_token": FAKE_GOOGLE_TOKEN, "nonce": nonce}
     )
     assert replay.status_code == 401
     with connect_db() as db:
@@ -224,7 +260,7 @@ def test_google_login_stops_verifying_after_challenge_attempt_limit(client, monk
         raise HTTPException(status_code=401, detail="invalid test token")
 
     monkeypatch.setattr(google_auth, "_verify_google_id_token", reject_google_token)
-    payload = {"id_token": "signed-token-placeholder-long", "nonce": nonce}
+    payload = {"id_token": FAKE_GOOGLE_TOKEN, "nonce": nonce}
     for _ in range(5):
         assert client.post("/api/auth/google/login", json=payload).status_code == 401
     assert verifications == 5
@@ -328,7 +364,7 @@ def test_google_rejects_bad_issuer_audience_or_unverified_email(client, monkeypa
     claims.update(claim_patch)
     google_claims(monkeypatch, claims)
     response = client.post(
-        "/api/auth/google/login", json={"id_token": "signed-token-placeholder-long", "nonce": nonce}
+        "/api/auth/google/login", json={"id_token": FAKE_GOOGLE_TOKEN, "nonce": nonce}
     )
     assert response.status_code == 401
     with connect_db() as db:
@@ -350,7 +386,7 @@ def test_google_does_not_link_an_existing_local_account_by_email(client, monkeyp
         },
     )
     response = client.post(
-        "/api/auth/google/login", json={"id_token": "signed-token-placeholder-long", "nonce": nonce}
+        "/api/auth/google/login", json={"id_token": FAKE_GOOGLE_TOKEN, "nonce": nonce}
     )
     assert response.status_code == 409
     with connect_db() as db:
@@ -379,7 +415,7 @@ def test_google_only_account_has_undisclosed_local_credential_and_cannot_passwor
         },
     )
     response = client.post(
-        "/api/auth/google/login", json={"id_token": "signed-token-placeholder-long", "nonce": nonce}
+        "/api/auth/google/login", json={"id_token": FAKE_GOOGLE_TOKEN, "nonce": nonce}
     )
     assert response.status_code == 200
     with connect_db() as db:
@@ -418,7 +454,7 @@ def test_google_only_account_has_undisclosed_local_credential_and_cannot_passwor
     google_claims(monkeypatch, claims)
     second_factor = client.post(
         "/api/auth/google/login",
-        json={"id_token": "signed-token-placeholder-long", "nonce": login_nonce},
+        json={"id_token": FAKE_GOOGLE_TOKEN, "nonce": login_nonce},
     )
     assert second_factor.status_code == 200
     assert second_factor.json()["mfa_required"] is True
@@ -479,7 +515,7 @@ def test_google_only_management_rejects_session_without_recent_provider_auth_tim
         },
     )
     login = client.post(
-        "/api/auth/google/login", json={"id_token": "signed-token-placeholder-long", "nonce": nonce}
+        "/api/auth/google/login", json={"id_token": FAKE_GOOGLE_TOKEN, "nonce": nonce}
     )
     assert login.status_code == 200
     headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
@@ -540,7 +576,7 @@ def test_google_link_requires_fresh_session_and_binds_verified_subject(client, m
     linked = client.post(
         "/api/auth/google/link",
         headers=headers,
-        json={"id_token": "signed-token-placeholder-long", "nonce": nonce},
+        json={"id_token": FAKE_GOOGLE_TOKEN, "nonce": nonce},
     )
     assert linked.status_code == 204
     with connect_db() as db:
@@ -589,7 +625,7 @@ def test_google_link_audit_failure_rolls_back_identity_and_nonce(client, monkeyp
         client.post(
             "/api/auth/google/link",
             headers=headers,
-            json={"id_token": "signed-token-placeholder-long", "nonce": nonce},
+            json={"id_token": FAKE_GOOGLE_TOKEN, "nonce": nonce},
         )
     with connect_db() as db:
         assert db.execute("SELECT count(*) FROM oauth_identities").fetchone()[0] == 0
@@ -623,7 +659,7 @@ def test_google_link_challenge_is_bound_to_starting_session(client, monkeypatch)
     response = client.post(
         "/api/auth/google/link",
         headers={"Authorization": f"Bearer {second_token}"},
-        json={"id_token": "signed-token-placeholder-long", "nonce": nonce},
+        json={"id_token": FAKE_GOOGLE_TOKEN, "nonce": nonce},
     )
     assert response.status_code == 401
     with connect_db() as db:
@@ -654,7 +690,7 @@ def test_linked_external_google_email_can_log_in_by_stable_subject(client, monke
     linked = client.post(
         "/api/auth/google/link",
         headers=headers,
-        json={"id_token": "signed-token-placeholder-long", "nonce": nonce},
+        json={"id_token": FAKE_GOOGLE_TOKEN, "nonce": nonce},
     )
     assert linked.status_code == 204
 
@@ -663,7 +699,7 @@ def test_linked_external_google_email_can_log_in_by_stable_subject(client, monke
     google_claims(monkeypatch, claims)
     logged_in = client.post(
         "/api/auth/google/login",
-        json={"id_token": "signed-token-placeholder-long", "nonce": login_nonce},
+        json={"id_token": FAKE_GOOGLE_TOKEN, "nonce": login_nonce},
     )
     assert logged_in.status_code == 200
     assert logged_in.json()["user"]["id"] == user_id
@@ -863,7 +899,7 @@ def test_google_identity_uses_stable_subject_after_email_change(client, monkeypa
         },
     )
     first = client.post(
-        "/api/auth/google/login", json={"id_token": "signed-token-placeholder-long", "nonce": nonce}
+        "/api/auth/google/login", json={"id_token": FAKE_GOOGLE_TOKEN, "nonce": nonce}
     )
     assert first.status_code == 200
     nonce2 = client.post("/api/auth/google/nonce").json()["nonce"]
@@ -880,7 +916,7 @@ def test_google_identity_uses_stable_subject_after_email_change(client, monkeypa
     )
     second = client.post(
         "/api/auth/google/login",
-        json={"id_token": "signed-token-placeholder-long", "nonce": nonce2},
+        json={"id_token": FAKE_GOOGLE_TOKEN, "nonce": nonce2},
     )
     assert second.status_code == 200
     assert second.json()["user"]["email"] == "first@gmail.com"
@@ -1132,7 +1168,7 @@ def test_google_reauthentication_requires_bound_challenge_matching_identity_and_
     assert nonce_response.status_code == 200
     assert client.post("/api/passkeys/registration/options", headers=headers).status_code == 401
     nonce = nonce_response.json()["nonce"]
-    payload = {"id_token": "signed-token-placeholder-long", "nonce": nonce}
+    payload = {"id_token": FAKE_GOOGLE_TOKEN, "nonce": nonce}
     assert (
         client.post(
             "/api/auth/google/reauth",
@@ -1211,7 +1247,7 @@ def test_google_reauthentication_rolls_back_revocation_if_new_session_cannot_be_
             """CREATE TRIGGER fail_reauth_session BEFORE INSERT ON auth_sessions
                BEGIN SELECT RAISE(ABORT, 'forced session write failure'); END"""
         )
-    payload = {"id_token": "signed-token-placeholder-long", "nonce": nonce}
+    payload = {"id_token": FAKE_GOOGLE_TOKEN, "nonce": nonce}
     with pytest.raises(sqlite3.IntegrityError, match="forced session write failure"):
         client.post("/api/auth/google/reauth", headers=headers, json=payload)
     assert client.get("/api/me", headers=headers).status_code == 200
