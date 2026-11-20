@@ -1481,7 +1481,7 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
-  - react-native-passkey (3.6.2):
+  - react-native-passkey (3.5.0):
     - hermes-engine
     - RCTRequired
     - RCTTypeSafety
@@ -2426,7 +2426,7 @@ SPEC CHECKSUMS:
   react-native-app-auth: 3920cdf804e985aed95f3516c3bf4c9e52a8ce31
   react-native-geolocation-service: 32b2c2a3b91e70ce2a8d0c684801aaeb0a07e0ec
   react-native-image-picker: 8210f31863247b731a0a71eec034e5d2af5267d6
-  react-native-passkey: 8ef46387d60680e39493c6b4982e01c22eb1fe72
+  react-native-passkey: 6c7b0d45991349cf4311324635844a87f42f9f1b
   react-native-safe-area-context: 3d2fac6d8e7405ec6d9325ff13b4c9145fa466c4
   react-native-webview: fa32202d241bd953cb7aa323f266a43ff86dfac9
   React-NativeModulesApple: 2b658272ca69df0694cf5d54f9510aa7c33977bc
