@@ -9,6 +9,7 @@ from app.config import Settings
 from app.main import app, create_app
 from app.routes import mfa as mfa_routes
 from app.services import authentication as auth_service
+from app.services import mfa as mfa_service
 from app.totp import decrypt_secret, matching_totp_step
 from fastapi.testclient import TestClient
 
@@ -371,6 +372,30 @@ def test_concurrent_challenge_submission_issues_only_one_session(client, monkeyp
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: client.post("/api/login/mfa", json=payload), range(2)))
     assert sorted(response.status_code for response in results) == [200, 401]
+
+
+def test_session_issue_failure_rolls_back_totp_consumption(client, tmp_path, monkeypatch):
+    registered = register(client)
+    secret, _ = enable_totp(client, registered["access_token"], monkeypatch)
+    challenge = login_challenge(client)
+    monkeypatch.setattr(mfa_routes, "unix_time", lambda: NOW + 30)
+    payload = {"challenge_token": challenge, "code": pyotp.TOTP(secret).at(NOW + 30)}
+    original_issue_session = mfa_service.issue_session
+    with sqlite3.connect(tmp_path / "mfa-test.db") as db:
+        step_before = db.execute("SELECT last_used_step FROM user_totp").fetchone()[0]
+
+    def fail_issue(*args, **kwargs):
+        raise RuntimeError("session write failed")
+
+    monkeypatch.setattr(mfa_service, "issue_session", fail_issue)
+    with pytest.raises(RuntimeError, match="session write failed"):
+        client.post("/api/login/mfa", json=payload)
+    with sqlite3.connect(tmp_path / "mfa-test.db") as db:
+        assert db.execute("SELECT last_used_step FROM user_totp").fetchone()[0] == step_before
+        assert db.execute("SELECT count(*) FROM totp_login_challenges").fetchone()[0] == 1
+
+    monkeypatch.setattr(mfa_service, "issue_session", original_issue_session)
+    assert client.post("/api/login/mfa", json=payload).status_code == 200
 
 
 def test_enabling_mfa_revokes_all_previous_sessions(client, monkeypatch):

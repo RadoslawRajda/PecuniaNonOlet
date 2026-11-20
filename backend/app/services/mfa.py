@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from contextlib import closing
+from dataclasses import dataclass
 
 from fastapi import HTTPException, status
 
@@ -121,127 +122,147 @@ def _wrong_code(*, locked: bool) -> HTTPException:
     return HTTPException(status.HTTP_401_UNAUTHORIZED, "Nieprawidłowy lub wygasły kod.")
 
 
+@dataclass(frozen=True, slots=True)
+class MfaLoginOutcome:
+    response: AuthResponse | None = None
+    error: HTTPException | None = None
+
+
+def _invalid_challenge() -> HTTPException:
+    return HTTPException(status.HTTP_401_UNAUTHORIZED, "Nieprawidłowy lub wygasły challenge.")
+
+
+def _load_login_challenge(db: sqlite3.Connection, digest: str) -> sqlite3.Row:
+    challenge = db.execute(
+        """SELECT user_id, expires_at, attempts, authentication_method,
+                  provider_authenticated_at
+           FROM totp_login_challenges WHERE challenge_hash = ?""",
+        (digest,),
+    ).fetchone()
+    if challenge is None:
+        raise _invalid_challenge()
+    return challenge
+
+
+def _load_active_credential(db: sqlite3.Connection, user_id: int) -> sqlite3.Row | None:
+    return db.execute(
+        "SELECT * FROM user_totp WHERE user_id = ? AND enabled_at IS NOT NULL",
+        (user_id,),
+    ).fetchone()
+
+
+def _verify_login_code(
+    db: sqlite3.Connection, credential: sqlite3.Row, user_id: int, code: str, now: int
+) -> tuple[bool, int | None, bool]:
+    """Return validity, matched TOTP step and whether a recovery code was used."""
+    if re.fullmatch(r"[0-9]{6}", code):
+        secret = decrypt_secret(user_id, credential["secret_ciphertext"], purpose="active")
+        step = matching_totp_step(secret, code, now=now)
+        return step is not None and step > credential["last_used_step"], step, False
+    found = db.execute(
+        "SELECT 1 FROM totp_recovery_codes WHERE user_id = ? AND code_hash = ?",
+        (user_id, recovery_code_hash(code)),
+    ).fetchone()
+    return found is not None, None, found is not None
+
+
+def _consume_login_code(
+    db: sqlite3.Connection,
+    user_id: int,
+    code: str,
+    matched_step: int | None,
+    used_recovery_code: bool,
+    now: int,
+) -> None:
+    if used_recovery_code:
+        db.execute(
+            "DELETE FROM totp_recovery_codes WHERE user_id = ? AND code_hash = ?",
+            (user_id, recovery_code_hash(code)),
+        )
+        role = db.execute(
+            "SELECT role_name FROM user_roles WHERE user_id = ?", (user_id,)
+        ).fetchone()["role_name"]
+        write_audit_event(
+            db,
+            actor_user_id=user_id,
+            actor_role=role,
+            action="auth.mfa_recovery_code_used",
+            entity_type="user",
+            entity_id=str(user_id),
+            details={},
+            created_at=now,
+        )
+    else:
+        db.execute(
+            "UPDATE user_totp SET last_used_step = ? WHERE user_id = ?",
+            (matched_step, user_id),
+        )
+    _reset_failed_attempts(db, user_id)
+
+
+def _issue_authenticated_session(db: sqlite3.Connection, challenge: sqlite3.Row) -> AuthResponse:
+    user_id = challenge["user_id"]
+    identity = db.execute(
+        """SELECT u.id, u.email, r.role_name FROM users AS u
+           JOIN user_roles AS r ON r.user_id = u.id WHERE u.id = ?""",
+        (user_id,),
+    ).fetchone()
+    if identity is None:
+        raise _invalid_challenge()
+    tokens = issue_session(
+        db,
+        user_id,
+        authentication_method=challenge["authentication_method"],
+        provider_authenticated_at=challenge["provider_authenticated_at"],
+    )
+    return AuthResponse(
+        user=User(id=identity["id"], email=identity["email"], role=identity["role_name"]),
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        expires_in=tokens.expires_in,
+        refresh_expires_in=tokens.refresh_expires_in,
+    )
+
+
+def _finish_login_in_transaction(
+    db: sqlite3.Connection, digest: str, code: str, now: int
+) -> MfaLoginOutcome:
+    """Return errors after committing challenge expiry or failed-attempt counters."""
+    challenge = _load_login_challenge(db, digest)
+    if challenge["expires_at"] <= now:
+        db.execute("DELETE FROM totp_login_challenges WHERE challenge_hash = ?", (digest,))
+        return MfaLoginOutcome(error=_invalid_challenge())
+    user_id = challenge["user_id"]
+    credential = _load_active_credential(db, user_id)
+    if credential is None or credential["secret_ciphertext"] is None:
+        db.execute("DELETE FROM totp_login_challenges WHERE user_id = ?", (user_id,))
+        return MfaLoginOutcome(error=_invalid_challenge())
+    _assert_not_locked(credential, now)
+    valid, matched_step, used_recovery = _verify_login_code(db, credential, user_id, code, now)
+    if not valid:
+        locked = _record_failed_attempt(db, user_id, now, challenge_digest=digest)
+        return MfaLoginOutcome(error=_wrong_code(locked=locked))
+    _consume_login_code(db, user_id, code, matched_step, used_recovery, now)
+    db.execute("DELETE FROM totp_login_challenges WHERE challenge_hash = ?", (digest,))
+    return MfaLoginOutcome(response=_issue_authenticated_session(db, challenge))
+
+
 def complete_mfa_login(challenge_token: str, code: str, *, now: int | None = None) -> AuthResponse:
-    """Consume one TOTP challenge and issue a full session in one write transaction."""
+    """Consume one TOTP challenge and issue a full session in one write transaction.
+
+    The pending error is raised only after commit so expired challenges and failed
+    attempts persist. A failed session issue rolls back code consumption and audit.
+    """
     now = unix_time() if now is None else now
-    challenge_digest = challenge_hash(challenge_token)
-    pending_error: HTTPException | None = None
-    result: AuthResponse | None = None
+    digest = challenge_hash(challenge_token)
     try:
         with closing(connect_db()) as db, db:
             db.execute("BEGIN IMMEDIATE")
-            challenge = db.execute(
-                "SELECT user_id,expires_at,attempts,authentication_method,provider_authenticated_at "
-                "FROM totp_login_challenges WHERE challenge_hash = ?",
-                (challenge_digest,),
-            ).fetchone()
-            if challenge is None:
-                raise HTTPException(
-                    status.HTTP_401_UNAUTHORIZED, "Nieprawidłowy lub wygasły challenge."
-                )
-            if challenge["expires_at"] <= now:
-                db.execute(
-                    "DELETE FROM totp_login_challenges WHERE challenge_hash = ?",
-                    (challenge_digest,),
-                )
-                pending_error = HTTPException(
-                    status.HTTP_401_UNAUTHORIZED, "Nieprawidłowy lub wygasły challenge."
-                )
-            else:
-                user_id = challenge["user_id"]
-                credential = db.execute(
-                    "SELECT * FROM user_totp WHERE user_id = ? AND enabled_at IS NOT NULL",
-                    (user_id,),
-                ).fetchone()
-                if credential is None or credential["secret_ciphertext"] is None:
-                    db.execute("DELETE FROM totp_login_challenges WHERE user_id = ?", (user_id,))
-                    pending_error = HTTPException(
-                        status.HTTP_401_UNAUTHORIZED, "Nieprawidłowy lub wygasły challenge."
-                    )
-                else:
-                    _assert_not_locked(credential, now)
-                    used_recovery_code = False
-                    matched_step: int | None = None
-                    if re.fullmatch(r"[0-9]{6}", code):
-                        secret = decrypt_secret(
-                            user_id, credential["secret_ciphertext"], purpose="active"
-                        )
-                        matched_step = matching_totp_step(secret, code, now=now)
-                        valid_code = (
-                            matched_step is not None and matched_step > credential["last_used_step"]
-                        )
-                    else:
-                        row = db.execute(
-                            "SELECT code_hash FROM totp_recovery_codes WHERE user_id = ? AND code_hash = ?",
-                            (user_id, recovery_code_hash(code)),
-                        ).fetchone()
-                        valid_code = row is not None
-                        used_recovery_code = valid_code
-
-                    if not valid_code:
-                        pending_error = _wrong_code(
-                            locked=_record_failed_attempt(
-                                db, user_id, now, challenge_digest=challenge_digest
-                            )
-                        )
-                    else:
-                        if used_recovery_code:
-                            db.execute(
-                                "DELETE FROM totp_recovery_codes WHERE user_id = ? AND code_hash = ?",
-                                (user_id, recovery_code_hash(code)),
-                            )
-                            write_audit_event(
-                                db,
-                                actor_user_id=user_id,
-                                actor_role=db.execute(
-                                    "SELECT role_name FROM user_roles WHERE user_id = ?", (user_id,)
-                                ).fetchone()["role_name"],
-                                action="auth.mfa_recovery_code_used",
-                                entity_type="user",
-                                entity_id=str(user_id),
-                                details={},
-                                created_at=now,
-                            )
-                        else:
-                            db.execute(
-                                "UPDATE user_totp SET last_used_step = ? WHERE user_id = ?",
-                                (matched_step, user_id),
-                            )
-                        _reset_failed_attempts(db, user_id)
-                        db.execute(
-                            "DELETE FROM totp_login_challenges WHERE challenge_hash = ?",
-                            (challenge_digest,),
-                        )
-                        identity = db.execute(
-                            """SELECT u.id, u.email, r.role_name FROM users AS u
-                               JOIN user_roles AS r ON r.user_id = u.id WHERE u.id = ?""",
-                            (user_id,),
-                        ).fetchone()
-                        if identity is None:
-                            raise HTTPException(
-                                status.HTTP_401_UNAUTHORIZED, "Nieprawidłowy lub wygasły challenge."
-                            )
-                        tokens = issue_session(
-                            db,
-                            user_id,
-                            authentication_method=challenge["authentication_method"],
-                            provider_authenticated_at=challenge["provider_authenticated_at"],
-                        )
-                        result = AuthResponse(
-                            user=User(
-                                id=identity["id"],
-                                email=identity["email"],
-                                role=identity["role_name"],
-                            ),
-                            access_token=tokens.access_token,
-                            refresh_token=tokens.refresh_token,
-                            expires_in=tokens.expires_in,
-                            refresh_expires_in=tokens.refresh_expires_in,
-                        )
+            outcome = _finish_login_in_transaction(db, digest, code, now)
     except MFAConfigurationError as exc:
         raise _unavailable() from exc
-    if pending_error is not None:
-        raise pending_error
-    if result is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Nieprawidłowy lub wygasły challenge.")
-    return result
+    if outcome.error is not None:
+        raise outcome.error
+    if outcome.response is None:
+        raise _invalid_challenge()
+    return outcome.response
