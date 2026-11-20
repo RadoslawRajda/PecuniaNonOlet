@@ -98,6 +98,83 @@ def google_link_nonce(session: Authenticated, request: Request) -> dict[str, obj
     return {"nonce": nonce, "expires_in": CHALLENGE_TTL}
 
 
+@router.post("/reauth/nonce")
+def google_reauth_nonce(session: Authenticated, request: Request) -> dict[str, object]:
+    """Issue a one-use challenge bound to an existing session and Google identity."""
+    enforce_rate_limit(
+        [
+            ip_bucket(
+                "google_reauth_nonce", client_ip(request.client.host if request.client else None)
+            )
+        ]
+    )
+    with closing(connect_db()) as db, db:
+        linked = db.execute(
+            "SELECT 1 FROM oauth_identities WHERE user_id=? AND provider='google' LIMIT 1",
+            (session.user.id,),
+        ).fetchone()
+        if linked is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Konto Google nie jest połączone.")
+        nonce = _new_challenge(db, "google_reauth", session.user.id, session.session_id)
+    return {"nonce": nonce, "expires_in": CHALLENGE_TTL}
+
+
+@router.post("/reauth", status_code=204, response_class=Response)
+def google_reauthenticate(
+    payload: GoogleTokenRequest, session: Authenticated, request: Request
+) -> Response:
+    """Refresh session authentication evidence after a new Google ceremony."""
+    enforce_rate_limit(
+        [ip_bucket("google_reauth", client_ip(request.client.host if request.client else None))]
+    )
+    now = int(time.time())
+    with closing(connect_db()) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        allowed = claim_auth_challenge_attempt(
+            db,
+            "google_reauth",
+            payload.nonce,
+            now=now,
+            user_id=session.user.id,
+            session_id=session.session_id,
+        )
+    if not allowed:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wyzwanie Google wygasło.")
+
+    identity = _verify_google_id_token(payload)
+    if (
+        identity.authenticated_at is None
+        or identity.authenticated_at > now + 30
+        or now - identity.authenticated_at > 300
+    ):
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Google nie potwierdził świeżego logowania."
+        )
+
+    with closing(connect_db()) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        _consume_challenge(db, "google_reauth", payload.nonce, session.user.id, session.session_id)
+        linked = db.execute(
+            """SELECT 1 FROM oauth_identities
+               WHERE user_id=? AND provider='google' AND issuer=? AND subject=?""",
+            (session.user.id, identity.issuer, identity.subject),
+        ).fetchone()
+        if linked is None:
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED, "To konto Google nie należy do użytkownika."
+            )
+        updated = db.execute(
+            """UPDATE auth_sessions
+               SET authentication_method='google', authenticated_at=?, provider_authenticated_at=?
+               WHERE session_id=? AND user_id=? AND access_expires_at>?
+                 AND refresh_expires_at>? AND absolute_expires_at>? AND revoked_at IS NULL""",
+            (now, identity.authenticated_at, session.session_id, session.user.id, now, now, now),
+        ).rowcount
+        if updated != 1:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesja jest nieważna lub wygasła.")
+    return Response(status_code=204)
+
+
 def _verify_google_id_token(payload: GoogleTokenRequest) -> VerifiedGoogleIdentity:
     audiences = {
         value.strip()

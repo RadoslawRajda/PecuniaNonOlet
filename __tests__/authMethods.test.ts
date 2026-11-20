@@ -1,6 +1,10 @@
 import {Passkey} from 'react-native-passkey';
+import {authorize} from 'react-native-app-auth';
 
-import {buildGoogleAuthorizationOptions, signInWithPasskey} from '../src/auth/authMethods';
+import {buildGoogleAuthorizationOptions, reauthenticateWithGoogle, signInWithPasskey} from '../src/auth/authMethods';
+import {authenticatedFetch} from '../src/auth/session';
+
+jest.mock('../src/auth/session', () => ({authenticatedFetch: jest.fn()}));
 
 const passkeyGetMock = Passkey.get as jest.Mock;
 
@@ -23,6 +27,7 @@ describe('native authentication methods', () => {
       scopes: ['openid', 'email', 'profile'],
       additionalParameters: {
         nonce,
+        max_age: '0',
         prompt: 'select_account',
         claims: JSON.stringify({id_token: {auth_time: {essential: true}}}),
       },
@@ -42,15 +47,40 @@ describe('native authentication methods', () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      '/api/passkeys/authentication/options',
+      expect.stringContaining('/api/passkeys/authentication/options'),
       expect.objectContaining({method: 'POST'}),
     );
     expect(passkeyGetMock).toHaveBeenCalledWith(options);
     expect(fetchMock).toHaveBeenNthCalledWith(2,
-      '/api/passkeys/authentication/verify',
+      expect.stringContaining('/api/passkeys/authentication/verify'),
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({credential}),
+      }),
+    );
+  });
+
+  it('binds a fresh Google ceremony to the current backend session', async () => {
+    const authenticatedFetchMock = authenticatedFetch as jest.Mock;
+    authenticatedFetchMock
+      .mockResolvedValueOnce({ok: true, json: async () => ({nonce: 'server-nonce'})})
+      .mockResolvedValueOnce({ok: true, json: async () => null});
+    (authorize as jest.Mock).mockResolvedValue({idToken: 'signed-google-id-token'});
+
+    await reauthenticateWithGoogle('current-access-token');
+
+    expect(authenticatedFetchMock).toHaveBeenNthCalledWith(
+      1, expect.stringContaining('/api/auth/google/reauth/nonce'),
+      expect.objectContaining({method: 'POST', accessToken: 'current-access-token'}),
+    );
+    expect(authorize).toHaveBeenCalledWith(expect.objectContaining({
+      additionalParameters: expect.objectContaining({nonce: 'server-nonce', max_age: '0'}),
+    }));
+    expect(authenticatedFetchMock).toHaveBeenNthCalledWith(
+      2, expect.stringContaining('/api/auth/google/reauth'),
+      expect.objectContaining({
+        method: 'POST', accessToken: 'current-access-token',
+        body: JSON.stringify({id_token: 'signed-google-id-token', nonce: 'server-nonce'}),
       }),
     );
   });

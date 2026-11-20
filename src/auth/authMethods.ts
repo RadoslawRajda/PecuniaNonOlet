@@ -31,17 +31,31 @@ export async function signInWithGoogle(linkToken?: string) {
   const {nonce} = await request(linkToken ? '/api/auth/google/link/nonce' : '/api/auth/google/nonce', {
     method: 'POST',
   }, linkToken);
+  const result = await authorizeGoogle(nonce);
+  const path = linkToken ? '/api/auth/google/link' : '/api/auth/google/login';
+  return request(path, {
+    method: 'POST',
+    body: JSON.stringify({id_token: result.idToken, nonce}),
+  }, linkToken);
+}
+
+async function authorizeGoogle(nonce: string) {
   const clientId = Platform.OS === 'ios' ? GOOGLE_IOS_CLIENT_ID : GOOGLE_ANDROID_CLIENT_ID;
   if (!clientId) {
     throw new Error('Uzupełnij GOOGLE_IOS_CLIENT_ID i GOOGLE_ANDROID_CLIENT_ID w pliku .env.');
   }
   const result = await authorize(buildGoogleAuthorizationOptions(clientId, nonce));
   if (!result.idToken) throw new Error('Google nie zwrócił tokenu ID.');
-  const path = linkToken ? '/api/auth/google/link' : '/api/auth/google/login';
-  return request(path, {
+  return result;
+}
+
+export async function reauthenticateWithGoogle(accessToken: string): Promise<void> {
+  const {nonce} = await request('/api/auth/google/reauth/nonce', {method: 'POST'}, accessToken);
+  const result = await authorizeGoogle(nonce);
+  await request('/api/auth/google/reauth', {
     method: 'POST',
     body: JSON.stringify({id_token: result.idToken, nonce}),
-  }, linkToken);
+  }, accessToken);
 }
 
 export function buildGoogleAuthorizationOptions(clientId: string, nonce: string): AuthConfiguration {
@@ -53,6 +67,7 @@ export function buildGoogleAuthorizationOptions(clientId: string, nonce: string)
     scopes: ['openid', 'email', 'profile'],
     additionalParameters: {
       nonce,
+      max_age: '0',
       prompt: 'select_account',
       claims: JSON.stringify({id_token: {auth_time: {essential: true}}}),
     },

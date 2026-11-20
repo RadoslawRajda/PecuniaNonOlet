@@ -1029,3 +1029,68 @@ def test_local_association_documents_are_served_for_ios_and_android(client):
     assert aasa.json()["webcredentials"]["apps"] == ["96UM85TJJ7.com.rajda.pecunianonolet"]
     assert links.json()[0]["target"]["package_name"] == "com.pecunianonolet"
     assert links.headers["Cache-Control"] == "no-store"
+
+
+def test_google_reauthentication_requires_bound_challenge_matching_identity_and_fresh_auth_time(
+    client, monkeypatch
+):
+    from app.authorization import token_hash
+
+    user_id, token = make_user("reauth@example.com")
+    _, other_token = make_user("other-reauth@example.com")
+    with connect_db() as db, db:
+        db.execute(
+            """INSERT INTO oauth_identities(
+                   user_id,provider,issuer,subject,email_at_link,created_at
+               ) VALUES (?,'google','https://accounts.google.com','linked-subject',?,?)""",
+            (user_id, "reauth@example.com", int(time.time())),
+        )
+        db.execute(
+            "UPDATE auth_sessions SET authenticated_at=1 WHERE access_token_hash=?",
+            (token_hash(token),),
+        )
+    headers = {"Authorization": f"Bearer {token}"}
+    nonce_response = client.post("/api/auth/google/reauth/nonce", headers=headers)
+    assert nonce_response.status_code == 200
+    assert client.post("/api/passkeys/registration/options", headers=headers).status_code == 401
+    nonce = nonce_response.json()["nonce"]
+    payload = {"id_token": "signed-token-placeholder-long", "nonce": nonce}
+    assert (
+        client.post(
+            "/api/auth/google/reauth",
+            headers={"Authorization": f"Bearer {other_token}"},
+            json=payload,
+        ).status_code
+        == 401
+    )
+
+    claims = {
+        "iss": "https://accounts.google.com",
+        "sub": "linked-subject",
+        "email": "reauth@example.com",
+        "email_verified": True,
+        "aud": "ios.apps.googleusercontent.com",
+        "nonce": nonce,
+        "auth_time": int(time.time()) - 600,
+    }
+    google_claims(monkeypatch, claims)
+    assert client.post("/api/auth/google/reauth", headers=headers, json=payload).status_code == 401
+    claims.pop("auth_time")
+    assert client.post("/api/auth/google/reauth", headers=headers, json=payload).status_code == 401
+    claims["auth_time"] = "invalid"
+    assert client.post("/api/auth/google/reauth", headers=headers, json=payload).status_code == 401
+    claims["auth_time"] = int(time.time())
+    claims["sub"] = "different-subject"
+    assert client.post("/api/auth/google/reauth", headers=headers, json=payload).status_code == 401
+    claims["sub"] = "linked-subject"
+    assert client.post("/api/auth/google/reauth", headers=headers, json=payload).status_code == 204
+    assert client.post("/api/passkeys/registration/options", headers=headers).status_code == 200
+    assert client.post("/api/auth/google/reauth", headers=headers, json=payload).status_code == 401
+    with connect_db() as db:
+        row = db.execute(
+            """SELECT authentication_method,provider_authenticated_at
+               FROM auth_sessions WHERE access_token_hash=?""",
+            (token_hash(token),),
+        ).fetchone()
+        assert row["authentication_method"] == "google"
+        assert abs(row["provider_authenticated_at"] - int(time.time())) <= 5

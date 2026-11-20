@@ -11,7 +11,7 @@ import QRCode from 'react-native-qrcode-svg';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {launchImageLibrary, type ImageLibraryOptions} from 'react-native-image-picker';
 import {API_URL} from '@env';
-import {createPasskey, getPasskeys, removePasskey, signInWithGoogle} from '../../auth/authMethods';
+import {createPasskey, getPasskeys, reauthenticateWithGoogle, removePasskey, signInWithGoogle} from '../../auth/authMethods';
 
 import {AppButton, BrandLogo, FormInput} from '../components/Ui';
 import {COLORS, createThemedStyles, type ColorScheme} from '../theme';
@@ -83,6 +83,16 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
       setPasskeyMessage('Konto Google zostało połączone.');
     } catch (error) {
       setPasskeyMessage(error instanceof Error ? error.message : 'Nie udało się połączyć konta Google.');
+    }
+  }
+
+  async function confirmGoogleIdentity() {
+    if (!token) return;
+    try {
+      await reauthenticateWithGoogle(token);
+      setPasskeyMessage('Tożsamość Google została potwierdzona na 5 minut.');
+    } catch (error) {
+      setPasskeyMessage(error instanceof Error ? error.message : 'Nie udało się potwierdzić tożsamości Google.');
     }
   }
 
@@ -307,6 +317,7 @@ ${(data.recovery_codes ?? []).join('\n')}`,
             <Text style={styles.optionTitle}>{item.label}</Text><Text style={styles.optionHint}>Usuń</Text>
           </Pressable>)}
           <AppButton title="Połącz konto Google" onPress={connectGoogle} secondary />
+          <AppButton title="Potwierdź tożsamość przez Google" onPress={confirmGoogleIdentity} secondary />
           {passkeyMessage ? <Text selectable style={styles.description}>{passkeyMessage}</Text> : null}
           <Text style={styles.groupTitle}>TOTP / Authenticator</Text>
           <Text style={styles.description}>{totpEnabled ? 'TOTP jest włączone dla Twojego konta.' : 'Zabezpiecz logowanie kodem z aplikacji Authenticator.'}</Text>

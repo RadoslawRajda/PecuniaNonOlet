@@ -96,6 +96,8 @@ zdarzeń bezpieczeństwa korzystają z konfiguracji własnej instancji aplikacji
 | `POST` | `/api/auth/google/login` | Weryfikacja Google ID tokenu i wydanie lokalnej sesji |
 | `POST` | `/api/auth/google/link/nonce` | Nonce do jawnego połączenia Google z zalogowanym kontem |
 | `POST` | `/api/auth/google/link` | Połączenie kont po świeżym uwierzytelnieniu |
+| `POST` | `/api/auth/google/reauth/nonce` | Wyzwanie do ponownego potwierdzenia Google w bieżącej sesji |
+| `POST` | `/api/auth/google/reauth` | Sprawdzenie świeżego Google `auth_time` i odnowienie kontekstu uwierzytelnienia |
 | `GET` | `/api/passkeys` | Lista własnych passkeys bez ujawniania kluczy publicznych |
 | `POST` | `/api/passkeys/registration/options` | Początek rejestracji passkey |
 | `POST` | `/api/passkeys/registration/verify` | Weryfikacja attestation i zapis poświadczenia |
