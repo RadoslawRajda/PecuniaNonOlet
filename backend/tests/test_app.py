@@ -1,4 +1,6 @@
+import hashlib
 import sqlite3
+import re
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
@@ -50,6 +52,11 @@ def test_diagnostics_and_health(client):
         'filename="pecunianonolet-local-root-ca.cer"'
     )
     assert certificate.content
+    fingerprint = re.search(r"Odcisk SHA-256 CA:</strong><br><code>([^<]+)", page.text)
+    assert fingerprint is not None
+    assert fingerprint.group(1) == ":".join(
+        f"{byte:02X}" for byte in hashlib.sha256(certificate.content).digest()
+    )
 
 
 def test_security_headers_are_applied_to_api_docs_and_https_responses(client):

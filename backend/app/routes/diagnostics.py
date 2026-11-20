@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import hashlib
 from contextlib import closing
 from pathlib import Path
 
@@ -13,6 +14,18 @@ from app.config import Settings, load_settings
 from app.database import connect_db
 
 router = APIRouter(tags=["diagnostics"])
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+LOCAL_TLS_DIRECTORY = BACKEND_ROOT / "data" / "tls"
+
+
+def local_ca_certificate_path() -> Path:
+    """Return the one CA certificate created by the local launcher."""
+    return LOCAL_TLS_DIRECTORY / "local-root-ca.cer"
+
+
+def certificate_fingerprint_sha256(certificate_bytes: bytes) -> str:
+    digest = hashlib.sha256(certificate_bytes).hexdigest().upper()
+    return ":".join(digest[index : index + 2] for index in range(0, len(digest), 2))
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -20,13 +33,14 @@ def diagnostics(request: Request) -> HTMLResponse:
     settings: Settings = request.app.state.settings or load_settings()
     if settings.app_env == "production":
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Nie znaleziono strony.")
-    ip = settings.lan_ip
-    from app.local_tls import ensure_local_tls
+    certificate_path = local_ca_certificate_path()
+    if not certificate_path.is_file():
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Lokalny certyfikat CA nie jest dostępny. Uruchom backend przez launcher.",
+        )
 
-    tls_files = ensure_local_tls(
-        Path(__file__).resolve().parents[1] / "data" / "tls", ip or "127.0.0.1"
-    )
-    fingerprint = html.escape(tls_files.ca_fingerprint_sha256)
+    fingerprint = html.escape(certificate_fingerprint_sha256(certificate_path.read_bytes()))
     return HTMLResponse(
         '<!doctype html><html lang="pl"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -44,7 +58,8 @@ def diagnostics(request: Request) -> HTMLResponse:
         "zainstaluj plik jako certyfikat CA w ustawieniach zabezpieczeń telefonu "
         "(nazwy opcji zależą od producenta).</li>"
         "<li>Przed zaufaniem porównaj odcisk SHA-256 poniżej z wartością "
-        "wypisaną w terminalu komputera uruchamiającego backend.</li></ol>"
+        "wypisaną w terminalu komputera uruchamiającego backend. To odcisk CA "
+        "instalowanego na telefonie; będzie inny od odcisku certyfikatu serwera HTTPS.</li></ol>"
         f"<p><strong>Odcisk SHA-256 CA:</strong><br><code>{fingerprint}</code></p>"
         "<h2>Połączenie backendu</h2>"
         "<p><strong>HTTPS — bezpieczne połączenie aplikacji:</strong><br>"
@@ -73,7 +88,7 @@ def download_local_ca() -> FileResponse:
     """Serve only the public local CA certificate to simplify phone setup."""
     if load_settings().app_env == "production":
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Nie znaleziono certyfikatu.")
-    certificate_path = Path(__file__).resolve().parents[1] / "data" / "tls" / "local-root-ca.cer"
+    certificate_path = local_ca_certificate_path()
     if not certificate_path.is_file():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Lokalny certyfikat CA nie jest dostępny.")
     return FileResponse(
