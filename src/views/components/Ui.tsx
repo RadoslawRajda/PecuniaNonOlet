@@ -37,12 +37,17 @@ export function BrandLogo({size = 82, showProfilePhoto = false}: {size?: number;
   );
 }
 
-export function ScreenHeader({title, subtitle}: {title: string; subtitle?: string}) {
+export function ScreenHeader({
+  title,
+  subtitle,
+  detail,
+}: {title: string; subtitle?: string; detail?: string}) {
   return (
     <View style={styles.screenHeader}>
       <View style={styles.screenHeaderText}>
-        <Text style={styles.screenHeaderTitle}>{title}</Text>
-        {subtitle ? <Text style={styles.screenHeaderSubtitle}>{subtitle}</Text> : null}
+        <Text numberOfLines={1} ellipsizeMode="tail" style={styles.screenHeaderTitle}>{title}</Text>
+        {subtitle ? <Text numberOfLines={1} ellipsizeMode="tail" style={styles.screenHeaderSubtitle}>{subtitle}</Text> : null}
+        {detail ? <Text numberOfLines={1} ellipsizeMode="tail" style={styles.screenHeaderDetail}>{detail}</Text> : null}
       </View>
       <BrandLogo size={42} />
     </View>
@@ -117,7 +122,8 @@ const styles = createThemedStyles(() => StyleSheet.create({
   screenHeader: {width: '100%', minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 14},
   screenHeaderText: {flex: 1, gap: 3},
   screenHeaderTitle: {color: COLORS.white, fontSize: 26, fontWeight: '800'},
-  screenHeaderSubtitle: {color: COLORS.muted, fontSize: 14},
+  screenHeaderSubtitle: {color: COLORS.white, fontSize: 17, fontWeight: '700'},
+  screenHeaderDetail: {color: COLORS.muted, fontSize: 14},
   button: {
     backgroundColor: COLORS.yellow,
     borderRadius: 12,

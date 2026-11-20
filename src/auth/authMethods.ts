@@ -64,7 +64,9 @@ export async function signInWithGoogle(linkToken?: string) {
   }, linkToken);
 }
 
-export async function getGoogleConnectionStatus(accessToken: string): Promise<{linked: boolean}> {
+export async function getGoogleConnectionStatus(
+  accessToken: string,
+): Promise<{linked: boolean; has_local_password: boolean}> {
   return request('/api/auth/google/status', undefined, accessToken);
 }
 

@@ -56,7 +56,10 @@ def google_claims(monkeypatch, claims):
 def test_google_connection_status_is_private_and_reflects_link(client):
     user_id, token = make_user()
     headers = {"Authorization": f"Bearer {token}"}
-    assert client.get("/api/auth/google/status", headers=headers).json() == {"linked": False}
+    assert client.get("/api/auth/google/status", headers=headers).json() == {
+        "linked": False,
+        "has_local_password": True,
+    }
 
     with connect_db() as db, db:
         db.execute(
@@ -66,7 +69,10 @@ def test_google_connection_status_is_private_and_reflects_link(client):
             (user_id,),
         )
 
-    assert client.get("/api/auth/google/status", headers=headers).json() == {"linked": True}
+    assert client.get("/api/auth/google/status", headers=headers).json() == {
+        "linked": True,
+        "has_local_password": True,
+    }
 
 
 @pytest.mark.parametrize("algorithm", ["none", "HS256", "ES256"])

@@ -81,13 +81,20 @@ def google_nonce(request: Request) -> dict[str, object]:
 
 @router.get("/status")
 def google_connection_status(session: Authenticated) -> dict[str, bool]:
-    """Report whether the current user can complete Google reauthentication."""
+    """Report this user's Google connection and local-password availability."""
     with closing(connect_db()) as db:
         linked = db.execute(
             "SELECT 1 FROM oauth_identities WHERE user_id=? AND provider='google' LIMIT 1",
             (session.user.id,),
         ).fetchone()
-    return {"linked": linked is not None}
+        local_password = db.execute(
+            "SELECT has_local_password FROM users WHERE id=?",
+            (session.user.id,),
+        ).fetchone()
+    return {
+        "linked": linked is not None,
+        "has_local_password": bool(local_password and local_password["has_local_password"]),
+    }
 
 
 @router.post("/link/nonce")

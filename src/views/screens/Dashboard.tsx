@@ -145,7 +145,11 @@ export function Dashboard({
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.content}>
-        <ScreenHeader title={`Cześć, ${username}`} subtitle="Twoje finanse w jednym miejscu" />
+        <ScreenHeader
+          title="Cześć,"
+          subtitle={username}
+          detail="Twoje finanse w jednym miejscu"
+        />
 
         <View style={styles.balanceCard}>
           <Text style={styles.balanceCaption}>Dostępne środki</Text>
