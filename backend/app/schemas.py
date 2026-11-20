@@ -20,6 +20,10 @@ class RegisterCredentials(LoginCredentials):
     password: str = Field(min_length=8, max_length=128)
 
 
+class PublicRegisterRequest(RegisterCredentials):
+    captcha_token: str = Field(min_length=1, max_length=2048)
+
+
 class User(BaseModel):
     id: int
     email: EmailStr
@@ -31,6 +35,62 @@ class AuthResponse(BaseModel):
     token: str
     token_type: str = "bearer"
     expires_in: int = 7 * 24 * 60 * 60
+
+
+class MfaLoginChallengeResponse(BaseModel):
+    mfa_required: Literal[True] = True
+    challenge_token: str
+    expires_in: int
+
+
+LoginResponse = AuthResponse | MfaLoginChallengeResponse
+
+
+class MfaSetupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str = Field(min_length=1, max_length=128)
+
+
+class MfaSetupResponse(BaseModel):
+    secret: str
+    provisioning_uri: str
+    expires_at: int
+
+
+class MfaCodeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=6, max_length=16, pattern=r"^(?:[0-9]{6}|[A-Za-z0-9_-]{16})$")
+
+
+class MfaLoginRequest(MfaCodeRequest):
+    challenge_token: str = Field(min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]{43}$")
+
+
+class MfaTotpCodeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=6, max_length=6, pattern=r"^[0-9]{6}$")
+
+
+class MfaEnableResponse(BaseModel):
+    totp_enabled: Literal[True] = True
+    recovery_codes: list[str]
+    reauthentication_required: Literal[True] = True
+
+
+class MfaDisableRequest(MfaCodeRequest):
+    current_password: str = Field(min_length=1, max_length=128)
+
+
+class MfaDisableResponse(BaseModel):
+    totp_enabled: Literal[False] = False
+    reauthentication_required: Literal[True] = True
+
+
+class MfaStatusResponse(BaseModel):
+    totp_enabled: bool
 
 
 class ChangePasswordRequest(BaseModel):

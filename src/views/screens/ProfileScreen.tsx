@@ -1,21 +1,23 @@
 import React from 'react';
-import {Alert, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {Alert, BackHandler, Linking, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import ChevronRight from 'lucide-react-native/icons/chevron-right';
 import MapPin from 'lucide-react-native/icons/map-pin';
 import Palette from 'lucide-react-native/icons/palette';
 import Shield from 'lucide-react-native/icons/shield';
 import CircleHelp from 'lucide-react-native/icons/circle-question-mark';
 import LogOut from 'lucide-react-native/icons/log-out';
+import QRCode from 'react-native-qrcode-svg';
+import Clipboard from '@react-native-clipboard/clipboard';
 import {launchImageLibrary, type ImageLibraryOptions} from 'react-native-image-picker';
 import {API_URL} from '@env';
 
-import {AppButton, BrandLogo} from '../components/Ui';
+import {AppButton, BrandLogo, FormInput} from '../components/Ui';
 import {COLORS, createThemedStyles, type ColorScheme} from '../theme';
 import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
 import type {Account} from '../../types/Account';
 import type {UserRole} from '../../models/auth';
 
-type ProfilePage = 'main' | 'currency' | 'appearance' | 'account' | 'help';
+type ProfilePage = 'main' | 'currency' | 'appearance' | 'account' | 'help' | 'security';
 
 export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {username?: string; role: UserRole | null; onLogout: () => void}) {
   const isAnalyst = role === 'analyst';
@@ -30,7 +32,85 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
   const [accounts, setAccounts] = React.useState<Account[]>([]);
   const [isUploading, setIsUploading] = React.useState(false);
   const [photoStatus, setPhotoStatus] = React.useState<string | null>(null);
+  const [totpEnabled, setTotpEnabled] = React.useState(false);
+  const [totpUri, setTotpUri] = React.useState('');
+  const [totpSecret, setTotpSecret] = React.useState('');
+  const [totpPassword, setTotpPassword] = React.useState('');
+  const [totpCode, setTotpCode] = React.useState('');
+  const [totpMessage, setTotpMessage] = React.useState('');
+  const [recoveryCodes, setRecoveryCodes] = React.useState<string[]>([]);
+  const needsRecoveryCodeCopy = recoveryCodes.length > 0;
   const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
+
+  React.useEffect(() => {
+    if (!needsRecoveryCodeCopy) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => true);
+    return () => subscription.remove();
+  }, [needsRecoveryCodeCopy]);
+
+  React.useEffect(() => {
+    if (!token) return;
+    fetch(`${apiBaseUrl}/api/mfa`, {headers: {Authorization: `Bearer ${token}`}})
+      .then(response => response.json()).then(data => setTotpEnabled(Boolean(data?.totp_enabled)))
+      .catch(() => setTotpMessage('Nie udało się pobrać statusu TOTP.'));
+  }, [apiBaseUrl, token]);
+
+  async function requestTotp(path: string, body: object) {
+    const response = await fetch(`${apiBaseUrl}/api/${path}`, {
+      method: 'POST', headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(data?.detail || `Błąd serwera (${response.status}).`);
+    return data;
+  }
+
+  async function beginTotpSetup() {
+    try {
+      const data = await requestTotp('mfa/totp/setup', {current_password: totpPassword});
+      setTotpUri(data.provisioning_uri); setTotpSecret(data.secret);
+      setTotpMessage('Zeskanuj kod lub wpisz sekret w aplikacji Authenticator.');
+    } catch (error) { setTotpMessage(error instanceof Error ? error.message : 'Nie udało się rozpocząć konfiguracji.'); }
+  }
+
+  async function openAuthenticator() {
+    try {
+      await Linking.openURL(totpUri);
+      setTotpMessage('Dokończ dodawanie konta w aplikacji Authenticator.');
+    } catch {
+      setTotpMessage('Brak aplikacji obsługującej ten link. Zeskanuj kod QR lub wpisz sekret ręcznie.');
+    }
+  }
+
+  async function confirmTotp() {
+    try {
+      const data = await requestTotp('mfa/totp/confirm', {code: totpCode});
+      setTotpEnabled(true); setTotpUri(''); setTotpSecret('');
+      setRecoveryCodes(data.recovery_codes ?? []);
+      setTotpCode('');
+      Alert.alert(
+        'TOTP włączone',
+        `Skopiuj i zapisz poniższe kody przywracania. Nie zostaną one wyświetlone ponownie. Po skopiowaniu ze względów bezpieczeństwa nastąpi wylogowanie.
+
+${(data.recovery_codes ?? []).join('\n')}`,
+        [{text: 'Skopiuj kody i wyloguj', onPress: () => {
+          Clipboard.setString((data.recovery_codes ?? []).join('\n'));
+          onLogout();
+        }}],
+        {cancelable: false},
+      );
+    } catch (error) { setTotpMessage(error instanceof Error ? error.message : 'Nie udało się potwierdzić kodu.'); }
+  }
+
+  async function disableTotp() {
+    try {
+      await requestTotp('mfa/totp/disable', {current_password: totpPassword, code: totpCode});
+      setTotpEnabled(false); setTotpCode('');
+      Alert.alert('TOTP wyłączone', 'Ze względów bezpieczeństwa nastąpi wylogowanie.', [
+        {text: 'Zaloguj się ponownie', onPress: onLogout},
+      ]);
+    } catch (error) { setTotpMessage(error instanceof Error ? error.message : 'Nie udało się wyłączyć TOTP.'); }
+  }
 
   React.useEffect(() => {
     if (!token || isAnalyst) return;
@@ -87,7 +167,7 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
 
   const title: Record<ProfilePage, string> = {
     main: 'Profil', currency: 'Waluta i lokalizacja', appearance: 'Wygląd',
-    account: 'Dane profilu', help: 'Pomoc i informacje',
+    account: 'Dane profilu', help: 'Pomoc i informacje', security: 'Uwierzytelnianie TOTP',
   };
   const selectManualCurrency = (currency: string) => {
     if (locationCurrencyEnabled) setLocationCurrencyEnabled(false);
@@ -122,6 +202,7 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
           {!isAnalyst ? <Text style={styles.groupTitle}>Konto i bezpieczeństwo</Text> : null}
           {!isAnalyst ? <MenuRow icon={Shield} title="Dane profilu" subtitle="Zdjęcie profilowe" onPress={() => setPage('account')} /> : null}
 
+          <MenuRow icon={Shield} title="TOTP / Authenticator" subtitle={totpEnabled ? 'Włączone' : 'Wyłączone'} onPress={() => setPage('security')} />
           <Text style={styles.groupTitle}>Inne</Text>
           <MenuRow icon={CircleHelp} title="Pomoc i informacje" onPress={() => setPage('help')} />
           <Pressable accessibilityRole="button" accessibilityLabel="Wyloguj się z aplikacji" onPress={signOut} style={({pressed}) => [styles.logoutRow, pressed && styles.pressed]}>
@@ -170,6 +251,39 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
         </View>
       ) : null}
 
+      {page === 'security' ? (
+        <View style={styles.pageContent}>
+          <Text style={styles.description}>{totpEnabled ? 'TOTP jest włączone dla Twojego konta.' : 'Zabezpiecz logowanie kodem z aplikacji Authenticator.'}</Text>
+          <FormInput label="Obecne hasło" value={totpPassword} onChangeText={setTotpPassword} secureTextEntry />
+          {!totpEnabled && !totpUri ? <AppButton title="Rozpocznij konfigurację TOTP" onPress={beginTotpSetup} /> : null}
+          {totpUri ? <>
+            <QRCode value={totpUri} size={210} />
+            <Pressable accessibilityRole="link" onPress={openAuthenticator} style={({pressed}) => [styles.authenticatorLink, pressed && styles.pressed]}>
+              <Text style={styles.authenticatorLinkText}>Otwórz w aplikacji Authenticator</Text>
+            </Pressable>
+            <Text selectable style={styles.description}>Sekret do wpisania ręcznie: {totpSecret}</Text>
+            <FormInput label="Kod z Authenticatora" value={totpCode} onChangeText={setTotpCode} keyboardType="number-pad" maxLength={6} />
+            <AppButton title="Potwierdź i włącz TOTP" onPress={confirmTotp} />
+          </> : null}
+          {totpEnabled && !needsRecoveryCodeCopy ? <>
+            <FormInput label="Kod TOTP lub kod odzyskiwania" value={totpCode} onChangeText={setTotpCode} autoCapitalize="characters" />
+            <AppButton title="Wyłącz TOTP" onPress={disableTotp} secondary />
+          </> : null}
+          {recoveryCodes.length ? <>
+            <Text style={styles.description}>Kody odzyskiwania możesz wykorzystać pojedynczo, jeśli nie masz dostępu do Authenticatora. Zapisz je teraz — nie będą ponownie wyświetlone.</Text>
+            <View style={styles.infoCard}>
+              {recoveryCodes.map(code => <Text key={code} selectable style={styles.optionTitle}>{code}</Text>)}
+            </View>
+            <AppButton title="Kopiuj kody odzyskiwania" onPress={() => {
+              Clipboard.setString(recoveryCodes.join('\n'));
+              onLogout();
+            }} secondary />
+            <AppButton title="Wyloguj się i zaloguj ponownie" onPress={onLogout} />
+          </> : null}
+          {totpMessage ? <Text selectable style={styles.description}>{totpMessage}</Text> : null}
+        </View>
+      ) : null}
+
       {page === 'account' ? (
         <View style={styles.pageContent}>
           <View style={styles.userCard}>
@@ -193,7 +307,7 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
         </View>
       ) : null}
     </ScrollView>
-    {page !== 'main' ? <View style={styles.stickyFooter}><AppButton title="Wróć do profilu" onPress={() => setPage('main')} secondary /></View> : null}
+    {page !== 'main' && !needsRecoveryCodeCopy ? <View style={styles.stickyFooter}><AppButton title="Wróć do profilu" onPress={() => setPage('main')} secondary /></View> : null}
     </View>
   );
 }
@@ -239,6 +353,8 @@ const styles = createThemedStyles(() => StyleSheet.create({
   statusText: {color: COLORS.muted, fontSize: 13},
   locationMessage: {color: COLORS.muted, fontSize: 14, lineHeight: 20},
   infoCard: {backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 14, padding: 16, gap: 8},
+  authenticatorLink: {alignSelf: 'center', paddingVertical: 6, paddingHorizontal: 10},
+  authenticatorLinkText: {color: COLORS.yellow, fontSize: 14, fontWeight: '700', textDecorationLine: 'underline'},
   logoutRow: {minHeight: 58, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 16, marginTop: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 14},
   logoutText: {color: '#F87171', fontSize: 15, fontWeight: '700'},
   pressed: {opacity: 0.78},

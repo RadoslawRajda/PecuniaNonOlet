@@ -19,7 +19,7 @@ W katalogu `backend/`:
 ./start-unix.sh
 ```
 
-Skrypt tworzy środowisko `.venv`, instaluje biblioteki, wybiera adres IP i uruchamia FastAPI na porcie 8000. Przy starcie backend automatycznie wykonuje oczekujące migracje Alembic. Jeśli komputer ma kilka adresów, poprosi o wybór. Adres można podać ręcznie:
+Skrypt tworzy środowisko `.venv`, instaluje biblioteki, wybiera adres IP, przygotowuje lokalny certyfikat TLS i uruchamia FastAPI po HTTPS na porcie 8000. Przy starcie backend automatycznie wykonuje oczekujące migracje Alembic. Jeśli komputer ma kilka adresów, poprosi o wybór. Adres można podać ręcznie:
 
 ```sh
 ./start-unix.sh --ip 192.168.1.45
@@ -27,7 +27,23 @@ Skrypt tworzy środowisko `.venv`, instaluje biblioteki, wybiera adres IP i uruc
 
 Na Windows: `start-windows.bat --ip 192.168.1.45`.
 
-Po starcie otwórz adres podany w terminalu, np. `http://192.168.1.45:8000/`. Strona `/` pokazuje proste informacje diagnostyczne. Dokumentacja API jest pod `/docs`, a kontrola stanu pod `/health`. Usługa mDNS ma typ `_pecunianonolet._tcp.local.`; nazwa `pecunianonolet.local` działa tylko na urządzeniach obsługujących mDNS.
+Po starcie API jest dostępne pod `https://pecunianonolet.local:8000/` oraz `https://<adres-LAN>:8000/`. Usługa mDNS `_pecunianonolet._tcp.local.` ogłasza port TLS i właściwość `scheme=https`. Dodatkowy port `8001` wystawia po HTTP wyłącznie stronę instalacji CA (`/`) i publiczny plik CA (`/local-root-ca.cer`); pozostałe ścieżki HTTP zwracają 404. Po instalacji CA używaj HTTPS na porcie 8000.
+
+Ponieważ publiczne urzędy certyfikacji nie wystawiają zaufanych certyfikatów dla nazw `.local`, launcher tworzy lokalny prywatny CA i certyfikat serwera z SAN dla `pecunianonolet.local` i aktualnego adresu LAN. Certyfikaty i klucze są przechowywane w `backend/data/tls/` (katalog jest pomijany przez Git); klucze prywatne mają uprawnienia tylko dla użytkownika na macOS/Linux. Przy pierwszym uruchomieniu terminal pokaże ścieżkę do `local-root-ca.cer` i odcisk SHA-256.
+
+Najprostsza konfiguracja telefonu: podłącz telefon i komputer do tej samej zaufanej sieci Wi-Fi, otwórz `http://<adres-LAN-komputera>:8001/` na telefonie i pobierz **publiczny** plik CA. Strona pokazuje instrukcję instalacji oraz odcisk SHA-256; porównaj go z wartością wyświetloną w terminalu komputera przed zaufaniem certyfikatowi. HTTP służy tu wyłącznie do dostarczenia publicznego pliku CA i instrukcji, więc nie wpisuj tam haseł ani innych danych konta. Nie instaluj certyfikatu, jeśli odciski się różnią.
+
+- **iPhone:** po pobraniu profilu wejdź w `Ustawienia > Ogólne > VPN i urządzenia zarządzane`, wybierz pobrany profil i zainstaluj go. Następnie przejdź do `Ustawienia > Ogólne > To urządzenie... > Ustawienia zaufania certyfikatów` i włącz pełne zaufanie dla tego CA. Sama instalacja profilu nie włącza zaufania TLS.
+- **Android:** zainstaluj plik jako certyfikat CA w ustawieniach zabezpieczeń systemu. Konfiguracja aplikacji Android dopuszcza certyfikaty dodane przez użytkownika wyłącznie dla `pecunianonolet.local`; pozostałe domeny zachowują systemowy zestaw zaufanych CA.
+
+Lokalny CA jest przeznaczony do developmentu w zaufanej sieci. Jeśli usuniesz `backend/data/tls/local-root-ca-key.pem` albo cały katalog `tls`, launcher utworzy nowy CA i trzeba będzie ponownie zainstalować jego certyfikat na telefonach. Nie używaj tego CA do publicznego wdrożenia.
+
+Po instalacji certyfikatu korzystaj z backendu przez HTTPS:
+
+- Aplikacja/API: `https://pecunianonolet.local:8000/`
+- Domena mDNS: `pecunianonolet.local`
+- Swagger UI: `https://pecunianonolet.local:8000/docs`
+- OpenAPI JSON: `https://pecunianonolet.local:8000/openapi.json`
 
 Naciśnij `Ctrl+C`, aby zatrzymać API i mDNS. Zamknięcie okna skryptu kończy proces serwera. Baza pozostaje w `data/pecunia.db`. Migracje można też uruchomić ręcznie z katalogu `backend/`:
 
@@ -43,6 +59,11 @@ Na Windows użyj `.venv\Scripts\alembic.exe -c alembic.ini upgrade head`.
 | --- | --- | --- |
 | `POST` | `/api/register` | Rejestracja, utworzenie rachunków walutowych i wydanie tokenu |
 | `POST` | `/api/login` | Logowanie i wydanie tokenu |
+| `GET` | `/api/mfa` | Status MFA zalogowanego użytkownika |
+| `POST` | `/api/mfa/totp/setup` | Rozpoczęcie konfiguracji aplikacji TOTP |
+| `POST` | `/api/mfa/totp/confirm` | Potwierdzenie kodu i aktywacja TOTP; zwraca kody odzyskiwania raz |
+| `POST` | `/api/login/mfa` | Drugi etap logowania kodem TOTP lub kodem odzyskiwania |
+| `POST` | `/api/mfa/totp/disable` | Wyłączenie TOTP po ponownym podaniu hasła i kodu |
 | `GET` | `/api/me` | Dane zalogowanego użytkownika |
 | `GET` | `/api/accounts` | Rachunki i osobne salda zalogowanego użytkownika |
 | `GET` | `/api/transactions` | Stronicowana historia operacji użytkownika |
@@ -61,7 +82,13 @@ Na Windows użyj `.venv\Scripts\alembic.exe -c alembic.ini upgrade head`.
 | `POST` | `/api/logout` | Unieważnienie tokenu |
 | `POST` | `/api/change-password` | Zmiana hasła i unieważnienie wszystkich sesji użytkownika |
 
-Rejestracja i logowanie przyjmują JSON: `{"email":"test@example.com","password":"haslo1234"}`. Hasło przy rejestracji musi mieć od 8 do 128 znaków. Odpowiedź zawiera `user`, `token`, `token_type` i `expires_in`. Dla `/api/me` i `/api/logout` wyślij nagłówek `Authorization: Bearer <token>`. Token wygasa po 7 dniach, a wylogowanie unieważnia go od razu.
+Rejestracja przyjmuje JSON `{"email":"test@example.com","password":"haslo1234","captcha_token":"..."}`. Token CAPTCHA pochodzi z obowiązkowego widżetu Cloudflare Turnstile w aplikacji i jest weryfikowany przez backend przed utworzeniem konta. Logowanie przyjmuje e-mail i hasło. Hasło przy rejestracji musi mieć od 8 do 128 znaków. Odpowiedź zawiera `user`, `token`, `token_type` i `expires_in`. Dla `/api/me` i `/api/logout` wyślij nagłówek `Authorization: Bearer <token>`. Token wygasa po 7 dniach, a wylogowanie unieważnia go od razu.
+
+Gdy użytkownik ma włączone MFA, `/api/login` zamiast tokenu zwraca `mfa_required: true`, `challenge_token` i `expires_in`. Frontend kończy logowanie przez `POST /api/login/mfa`. Szczegółowy przepływ konfiguracji, przykładowe żądania i odpowiedzi opisuje [dokumentacja MFA TOTP](docs/TOTP_MFA.md).
+
+Przy pierwszej konfiguracji skopiuj `backend/.env.example` do `backend/.env`. Wygeneruj klucz poleceniem `.venv/bin/python -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"` (Windows: `.venv\\Scripts\\python.exe -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"`) i wklej wynik jako `MFA_ENCRYPTION_KEY`. Wartość `TURNSTILE_SECRET_KEY` w przykładzie jest publicznym kluczem testowym Cloudflare i służy wyłącznie do lokalnego developmentu; przed wdrożeniem skonfiguruj własną parę kluczy Turnstile. Możesz opcjonalnie ustawić `TURNSTILE_EXPECTED_HOSTNAME`. Launcher automatycznie wczytuje `backend/.env`; po zmianie pliku uruchom backend ponownie. Zachowaj ten sam klucz MFA po każdym restarcie, poza repozytorium. To klucz szyfrujący sekrety TOTP w bazie i nie jest tym samym co lokalny CA TLS. Zmiana klucza po włączeniu MFA uniemożliwi odszyfrowanie dotychczas zapisanych sekretów.
+
+Frontend konfiguruje publiczny `TURNSTILE_SITE_KEY` w głównym pliku `.env` na podstawie `.env.example`. Przykład używa klucza testowego wymuszającego interakcję; klucze testowe nie chronią przed botami. Do produkcji utwórz własny widżet Turnstile i ustaw jego klucz publiczny we frontendzie oraz odpowiadający mu sekret w `backend/.env`.
 
 Nowe konta otrzymują rolę `user`, której nie można wybrać w żądaniu rejestracji. Konto `analyst` może utworzyć zaufany lokalny administrator po migracji bazy:
 
@@ -96,4 +123,4 @@ Zdjęcie przesyłaj jako `multipart/form-data` w wymaganym polu `file` na `PUT /
 
 Na Windows użyj `.venv\Scripts\python.exe` zamiast `.venv/bin/python`.
 
-Hasła są zapisywane jako hashe Argon2, a w bazie przechowywane są tylko hashe tokenów. Odpowiedzi API mają `Cache-Control: no-store`. Połączenie w sieci lokalnej korzysta z HTTP, a backend nie ogranicza liczby prób logowania; jest przeznaczony do demonstracji w zaufanej sieci i na fikcyjnych danych, nie do publicznego wdrożenia. Użycie z prawdziwymi kontami wymaga HTTPS oraz limitowania prób uwierzytelniania.
+Hasła są zapisywane jako hashe Argon2, a w bazie przechowywane są tylko hashe tokenów i kodów MFA. Odpowiedzi API mają `Cache-Control: no-store`. Próby kodów MFA są limitowane per konto. Połączenie lokalne korzysta z HTTPS z prywatnym CA, który użytkownik musi jawnie zainstalować i zweryfikować na telefonie. Backend nadal jest demonstracyjny, nie do publicznego wdrożenia; użycie z prawdziwymi kontami wymaga publicznie zaufanego TLS, limitowania prób logowania hasłem i monitorowania zdarzeń logowania.

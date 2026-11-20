@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import html
+import logging
 import os
-import secrets
 import sqlite3
 import time
 from contextlib import asynccontextmanager, closing
+from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pwdlib import PasswordHash
 
 from app.accounts import initialize_user_accounts
@@ -26,27 +28,64 @@ from app.routes.profile_photos import (
     router as profile_photos_router,
 )
 from app.routes.transfers import router as transfers_router
+from app.routes.mfa import router as mfa_router
+from app.sessions import issue_token
 from app.schemas import (
     AuthResponse,
     ChangePasswordRequest,
     ChangePasswordResponse,
     LoginCredentials,
-    RegisterCredentials,
+    LoginResponse,
+    PublicRegisterRequest,
     User,
 )
 
-SESSION_LIFETIME_SECONDS = 7 * 24 * 60 * 60
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
 password_hasher = PasswordHash.recommended()
 DUMMY_PASSWORD_HASH = password_hasher.hash("invalid-account-password")
-def issue_token(db: sqlite3.Connection, user_id: int) -> str:
-    token = secrets.token_urlsafe(32)
-    now = int(time.time())
-    db.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
-    db.execute(
-        "INSERT INTO sessions(token_hash, user_id, expires_at) VALUES (?, ?, ?)",
-        (token_hash(token), user_id, now + SESSION_LIFETIME_SECONDS),
-    )
-    return token
+logger = logging.getLogger(__name__)
+
+
+def verify_turnstile_token(token: str, remote_ip: str | None = None) -> None:
+    secret = os.getenv("TURNSTILE_SECRET_KEY", "").strip()
+    if not secret:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Weryfikacja CAPTCHA jest chwilowo niedostępna.",
+        )
+
+    try:
+        import httpx
+
+        response = httpx.post(
+            "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+            data={"secret": secret, "response": token, **({"remoteip": remote_ip} if remote_ip else {})},
+            timeout=5.0,
+        )
+        response.raise_for_status()
+        result = response.json()
+    except (httpx.HTTPError, ValueError):
+        logger.warning("Turnstile verification service unavailable")
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Weryfikacja CAPTCHA jest chwilowo niedostępna.",
+        ) from None
+
+    if not isinstance(result, dict) or result.get("success") is not True:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Weryfikacja CAPTCHA nie powiodła się.")
+
+    expected_hostname = os.getenv("TURNSTILE_EXPECTED_HOSTNAME", "").strip().lower()
+    hostname = result.get("hostname")
+    if expected_hostname and (
+        not isinstance(hostname, str) or hostname.lower() != expected_hostname
+    ):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Weryfikacja CAPTCHA nie powiodła się.")
+
+    # Cloudflare's published test secret intentionally omits action and hostname claims.
+    is_test_secret = secret == "1x0000000000000000000000000000000AA"
+    if not is_test_secret and result.get("action") != "register":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Weryfikacja CAPTCHA nie powiodła się.")
 
 
 @asynccontextmanager
@@ -61,6 +100,7 @@ app.include_router(transfers_router)
 app.include_router(exchange_router)
 app.include_router(profile_photos_router)
 app.include_router(analytics_router)
+app.include_router(mfa_router)
 app.add_middleware(ProfilePhotoBodyLimitMiddleware)
 
 
@@ -89,30 +129,41 @@ async def prevent_api_response_caching(request: Request, call_next):
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def diagnostics(request: Request) -> HTMLResponse:
     ip = os.getenv("LAN_IP", "")
-    address = f"http://{ip}:8000" if ip else "Nie ustawiono (uruchom przez skrypt)."
-    mdns_state = "Ogłaszana przez skrypt" if ip else "Nie uruchomiono przez skrypt"
-    with closing(connect_db()) as db:
-        db.execute("SELECT 1").fetchone()
-    rows = (
-        ("API", "działa"),
-        ("SQLite", "działa"),
-        ("Adres LAN", address),
-        ("Nazwa mDNS", "pecunianonolet.local"),
-        ("Usługa mDNS", "_pecunianonolet._tcp.local."),
-        ("Stan mDNS", mdns_state),
-        ("Klient", request.client.host if request.client else "nieznany"),
-    )
-    details = "\n".join(
-        f"<dt>{html.escape(label)}</dt><dd>{html.escape(value)}</dd>"
-        for label, value in rows
-    )
+    from app.local_tls import ensure_local_tls
+
+    tls_files = ensure_local_tls(Path(__file__).resolve().parents[1] / "data" / "tls", ip or "127.0.0.1")
+    fingerprint = html.escape(tls_files.ca_fingerprint_sha256)
     return HTMLResponse(
         "<!doctype html><html lang=\"pl\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-        "<title>PecuniaNonOlet — diagnostyka</title></head><body>"
-        "<h1>PecuniaNonOlet - diagnostyka</h1><dl>"
-        f"{details}</dl><p><a href=\"/docs\">Dokumentacja API</a> · "
-        "<a href=\"/health\">Health check</a></p></body></html>"
+        "<title>PecuniaNonOlet — konfiguracja HTTPS</title></head><body>"
+        "<h1>Konfiguracja bezpiecznego połączenia</h1>"
+        "<p>Ta strona służy tylko do zainstalowania lokalnego certyfikatu zaufania. "
+        "Nie loguj się ani nie wysyłaj tutaj danych konta.</p>"
+        "<ol><li>Pobierz publiczny certyfikat CA: "
+        "<a href=\"/local-root-ca.cer\" download>Pobierz certyfikat</a>.</li>"
+        "<li><strong>iPhone:</strong> po pobraniu profilu otwórz "
+        "Ustawienia &gt; Ogólne &gt; VPN i urządzenia zarządzane, wybierz pobrany profil "
+        "i zainstaluj go. Następnie otwórz Ustawienia &gt; Ogólne &gt; To urządzenie... "
+        "&gt; Ustawienia zaufania certyfikatów i włącz pełne zaufanie dla tego CA. "
+        "<strong>Android:</strong> "
+        "zainstaluj plik jako certyfikat CA w ustawieniach zabezpieczeń telefonu "
+        "(nazwy opcji zależą od producenta).</li>"
+        "<li>Przed zaufaniem porównaj odcisk SHA-256 poniżej z wartością "
+        "wypisaną w terminalu komputera uruchamiającego backend.</li></ol>"
+        f"<p><strong>Odcisk SHA-256 CA:</strong><br><code>{fingerprint}</code></p>"
+        "<h2>Połączenie backendu</h2>"
+        "<p><strong>HTTPS — bezpieczne połączenie aplikacji:</strong><br>"
+        "<a href=\"https://pecunianonolet.local:8000/\">"
+        "https://pecunianonolet.local:8000/</a></p>"
+        "<p>Domena mDNS: <code>pecunianonolet.local</code><br>"
+        "Swagger UI: <a href=\"https://pecunianonolet.local:8000/docs\">"
+        "https://pecunianonolet.local:8000/docs</a></p>"
+        "<p>API i pozostałe strony są dostępne tylko przez HTTPS.</p>"
+        "<p>Nie instaluj certyfikatu, jeśli odcisk nie zgadza się z wartością "
+        "pokazaną na komputerze. Lokalny certyfikat jest przeznaczony do "
+        "developmentu w zaufanej sieci.</p></body></html>",
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -123,8 +174,26 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/local-root-ca.cer", include_in_schema=False)
+def download_local_ca() -> FileResponse:
+    """Serve only the public local CA certificate to simplify phone setup."""
+    certificate_path = Path(__file__).resolve().parents[1] / "data" / "tls" / "local-root-ca.cer"
+    if not certificate_path.is_file():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Lokalny certyfikat CA nie jest dostępny.")
+    return FileResponse(
+        certificate_path,
+        media_type="application/pkix-cert",
+        filename="pecunianonolet-local-root-ca.cer",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.post("/api/register", response_model=AuthResponse, status_code=201)
-def register(payload: RegisterCredentials) -> AuthResponse:
+def register(payload: PublicRegisterRequest, request: Request) -> AuthResponse:
+    verify_turnstile_token(
+        payload.captcha_token,
+        request.client.host if request.client else None,
+    )
     password_hash = password_hasher.hash(payload.password)
     with closing(connect_db()) as db:
         try:
@@ -146,8 +215,8 @@ def register(payload: RegisterCredentials) -> AuthResponse:
     return AuthResponse(user=User(id=user_id, email=payload.email, role="user"), token=token)
 
 
-@app.post("/api/login", response_model=AuthResponse)
-def login(payload: LoginCredentials) -> AuthResponse:
+@app.post("/api/login", response_model=LoginResponse)
+def login(payload: LoginCredentials) -> LoginResponse:
     with closing(connect_db()) as read_db:
         row = read_db.execute(
             """
@@ -173,6 +242,14 @@ def login(payload: LoginCredentials) -> AuthResponse:
         ).fetchone()
         if current_role is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Błędny e-mail lub hasło.")
+        mfa = db.execute(
+            "SELECT enabled_at FROM user_totp WHERE user_id = ?", (row["id"],)
+        ).fetchone()
+        if mfa is not None and mfa["enabled_at"] is not None:
+            from app.routes.mfa import create_login_challenge
+
+            challenge = create_login_challenge(db, row["id"])
+            return challenge
         token = issue_token(db, row["id"])
     return AuthResponse(
         user=User(id=current["id"], email=current["email"], role=current_role["role_name"]), token=token
@@ -208,6 +285,8 @@ def change_password(
             raise HTTPException(status.HTTP_409_CONFLICT, "Hasło zostało już zmienione. Zaloguj się ponownie.")
         db.execute("DELETE FROM sessions WHERE user_id = ?", (user.id,))
         db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user.id))
+        db.execute("DELETE FROM totp_login_challenges WHERE user_id = ?", (user.id,))
+        db.execute("DELETE FROM user_totp WHERE user_id = ? AND enabled_at IS NULL", (user.id,))
     return ChangePasswordResponse(
         message="Hasło zostało zmienione. Zaloguj się ponownie.",
         reauthentication_required=True,
