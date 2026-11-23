@@ -6,6 +6,7 @@ import base64
 import binascii
 import hashlib
 import json
+import logging
 import secrets
 import sqlite3
 import time
@@ -39,7 +40,9 @@ from app.services.google_accounts import (
 )
 
 router = APIRouter(prefix="/api/auth/google", tags=["authentication"])
+logger = logging.getLogger(__name__)
 CHALLENGE_TTL = 300
+GOOGLE_TOKEN_CLOCK_SKEW_SECONDS = 60
 Authenticated = Annotated[AuthenticatedSession, Depends(current_session)]
 
 
@@ -156,7 +159,11 @@ def _verify_google_id_token(payload: GoogleTokenRequest) -> VerifiedGoogleIdenti
     settings = load_settings()
     audiences = {
         value.strip()
-        for value in (settings.google_ios_client_id, settings.google_android_client_id)
+        for value in (
+            settings.google_ios_client_id,
+            settings.google_android_client_id,
+            settings.google_web_client_id,
+        )
         if value.strip()
     }
     if not audiences:
@@ -165,14 +172,29 @@ def _verify_google_id_token(payload: GoogleTokenRequest) -> VerifiedGoogleIdenti
         )
     _require_google_rs256_header(payload.id_token)
     try:
-        from google.auth.exceptions import GoogleAuthError
+        from google.auth.exceptions import GoogleAuthError, TransportError
         from google.oauth2 import id_token
         from requests import RequestException
 
         claims = id_token.verify_oauth2_token(
-            payload.id_token, google_certificate_request, audience=None
+            payload.id_token,
+            google_certificate_request,
+            audience=None,
+            clock_skew_in_seconds=GOOGLE_TOKEN_CLOCK_SKEW_SECONDS,
         )
-    except (GoogleAuthError, RequestException, ValueError):
+    except (GoogleAuthError, RequestException, ValueError) as exc:
+        logger.warning(
+            "google_id_token_verification_failed category=%s error_type=%s reason=%s",
+            (
+                "transport"
+                if isinstance(exc, (TransportError, RequestException))
+                else "google_auth"
+                if isinstance(exc, GoogleAuthError)
+                else "token_validation"
+            ),
+            type(exc).__name__,
+            _google_verification_failure_reason(exc),
+        )
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "Nie udało się zweryfikować logowania Google."
         ) from None
@@ -223,6 +245,12 @@ def _verify_google_id_token(payload: GoogleTokenRequest) -> VerifiedGoogleIdenti
             status.HTTP_401_UNAUTHORIZED, "Sesja logowania Google wygasła. Spróbuj ponownie."
         )
     authoritative = normalized_email.endswith("@gmail.com") or bool(claims.get("hd"))
+    issued_at = claims.get("iat")
+    if isinstance(issued_at, bool) or not isinstance(issued_at, int):
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Nieprawidłowy czas wystawienia tokenu Google.",
+        )
     authenticated_at = claims.get("auth_time")
     if authenticated_at is not None and (
         isinstance(authenticated_at, bool) or not isinstance(authenticated_at, int)
@@ -236,7 +264,31 @@ def _verify_google_id_token(payload: GoogleTokenRequest) -> VerifiedGoogleIdenti
         email=normalized_email,
         authoritative_mailbox=authoritative,
         authenticated_at=authenticated_at,
+        issued_at=issued_at,
+        android_native_token=(
+            isinstance(aud, str)
+            and bool(settings.google_web_client_id)
+            and aud == settings.google_web_client_id
+        ),
     )
+
+
+def _google_verification_failure_reason(exc: Exception) -> str:
+    """Map verifier messages to fixed codes without logging token or claim data."""
+    message = str(exc).lower()
+    if "token used too early" in message:
+        return "token_issued_in_future_check_backend_clock"
+    if "token expired" in message:
+        return "token_expired_check_backend_clock_or_token_freshness"
+    if "could not verify token signature" in message:
+        return "signature_verification_failed"
+    if "certificate" in message and "key type" in message:
+        return "certificate_key_type_mismatch"
+    if "algorithm" in message:
+        return "unsupported_signature_algorithm"
+    if "audience" in message:
+        return "audience_validation_failed"
+    return "verifier_rejected_token"
 
 
 def _require_google_rs256_header(token: str) -> None:

@@ -50,6 +50,7 @@ def make_user(email="owner@example.com"):
 def google_claims(monkeypatch, claims):
     from google.oauth2 import id_token
 
+    claims.setdefault("iat", int(time.time()))
     monkeypatch.setattr(id_token, "verify_oauth2_token", lambda *args, **kwargs: claims)
 
 

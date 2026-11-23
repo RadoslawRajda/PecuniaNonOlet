@@ -124,7 +124,9 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
       setPasskeys(current => [created, ...current]);
       setPasskeyMessage('Passkey została dodana.');
     } catch (error) {
-      setPasskeyMessage(error instanceof Error ? error.message : 'Nie udało się dodać passkey. Zaloguj się ponownie i spróbuj ponownie.');
+      const message = error instanceof Error ? error.message : 'Nie udało się dodać passkey. Zaloguj się ponownie i spróbuj ponownie.';
+      setPasskeyMessage(message);
+      Alert.alert('Nie udało się dodać passkey', message);
     }
   }
 

@@ -1,5 +1,6 @@
 import {Passkey} from 'react-native-passkey';
 import {authorize} from 'react-native-app-auth';
+import {Platform} from 'react-native';
 
 import {
   buildGoogleAuthorizationOptions,
@@ -34,7 +35,9 @@ describe('native authentication methods', () => {
       additionalParameters: {
         nonce,
         prompt: 'select_account',
-        claims: JSON.stringify({id_token: {auth_time: {essential: true}}}),
+        ...(Platform.OS === 'android' ? {} : {
+          claims: JSON.stringify({id_token: {auth_time: {essential: true}}}),
+        }),
       },
     });
   });

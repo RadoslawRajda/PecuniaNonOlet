@@ -32,6 +32,8 @@ class VerifiedGoogleIdentity:
     email: str
     authoritative_mailbox: bool
     authenticated_at: int | None
+    issued_at: int
+    android_native_token: bool
 
 
 def _digest(value: str) -> str:
@@ -198,14 +200,25 @@ def link_google_identity(
     one BEGIN IMMEDIATE transaction. Repeating a link for the same user is harmless.
     """
     now = int(time.time())
-    if (
-        identity.authenticated_at is None
-        or identity.authenticated_at > now + 30
-        or now - identity.authenticated_at > 300
-    ):
+    # Some native Google sign-in APIs (including Android Credential Manager)
+    # do not return auth_time. In that case, a newly issued, nonce-bound ID
+    # token is the provider proof; the app session is separately required to
+    # have been recently authenticated below.
+    if identity.authenticated_at is None and not identity.android_native_token:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
             "Uwierzytelnij się ponownie w Google przed połączeniem konta.",
+        )
+    provider_proof_at = (
+        identity.authenticated_at
+        if identity.authenticated_at is not None
+        else identity.issued_at
+    )
+    allowed_future_skew = 30 if identity.authenticated_at is not None else 60
+    if provider_proof_at > now + allowed_future_skew or now - provider_proof_at > 300:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Wygeneruj nowe potwierdzenie logowania Google przed połączeniem konta.",
         )
     user = session.user
     with closing(connect_db()) as db, db:

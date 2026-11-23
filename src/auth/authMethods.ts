@@ -1,9 +1,9 @@
-import {Platform} from 'react-native';
+import {NativeModules, Platform} from 'react-native';
 import {authorize, type AuthConfiguration} from 'react-native-app-auth';
 import {Passkey} from 'react-native-passkey';
 import {authenticatedFetch, saveSessionTokens} from './session';
 
-import {API_URL, GOOGLE_ANDROID_CLIENT_ID, GOOGLE_IOS_CLIENT_ID} from '@env';
+import {API_URL, GOOGLE_ANDROID_CLIENT_ID, GOOGLE_IOS_CLIENT_ID, GOOGLE_WEB_CLIENT_ID} from '@env';
 
 const apiBaseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
 
@@ -71,6 +71,18 @@ export async function getGoogleConnectionStatus(
 }
 
 async function authorizeGoogle(nonce: string) {
+  if (Platform.OS === 'android') {
+    if (!GOOGLE_WEB_CLIENT_ID) {
+      throw new Error('Uzupełnij GOOGLE_WEB_CLIENT_ID w pliku .env.');
+    }
+    const nativeGoogleSignIn = NativeModules.GoogleSignIn as
+      | {signIn: (serverClientId: string, requestNonce: string) => Promise<string>}
+      | undefined;
+    if (!nativeGoogleSignIn) throw new Error('Natywne logowanie Google nie jest dostępne. Przebuduj aplikację Android.');
+    const idToken = await nativeGoogleSignIn.signIn(GOOGLE_WEB_CLIENT_ID, nonce);
+    if (!idToken) throw new Error('Google nie zwrócił tokenu ID.');
+    return {idToken};
+  }
   const clientId = Platform.OS === 'ios' ? GOOGLE_IOS_CLIENT_ID : GOOGLE_ANDROID_CLIENT_ID;
   if (!clientId) {
     throw new Error('Uzupełnij GOOGLE_IOS_CLIENT_ID i GOOGLE_ANDROID_CLIENT_ID w pliku .env.');
@@ -114,7 +126,9 @@ function buildGoogleOptions(clientId: string, nonce: string): AuthConfiguration 
     additionalParameters: {
       nonce,
       prompt: 'select_account',
-      claims: JSON.stringify({id_token: {auth_time: {essential: true}}}),
+      ...(Platform.OS === 'android' ? {} : {
+        claims: JSON.stringify({id_token: {auth_time: {essential: true}}}),
+      }),
     },
     usePKCE: true,
     // AppAuth passes this exact backend-issued nonce to Google only when enabled.
