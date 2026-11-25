@@ -13,6 +13,7 @@ import Clipboard from '@react-native-clipboard/clipboard';
 import {launchImageLibrary, type ImageLibraryOptions} from 'react-native-image-picker';
 import {API_URL} from '@env';
 import {changePassword, createPasskey, getGoogleConnectionStatus, getPasskeys, reauthenticateWithGoogle, removePasskey, signInWithGoogle} from '../../auth/authMethods';
+import {isValidTotpProvisioningUri} from '../../auth/totp';
 
 import {AppButton, BrandLogo, FormInput} from '../components/Ui';
 import {COLORS, createThemedStyles, type ColorScheme} from '../theme';
@@ -170,12 +171,19 @@ export function ProfileScreen({username = 'Twoje konto', role, onLogout}: {usern
   async function beginTotpSetup() {
     try {
       const data = await requestTotp('mfa/totp/setup', {current_password: totpPassword || undefined});
+      if (!isValidTotpProvisioningUri(data?.provisioning_uri) || typeof data?.secret !== 'string' || !data.secret) {
+        throw new Error('Serwer zwrócił nieprawidłowy link konfiguracji Authenticatora.');
+      }
       setTotpUri(data.provisioning_uri); setTotpSecret(data.secret);
       setTotpMessage('Zeskanuj kod lub wpisz sekret w aplikacji Authenticator.');
     } catch (error) { setTotpMessage(error instanceof Error ? error.message : 'Nie udało się rozpocząć konfiguracji.'); }
   }
 
   async function openAuthenticator() {
+    if (!isValidTotpProvisioningUri(totpUri)) {
+      setTotpMessage('Nieprawidłowy link konfiguracji Authenticatora. Zeskanuj kod QR lub wpisz sekret ręcznie.');
+      return;
+    }
     try {
       await Linking.openURL(totpUri);
       setTotpMessage('Dokończ dodawanie konta w aplikacji Authenticator.');

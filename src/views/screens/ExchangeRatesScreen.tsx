@@ -16,6 +16,7 @@ import {TransactionDetails} from './TransactionDetails';
 import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
 import {formatExchangeRate, formatExchangeRateLabel} from '../formatters';
 import {estimateExchangeAmount, parseExchangeAmountMinor} from '../exchange';
+import {isAllowedHttpsNavigation} from '../webViewSecurity';
 
 type ExchangeRatesProps = {token: string | null; goHome: () => void};
 type ExchangeRate = {currency_code: string; pln_per_unit: string};
@@ -298,7 +299,21 @@ function RatesWebViewModal({visible, onClose}: {visible: boolean; onClose: () =>
               <Text style={styles.sourcePageCloseText}>Zamknij</Text>
             </Pressable>
           </View>
-          <WebView source={{uri: 'https://nbp.pl/statystyka-i-sprawozdawczosc/kursy/tabela-a/'}} startInLoadingState javaScriptEnabled domStorageEnabled scrollEnabled nestedScrollEnabled style={styles.webView} />
+          {/* Route all URLs through the explicit allowlist instead of opening unknown schemes externally. */}
+          <WebView
+            source={{uri: 'https://nbp.pl/statystyka-i-sprawozdawczosc/kursy/tabela-a/'}}
+            originWhitelist={['*']}
+            onShouldStartLoadWithRequest={request =>
+              request.url === 'about:blank'
+              || isAllowedHttpsNavigation(request.url, ['nbp.pl', 'www.nbp.pl'])
+            }
+            startInLoadingState
+            javaScriptEnabled
+            domStorageEnabled
+            scrollEnabled
+            nestedScrollEnabled
+            style={styles.webView}
+          />
         </SafeAreaView>
       </SafeAreaProvider>
     </Modal>
