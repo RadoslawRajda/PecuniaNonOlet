@@ -1,10 +1,10 @@
+import plistlib
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 import launcher
+import pytest
 
 
 @pytest.mark.parametrize("failure", ["interrupt", "startup", "mdns"])
@@ -71,6 +71,25 @@ def test_launcher_stops_api_and_mdns(monkeypatch, failure):
         assert bootstrap_server.should_exit
 
 
+def test_aasa_only_mode_starts_only_the_restricted_listener(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys, "argv", ["launcher.py", "--aasa-only", "--ip", "192.168.1.45"])
+    monkeypatch.setattr(launcher, "select_lan_ip", lambda _: "192.168.1.45")
+    monkeypatch.setattr(launcher.signal, "signal", lambda *_: None)
+    tls_files = SimpleNamespace(
+        certificate=tmp_path / "server.pem", private_key=tmp_path / "key.pem"
+    )
+    monkeypatch.setattr(launcher, "ensure_local_tls", lambda *_: tls_files)
+    called = []
+    monkeypatch.setattr(
+        launcher,
+        "run_association_server",
+        lambda ip, tls: called.append((ip, tls)) or 0,
+    )
+
+    assert launcher.main() == 0
+    assert called == [("192.168.1.45", tls_files)]
+
+
 def test_mdns_registration_failure_closes_socket(monkeypatch):
     events = []
 
@@ -105,6 +124,18 @@ def test_mdns_service_advertises_https_on_tls_port(monkeypatch):
     assert info.properties[b"path"] == b"/"
 
 
+def test_ios_entitlement_uses_local_domain_in_developer_mode_without_port():
+    entitlement_path = (
+        launcher.PROJECT_ROOT.parent / "ios/PecuniaNonOlet/PecuniaNonOlet.entitlements"
+    )
+    with entitlement_path.open("rb") as source:
+        entitlements = plistlib.load(source)
+
+    assert entitlements["com.apple.developer.associated-domains"] == [
+        "webcredentials:pecunianonolet.local?mode=developer"
+    ]
+
+
 def test_start_api_configures_tls_certificate_and_private_key(monkeypatch, tmp_path):
     captured = {}
     tls_files = SimpleNamespace(
@@ -137,6 +168,42 @@ def test_start_api_configures_tls_certificate_and_private_key(monkeypatch, tmp_p
     assert captured["ssl_certfile"] == str(tls_files.certificate)
     assert captured["ssl_keyfile"] == str(tls_files.private_key)
     assert captured["port"] == launcher.HTTPS_PORT
+    assert server.started
+
+
+def test_association_listener_uses_tls_and_standard_https_port(monkeypatch, tmp_path):
+    captured = {}
+    tls_files = SimpleNamespace(
+        certificate=tmp_path / "server-cert.pem",
+        private_key=tmp_path / "server-key.pem",
+    )
+
+    class FakeServer:
+        started = True
+        should_exit = False
+
+        def __init__(self, config):
+            self.config = config
+
+        def run(self):
+            pass
+
+    def fake_config(app, **kwargs):
+        captured.update(app=app, **kwargs)
+        return kwargs
+
+    monkeypatch.setattr(launcher, "Config", fake_config)
+    monkeypatch.setattr(launcher.uvicorn, "Server", FakeServer)
+    monkeypatch.setattr("app.main.app", object())
+    server, thread = launcher.start_association_https("192.168.1.45", tls_files)
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert isinstance(captured["app"], launcher.AssociationOnlyApp)
+    assert captured["port"] == 443
+    assert captured["ssl_certfile"] == str(tls_files.certificate)
+    assert captured["ssl_keyfile"] == str(tls_files.private_key)
+    assert captured["lifespan"] == "off"
     assert server.started
 
 
@@ -197,4 +264,63 @@ def test_bootstrap_http_only_allows_certificate_bootstrap_paths(path):
 
     messages = asyncio.run(run())
     assert messages[0]["status"] == 404
+    assert called == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/.well-known/apple-app-site-association", "/.well-known/assetlinks.json"],
+)
+def test_association_listener_allows_only_domain_association_documents(path):
+    called = []
+
+    async def application(scope, receive, send):
+        called.append(scope["path"])
+
+    app = launcher.AssociationOnlyApp(application)
+
+    async def run():
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(_):
+            pass
+
+        await app(
+            {"type": "http", "method": "GET", "path": path, "headers": []},
+            receive,
+            send,
+        )
+
+    import asyncio
+
+    asyncio.run(run())
+    assert called == [path]
+
+
+@pytest.mark.parametrize("path", ["/", "/docs", "/api/login", "/health"])
+def test_association_listener_rejects_non_association_paths(path):
+    called = []
+    sent = []
+
+    async def application(scope, receive, send):
+        called.append(scope["path"])
+
+    async def run():
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            sent.append(message)
+
+        await launcher.AssociationOnlyApp(application)(
+            {"type": "http", "method": "GET", "path": path, "headers": []},
+            receive,
+            send,
+        )
+
+    import asyncio
+
+    asyncio.run(run())
+    assert sent[0]["status"] == 404
     assert called == []

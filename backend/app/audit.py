@@ -23,8 +23,20 @@ def write_audit_event(
     created_at: int,
 ) -> None:
     """Insert a sanitized event; failures intentionally abort the caller's transaction."""
-    if any(_SENSITIVE_KEY.search(str(key)) for key in details):
-        raise ValueError("Sensitive authentication data cannot be written to the audit log.")
+
+    def validate(value: Any) -> None:
+        if isinstance(value, Mapping):
+            for key, nested in value.items():
+                if _SENSITIVE_KEY.search(str(key)):
+                    raise ValueError(
+                        "Sensitive authentication data cannot be written to the audit log."
+                    )
+                validate(nested)
+        elif isinstance(value, (list, tuple)):
+            for nested in value:
+                validate(nested)
+
+    validate(details)
     safe_details = json.dumps(details, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     db.execute(
         """INSERT INTO audit_events(

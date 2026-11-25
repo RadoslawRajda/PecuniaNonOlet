@@ -1,3 +1,4 @@
+import {authenticatedFetch} from '../../auth/session';
 import React from 'react';
 import {Image, StyleSheet, Text, View} from 'react-native';
 import {API_URL} from '@env';
@@ -13,7 +14,7 @@ export function CounterpartyAvatar({token, email, transactionId, size = 52}: {to
     const path = transactionId
       ? `/api/transactions/${encodeURIComponent(transactionId)}/counterparty-photo`
       : `/api/profile/photo/recipient?email=${encodeURIComponent(email ?? '')}`;
-    fetch(`${apiBaseUrl}${path}`, {headers: {Authorization: `Bearer ${token}`}})
+    authenticatedFetch(`${apiBaseUrl}${path}`, {headers: {Authorization: `Bearer ${token}`}})
       .then(async response => {
         if (!response.ok) return null;
         const blob = await response.blob();

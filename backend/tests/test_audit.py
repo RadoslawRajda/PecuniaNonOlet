@@ -2,10 +2,9 @@ import json
 import sqlite3
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.admin import create_analyst
 from app.main import app
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture
@@ -17,7 +16,8 @@ def client(tmp_path, monkeypatch):
 
 def register(client, email):
     return client.post(
-        "/api/register", json={"email": email, "password": "strong-password"}
+        "/api/register",
+        json={"email": email, "password": "violet-bridge-2026!", "captcha_token": "test-token"},
     ).json()
 
 
@@ -26,11 +26,11 @@ def auth(token):
 
 
 def analyst_login(client):
-    create_analyst("analyst@example.com", "analyst-password")
+    create_analyst("analyst@example.com", "violet-bridge-2026!")
     response = client.post(
-        "/api/login", json={"email": "analyst@example.com", "password": "analyst-password"}
+        "/api/login", json={"email": "analyst@example.com", "password": "violet-bridge-2026!"}
     )
-    return auth(response.json()["token"])
+    return auth(response.json()["access_token"])
 
 
 def test_records_opening_financial_and_local_admin_events(client, tmp_path):
@@ -40,7 +40,7 @@ def test_records_opening_financial_and_local_admin_events(client, tmp_path):
 
     transfer = client.post(
         "/api/transfers",
-        headers={**auth(sender["token"]), "Idempotency-Key": "audit-test-transfer"},
+        headers={**auth(sender["access_token"]), "Idempotency-Key": "audit-test-transfer"},
         json={
             "recipient_email": "receiver@example.com",
             "source_account_id": 1,
@@ -58,7 +58,9 @@ def test_records_opening_financial_and_local_admin_events(client, tmp_path):
     transfer_event = next(event for event in events if event["entity_id"] == transaction_id)
     assert transfer_event["action"] == "financial.transaction_completed"
     assert transfer_event["details"]["source_amount_minor"] == 250
-    admin_event = next(event for event in events if event["action"] == "administration.analyst_created")
+    admin_event = next(
+        event for event in events if event["action"] == "administration.analyst_created"
+    )
     assert admin_event["actor_role"] == "local_admin"
     assert admin_event["actor_user_id"] is None
     assert "password" not in json.dumps(events).lower()
@@ -70,11 +72,15 @@ def test_records_opening_financial_and_local_admin_events(client, tmp_path):
     )
     assert filtered.status_code == 200
     assert filtered.json()["total"] == 3
-    assert client.get("/api/analytics/audit-events?from=10&to=1", headers=headers).status_code == 422
+    assert (
+        client.get("/api/analytics/audit-events?from=10&to=1", headers=headers).status_code == 422
+    )
 
     with sqlite3.connect(tmp_path / "audit.db") as db:
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
-            db.execute("UPDATE audit_events SET action = 'changed' WHERE entity_id = ?", (transaction_id,))
+            db.execute(
+                "UPDATE audit_events SET action = 'changed' WHERE entity_id = ?", (transaction_id,)
+            )
         db.rollback()
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
             db.execute("DELETE FROM audit_events WHERE entity_id = ?", (transaction_id,))
@@ -83,7 +89,10 @@ def test_records_opening_financial_and_local_admin_events(client, tmp_path):
 
 def test_regular_user_cannot_read_audit_events(client):
     user = register(client, "user@example.com")
-    assert client.get("/api/analytics/audit-events", headers=auth(user["token"])).status_code == 403
+    assert (
+        client.get("/api/analytics/audit-events", headers=auth(user["access_token"])).status_code
+        == 403
+    )
     assert client.get("/api/analytics/audit-events").status_code == 401
 
 
@@ -94,11 +103,11 @@ def test_audit_failure_rolls_back_transfer_and_balances(client, tmp_path, monkey
     def fail_audit(*args, **kwargs):
         raise sqlite3.IntegrityError("simulated audit write failure")
 
-    monkeypatch.setattr("app.routes.transfers.write_audit_event", fail_audit)
+    monkeypatch.setattr("app.services.transfers.write_audit_event", fail_audit)
     with pytest.raises(sqlite3.IntegrityError, match="simulated audit write failure"):
         client.post(
             "/api/transfers",
-            headers={**auth(sender["token"]), "Idempotency-Key": "rollback-audit-test"},
+            headers={**auth(sender["access_token"]), "Idempotency-Key": "rollback-audit-test"},
             json={
                 "recipient_email": "receiver@example.com",
                 "source_account_id": 1,
@@ -110,4 +119,7 @@ def test_audit_failure_rolls_back_transfer_and_balances(client, tmp_path, monkey
     with sqlite3.connect(tmp_path / "audit.db") as db:
         balances = db.execute("SELECT balance_minor FROM accounts ORDER BY id").fetchall()
         assert balances == [(100_000,), (0,), (0,), (0,), (0,), (100_000,), (0,), (0,), (0,), (0,)]
-        assert db.execute("SELECT count(*) FROM transactions WHERE kind = 'transfer'").fetchone()[0] == 0
+        assert (
+            db.execute("SELECT count(*) FROM transactions WHERE kind = 'transfer'").fetchone()[0]
+            == 0
+        )

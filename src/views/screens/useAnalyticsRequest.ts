@@ -1,3 +1,4 @@
+import {authenticatedFetch} from '../../auth/session';
 import {useCallback, useEffect, useState} from 'react';
 import {API_URL} from '@env';
 import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
@@ -20,7 +21,7 @@ export function useAnalyticsRequest<T>(token: string | null, path: string) {
     const baseUrl = (API_URL ?? '').trim().replace(/\/+$/, '');
     setLoading(true);
     setError(null);
-    fetch(`${baseUrl}${path}`, {headers: {Authorization: `Bearer ${token}`}})
+    authenticatedFetch(`${baseUrl}${path}`, {headers: {Authorization: `Bearer ${token}`}})
       .then(async response => {
         if (handleForbiddenResponse(response, handleForbidden)) return null;
         const body = await response.json().catch(() => null);

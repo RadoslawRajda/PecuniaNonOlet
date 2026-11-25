@@ -6,11 +6,12 @@ from fractions import Fraction
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
-
+from app.adapters import nbp_rates
+from app.adapters.nbp_rates import RateProviderUnavailable, RateTable
 from app.main import app
 from app.routes import exchange
-from app.routes.exchange import RateProviderUnavailable, RateTable
+from app.services.exchange_quotes import amount_in_minor_units
+from fastapi.testclient import TestClient
 
 
 class FixedRateProvider:
@@ -44,7 +45,8 @@ def auth(token):
 
 def create_user(client, email):
     return client.post(
-        "/api/register", json={"email": email, "password": "test-password"}
+        "/api/register",
+        json={"email": email, "password": "violet-bridge-2026!", "captcha_token": "test-token"},
     ).json()
 
 
@@ -82,7 +84,7 @@ def test_nbp_provider_uses_https_and_parses_decimal_rates(monkeypatch):
             calls.append((url, headers))
             return FakeResponse()
 
-    monkeypatch.setattr(exchange.httpx, "Client", FakeClient)
+    monkeypatch.setattr(nbp_rates.httpx, "Client", FakeClient)
     table = exchange.NBPRateProvider().current_rates()
     assert calls[0][0].startswith("https://")
     assert table.pln_per_unit["EUR"] == Decimal("4.1234")
@@ -90,12 +92,15 @@ def test_nbp_provider_uses_https_and_parses_decimal_rates(monkeypatch):
     assert table.table_id == "2026/217/A"
 
 
-@pytest.mark.parametrize("bad_payload", [
-    "[]",
-    '[{"table":"B","effectiveDate":"2026-11-09","rates":[]}]',
-    '[{"table":"A","effectiveDate":"2026-11-09","rates":[]}]',
-    '[{"table":"A","effectiveDate":"2026-11-09","rates":[{"code":"EUR","mid":0}]}]',
-])
+@pytest.mark.parametrize(
+    "bad_payload",
+    [
+        "[]",
+        '[{"table":"B","effectiveDate":"2026-11-09","rates":[]}]',
+        '[{"table":"A","effectiveDate":"2026-11-09","rates":[]}]',
+        '[{"table":"A","effectiveDate":"2026-11-09","rates":[{"code":"EUR","mid":0}]}]',
+    ],
+)
 def test_nbp_provider_rejects_invalid_or_incomplete_table(monkeypatch, bad_payload):
     class FakeResponse:
         text = bad_payload
@@ -116,7 +121,7 @@ def test_nbp_provider_rejects_invalid_or_incomplete_table(monkeypatch, bad_paylo
         def get(self, *args, **kwargs):
             return FakeResponse()
 
-    monkeypatch.setattr(exchange.httpx, "Client", FakeClient)
+    monkeypatch.setattr(nbp_rates.httpx, "Client", FakeClient)
     with pytest.raises(RateProviderUnavailable):
         exchange.NBPRateProvider().current_rates()
 
@@ -135,7 +140,7 @@ def test_nbp_provider_surfaces_network_timeout_as_unavailable(monkeypatch):
         def get(self, *args, **kwargs):
             raise httpx.ReadTimeout("upstream timed out")
 
-    monkeypatch.setattr(exchange.httpx, "Client", FakeClient)
+    monkeypatch.setattr(nbp_rates.httpx, "Client", FakeClient)
     with pytest.raises(RateProviderUnavailable):
         exchange.NBPRateProvider().current_rates()
 
@@ -143,7 +148,7 @@ def test_nbp_provider_surfaces_network_timeout_as_unavailable(monkeypatch):
 def test_rate_endpoint_returns_all_supported_currencies_and_requires_user(client):
     assert client.get("/api/exchange-rates").status_code == 401
     user = create_user(client, "rates@example.com")
-    response = client.get("/api/exchange-rates", headers=auth(user["token"]))
+    response = client.get("/api/exchange-rates", headers=auth(user["access_token"]))
     assert response.status_code == 200
     assert response.json() == {
         "provider": "Test NBP Table A",
@@ -167,17 +172,20 @@ def test_rate_provider_unavailable_returns_service_unavailable(client):
 
     app.dependency_overrides[exchange.get_rate_provider] = Unavailable
     user = create_user(client, "unavailable@example.com")
-    response = client.get("/api/exchange-rates", headers=auth(user["token"]))
+    response = client.get("/api/exchange-rates", headers=auth(user["access_token"]))
     assert response.status_code == 503
     assert "Kursy walut" in response.json()["detail"]
 
 
 def test_quote_cross_rates_cover_every_directed_supported_pair(client):
     user = create_user(client, "pairs@example.com")
-    ids = account_ids(client, user["token"])
+    ids = account_ids(client, user["access_token"])
     pln_per_unit = {
-        "PLN": Decimal(1), "EUR": Decimal(4), "USD": Decimal(2),
-        "GBP": Decimal(5), "CZK": Decimal("0.2"),
+        "PLN": Decimal(1),
+        "EUR": Decimal(4),
+        "USD": Decimal(2),
+        "GBP": Decimal(5),
+        "CZK": Decimal("0.2"),
     }
     for source in ids:
         for destination in ids:
@@ -185,7 +193,7 @@ def test_quote_cross_rates_cover_every_directed_supported_pair(client):
                 continue
             response = client.post(
                 "/api/exchange/quote",
-                headers=auth(user["token"]),
+                headers=auth(user["access_token"]),
                 json={
                     "source_account_id": ids[source],
                     "destination_account_id": ids[destination],
@@ -205,49 +213,84 @@ def test_quote_cross_rates_cover_every_directed_supported_pair(client):
 def test_quote_rejects_foreign_accounts_same_currency_and_bad_amount(client):
     first = create_user(client, "quote-first@example.com")
     second = create_user(client, "quote-second@example.com")
-    first_ids = account_ids(client, first["token"])
-    second_ids = account_ids(client, second["token"])
-    headers = auth(first["token"])
-    assert client.post(
-        "/api/exchange/quote", headers=headers,
-        json={"source_account_id": second_ids["PLN"], "destination_account_id": first_ids["EUR"], "source_amount_minor": 100},
-    ).status_code == 404
-    assert client.post(
-        "/api/exchange/quote", headers=headers,
-        json={"source_account_id": first_ids["PLN"], "destination_account_id": first_ids["PLN"], "source_amount_minor": 100},
-    ).status_code == 422
+    first_ids = account_ids(client, first["access_token"])
+    second_ids = account_ids(client, second["access_token"])
+    headers = auth(first["access_token"])
+    assert (
+        client.post(
+            "/api/exchange/quote",
+            headers=headers,
+            json={
+                "source_account_id": second_ids["PLN"],
+                "destination_account_id": first_ids["EUR"],
+                "source_amount_minor": 100,
+            },
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/api/exchange/quote",
+            headers=headers,
+            json={
+                "source_account_id": first_ids["PLN"],
+                "destination_account_id": first_ids["PLN"],
+                "source_amount_minor": 100,
+            },
+        ).status_code
+        == 422
+    )
     for amount in (0, -1, 9_000_000_000_000_001, 1.5):
-        assert client.post(
-            "/api/exchange/quote", headers=headers,
-            json={"source_account_id": first_ids["PLN"], "destination_account_id": first_ids["EUR"], "source_amount_minor": amount},
-        ).status_code == 422
+        assert (
+            client.post(
+                "/api/exchange/quote",
+                headers=headers,
+                json={
+                    "source_account_id": first_ids["PLN"],
+                    "destination_account_id": first_ids["EUR"],
+                    "source_amount_minor": amount,
+                },
+            ).status_code
+            == 422
+        )
 
 
 def test_quote_and_exchange_are_scoped_to_the_owning_user(client):
     owner = create_user(client, "quote-owner@example.com")
     other = create_user(client, "quote-other@example.com")
-    owner_ids = account_ids(client, owner["token"])
+    owner_ids = account_ids(client, owner["access_token"])
     quote = client.post(
-        "/api/exchange/quote", headers=auth(owner["token"]),
-        json={"source_account_id": owner_ids["PLN"], "destination_account_id": owner_ids["EUR"], "source_amount_minor": 100},
+        "/api/exchange/quote",
+        headers=auth(owner["access_token"]),
+        json={
+            "source_account_id": owner_ids["PLN"],
+            "destination_account_id": owner_ids["EUR"],
+            "source_amount_minor": 100,
+        },
     ).json()
     response = client.post(
-        "/api/exchange", headers={**auth(other["token"]), "Idempotency-Key": "steal-quote"},
+        "/api/exchange",
+        headers={**auth(other["access_token"]), "Idempotency-Key": "steal-quote"},
         json={"quote_id": quote["quote_id"]},
     )
     assert response.status_code == 404
-    balances = client.get("/api/accounts", headers=auth(owner["token"])).json()["accounts"]
+    balances = client.get("/api/accounts", headers=auth(owner["access_token"])).json()["accounts"]
     assert next(a["balance_minor"] for a in balances if a["currency_code"] == "PLN") == 100_000
 
 
 def test_exchange_is_atomic_records_rate_and_replays_idempotently(client, tmp_path):
     user = create_user(client, "exchange@example.com")
-    ids = account_ids(client, user["token"])
+    ids = account_ids(client, user["access_token"])
     quote = client.post(
-        "/api/exchange/quote", headers=auth(user["token"]),
-        json={"source_account_id": ids["PLN"], "destination_account_id": ids["EUR"], "source_amount_minor": 10_000},
+        "/api/exchange/quote",
+        headers=auth(user["access_token"]),
+        json={
+            "source_account_id": ids["PLN"],
+            "destination_account_id": ids["EUR"],
+            "source_amount_minor": 10_000,
+        },
     ).json()
-    headers = {**auth(user["token"]), "Idempotency-Key": "fx-001"}
+    headers = {**auth(user["access_token"]), "Idempotency-Key": "fx-001"}
     payload = {"quote_id": quote["quote_id"]}
     response = client.post("/api/exchange", headers=headers, json=payload)
     assert response.status_code == 201, response.text
@@ -255,7 +298,7 @@ def test_exchange_is_atomic_records_rate_and_replays_idempotently(client, tmp_pa
     assert body["source_amount_minor"] == 10_000
     assert body["destination_amount_minor"] == 2_500
     assert body["exchange_rate"] == "0.25"
-    balances = client.get("/api/accounts", headers=auth(user["token"])).json()["accounts"]
+    balances = client.get("/api/accounts", headers=auth(user["access_token"])).json()["accounts"]
     assert next(a["balance_minor"] for a in balances if a["currency_code"] == "PLN") == 90_000
     assert next(a["balance_minor"] for a in balances if a["currency_code"] == "EUR") == 2_500
 
@@ -263,18 +306,34 @@ def test_exchange_is_atomic_records_rate_and_replays_idempotently(client, tmp_pa
     assert replay.status_code == 201
     assert replay.json()["transaction_id"] == body["transaction_id"]
     assert replay.json()["idempotent_replay"] is True
-    assert client.post(
-        "/api/exchange", headers={**auth(user["token"]), "Idempotency-Key": "client-rate"},
-        json={"quote_id": quote["quote_id"], "exchange_rate": "999"},
-    ).status_code == 422
-    assert client.post(
-        "/api/exchange", headers=headers, json={"quote_id": "00000000-0000-0000-0000-000000000000"}
-    ).status_code == 409
-    assert client.post(
-        "/api/exchange", headers={**auth(user["token"]), "Idempotency-Key": "fx-002"}, json=payload
-    ).status_code == 409
+    assert (
+        client.post(
+            "/api/exchange",
+            headers={**auth(user["access_token"]), "Idempotency-Key": "client-rate"},
+            json={"quote_id": quote["quote_id"], "exchange_rate": "999"},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/exchange",
+            headers=headers,
+            json={"quote_id": "00000000-0000-0000-0000-000000000000"},
+        ).status_code
+        == 409
+    )
+    assert (
+        client.post(
+            "/api/exchange",
+            headers={**auth(user["access_token"]), "Idempotency-Key": "fx-002"},
+            json=payload,
+        ).status_code
+        == 409
+    )
 
-    history = client.get("/api/transactions", headers=auth(user["token"])).json()["transactions"]
+    history = client.get("/api/transactions", headers=auth(user["access_token"])).json()[
+        "transactions"
+    ]
     transaction = next(item for item in history if item["id"] == body["transaction_id"])
     assert transaction["type"] == "exchange"
     assert transaction["source_amount_minor"] == 10_000
@@ -286,27 +345,42 @@ def test_exchange_is_atomic_records_rate_and_replays_idempotently(client, tmp_pa
             (body["transaction_id"],),
         ).fetchall()
         assert entries == [(-10_000,), (2_500,)]
-        assert db.execute("SELECT id FROM exchange_quotes WHERE consumed_transaction_id = ?", (body["transaction_id"],)).fetchone() == (quote["quote_id"],)
-        assert db.execute("SELECT consumed_at FROM exchange_quotes WHERE id = ?", (quote["quote_id"],)).fetchone()[0] is not None
+        assert db.execute(
+            "SELECT id FROM exchange_quotes WHERE consumed_transaction_id = ?",
+            (body["transaction_id"],),
+        ).fetchone() == (quote["quote_id"],)
+        assert (
+            db.execute(
+                "SELECT consumed_at FROM exchange_quotes WHERE id = ?", (quote["quote_id"],)
+            ).fetchone()[0]
+            is not None
+        )
         assert db.execute(
             "SELECT base_currency_code, quote_currency_code, rate, provider FROM exchange_rate_snapshots"
         ).fetchone() == ("PLN", "EUR", "0.25", "Test NBP Table A")
 
 
 def test_exchange_rounding_floors_positive_payouts(client):
-    assert exchange.amount_in_minor_units(3, Decimal("0.5"), Decimal(1)) == 1
+    assert amount_in_minor_units(3, Decimal("0.5"), Decimal(1)) == 1
     user = create_user(client, "rounding@example.com")
-    ids = account_ids(client, user["token"])
+    ids = account_ids(client, user["access_token"])
     quote = client.post(
-        "/api/exchange/quote", headers=auth(user["token"]),
-        json={"source_account_id": ids["CZK"], "destination_account_id": ids["PLN"], "source_amount_minor": 25},
+        "/api/exchange/quote",
+        headers=auth(user["access_token"]),
+        json={
+            "source_account_id": ids["CZK"],
+            "destination_account_id": ids["PLN"],
+            "source_amount_minor": 25,
+        },
     )
     assert quote.status_code == 201
     assert quote.json()["destination_amount_minor"] == 5
 
 
 @pytest.mark.parametrize(("eur_rate", "pln_source_minor"), [("4.24", 424), ("3.00", 300)])
-def test_exact_cross_rate_conversion_preserves_whole_eurocents(client, tmp_path, eur_rate, pln_source_minor):
+def test_exact_cross_rate_conversion_preserves_whole_eurocents(
+    client, tmp_path, eur_rate, pln_source_minor
+):
     class ExactRateProvider:
         def current_rates(self):
             return RateTable(
@@ -323,10 +397,10 @@ def test_exact_cross_rate_conversion_preserves_whole_eurocents(client, tmp_path,
 
     app.dependency_overrides[exchange.get_rate_provider] = ExactRateProvider
     user = create_user(client, f"exact-{eur_rate.replace('.', '-')}@example.com")
-    ids = account_ids(client, user["token"])
+    ids = account_ids(client, user["access_token"])
     quote = client.post(
         "/api/exchange/quote",
-        headers=auth(user["token"]),
+        headers=auth(user["access_token"]),
         json={
             "source_account_id": ids["PLN"],
             "destination_account_id": ids["EUR"],
@@ -346,21 +420,27 @@ def test_exact_cross_rate_conversion_preserves_whole_eurocents(client, tmp_path,
             (quote.json()["quote_id"],),
         ).fetchone()
     assert saved == (pln_source_minor, 100, "1", eur_rate, None)
-    exact_euro_minor = Fraction(saved[0]) * Fraction(Decimal(saved[2])) / Fraction(Decimal(saved[3]))
+    exact_euro_minor = (
+        Fraction(saved[0]) * Fraction(Decimal(saved[2])) / Fraction(Decimal(saved[3]))
+    )
     assert exact_euro_minor.numerator // exact_euro_minor.denominator == saved[1]
 
     exchange_response = client.post(
         "/api/exchange",
-        headers={**auth(user["token"]), "Idempotency-Key": f"exact-{eur_rate}"},
+        headers={**auth(user["access_token"]), "Idempotency-Key": f"exact-{eur_rate}"},
         json={"quote_id": quote.json()["quote_id"]},
     )
     assert exchange_response.status_code == 201
     assert exchange_response.json()["destination_amount_minor"] == 100
-    balances = client.get("/api/accounts", headers=auth(user["token"])).json()["accounts"]
+    balances = client.get("/api/accounts", headers=auth(user["access_token"])).json()["accounts"]
     assert next(item["balance_minor"] for item in balances if item["currency_code"] == "EUR") == 100
 
 
-def test_exchange_quotes_match_exact_fraction_results_for_supported_currency_pairs(client):
+def test_exchange_quotes_match_exact_fraction_results_for_supported_currency_pairs(
+    client, monkeypatch
+):
+    # The exhaustive arithmetic table is independent of the separately tested API throttle.
+    monkeypatch.setattr(exchange, "enforce_rate_limit", lambda *args, **kwargs: None)
     rates = {
         "PLN": Decimal(1),
         "EUR": Decimal("4.24"),
@@ -375,7 +455,7 @@ def test_exchange_quotes_match_exact_fraction_results_for_supported_currency_pai
 
     app.dependency_overrides[exchange.get_rate_provider] = ExactRateProvider
     user = create_user(client, "fraction-pairs@example.com")
-    ids = account_ids(client, user["token"])
+    ids = account_ids(client, user["access_token"])
     for source_code, source_id in ids.items():
         for destination_code, destination_id in ids.items():
             if source_code == destination_code:
@@ -389,7 +469,7 @@ def test_exchange_quotes_match_exact_fraction_results_for_supported_currency_pai
                 expected = exact_minor.numerator // exact_minor.denominator
                 response = client.post(
                     "/api/exchange/quote",
-                    headers=auth(user["token"]),
+                    headers=auth(user["access_token"]),
                     json={
                         "source_account_id": source_id,
                         "destination_account_id": destination_id,
@@ -401,6 +481,38 @@ def test_exchange_quotes_match_exact_fraction_results_for_supported_currency_pai
                 else:
                     assert response.status_code == 201, response.text
                     assert response.json()["destination_amount_minor"] == expected
+
+
+def test_exchange_quote_api_enforces_per_user_rate_limit(client):
+    class QuoteRateProvider:
+        def current_rates(self):
+            return RateTable(
+                "Rate limit test rates",
+                date.today().isoformat(),
+                {
+                    "PLN": Decimal(1),
+                    "EUR": Decimal(4),
+                    "USD": Decimal(3),
+                    "GBP": Decimal(5),
+                    "CZK": Decimal("0.2"),
+                },
+            )
+
+    app.dependency_overrides[exchange.get_rate_provider] = QuoteRateProvider
+    user = create_user(client, "quote-throttle@example.com")
+    ids = account_ids(client, user["access_token"])
+    payload = {
+        "source_account_id": ids["PLN"],
+        "destination_account_id": ids["EUR"],
+        "source_amount_minor": 100,
+    }
+    responses = [
+        client.post("/api/exchange/quote", headers=auth(user["access_token"]), json=payload)
+        for _ in range(31)
+    ]
+    assert [response.status_code for response in responses[:30]] == [201] * 30
+    assert responses[30].status_code == 429
+    assert responses[30].headers["Retry-After"]
 
 
 @pytest.mark.parametrize(
@@ -431,13 +543,15 @@ def test_rate_table_freshness_policy(client, effective_date, expected_status):
 
     app.dependency_overrides[exchange.get_rate_provider] = DatedRateProvider
     user = create_user(client, f"freshness-{expected_status}-{effective_date}@example.com")
-    response = client.get("/api/exchange-rates", headers=auth(user["token"]))
+    response = client.get("/api/exchange-rates", headers=auth(user["access_token"]))
     assert response.status_code == expected_status
 
 
-def test_two_way_exchange_cycles_never_increase_source_balance(client, tmp_path):
+def test_two_way_exchange_cycles_never_increase_source_balance(client, tmp_path, monkeypatch):
+    # Keep this deterministic stress test focused on conversion/ledger invariants.
+    monkeypatch.setattr(exchange, "enforce_rate_limit", lambda *args, **kwargs: None)
     user = create_user(client, "round-trip@example.com")
-    ids = account_ids(client, user["token"])
+    ids = account_ids(client, user["access_token"])
     amounts = (1, 2, 3, 4, 5, 9, 10, 25, 100, 101, 1_000)
 
     for source_code, source_id in ids.items():
@@ -454,7 +568,7 @@ def test_two_way_exchange_cycles_never_increase_source_balance(client, tmp_path)
 
                 forward = client.post(
                     "/api/exchange/quote",
-                    headers=auth(user["token"]),
+                    headers=auth(user["access_token"]),
                     json={
                         "source_account_id": source_id,
                         "destination_account_id": destination_id,
@@ -467,14 +581,14 @@ def test_two_way_exchange_cycles_never_increase_source_balance(client, tmp_path)
                 key = f"cycle-{source_code}-{destination_code}-{amount}"
                 executed = client.post(
                     "/api/exchange",
-                    headers={**auth(user["token"]), "Idempotency-Key": key + "-out"},
+                    headers={**auth(user["access_token"]), "Idempotency-Key": key + "-out"},
                     json={"quote_id": forward.json()["quote_id"]},
                 )
                 assert executed.status_code == 201, executed.text
 
                 backward = client.post(
                     "/api/exchange/quote",
-                    headers=auth(user["token"]),
+                    headers=auth(user["access_token"]),
                     json={
                         "source_account_id": destination_id,
                         "destination_account_id": source_id,
@@ -486,7 +600,7 @@ def test_two_way_exchange_cycles_never_increase_source_balance(client, tmp_path)
                 assert backward.status_code == 201, backward.text
                 returned = client.post(
                     "/api/exchange",
-                    headers={**auth(user["token"]), "Idempotency-Key": key + "-back"},
+                    headers={**auth(user["access_token"]), "Idempotency-Key": key + "-back"},
                     json={"quote_id": backward.json()["quote_id"]},
                 )
                 assert returned.status_code == 201, returned.text
@@ -501,82 +615,127 @@ def test_opening_balance_idempotency_key_conflicts_cleanly(client):
     user = create_user(client, "opening-replay@example.com")
     response = client.post(
         "/api/exchange",
-        headers={**auth(user["token"]), "Idempotency-Key": "opening-balance-pln-v1"},
+        headers={**auth(user["access_token"]), "Idempotency-Key": "opening-balance-pln-v1"},
         json={"quote_id": "00000000-0000-0000-0000-000000000000"},
     )
     assert response.status_code == 409
 
 
+def test_exchange_requires_uuid_quote_id_without_changing_json_contract(client):
+    user = create_user(client, "quote-uuid@example.com")
+    headers = {**auth(user["access_token"]), "Idempotency-Key": "invalid-quote-id"}
+    for quote_id in ("z" * 36, "00000000-0000-0000-0000-00000000000z", 123, True):
+        assert (
+            client.post("/api/exchange", headers=headers, json={"quote_id": quote_id}).status_code
+            == 422
+        )
+    assert (
+        client.post(
+            "/api/exchange",
+            headers=headers,
+            json={"quote_id": "00000000-0000-0000-0000-000000000000"},
+        ).status_code
+        == 404
+    )
+
+
 def test_sqlite_overflowing_ids_and_offsets_are_rejected_at_api_boundary(client):
     user = create_user(client, "numeric-boundary@example.com")
-    headers = auth(user["token"])
+    headers = auth(user["access_token"])
     too_large = 9_223_372_036_854_775_808
     assert client.get(f"/api/transactions?offset={too_large}", headers=headers).status_code == 422
-    assert client.post(
-        "/api/transfers",
-        headers={**headers, "Idempotency-Key": "bad-account-id"},
-        json={
-            "recipient_email": "someone@example.com",
-            "source_account_id": too_large,
-            "currency_code": "PLN",
-            "amount_minor": 1,
-        },
-    ).status_code == 422
-    assert client.post(
-        "/api/exchange/quote",
-        headers=headers,
-        json={
-            "source_account_id": too_large,
-            "destination_account_id": 1,
-            "source_amount_minor": 1,
-        },
-    ).status_code == 422
+    assert (
+        client.post(
+            "/api/transfers",
+            headers={**headers, "Idempotency-Key": "bad-account-id"},
+            json={
+                "recipient_email": "someone@example.com",
+                "source_account_id": too_large,
+                "currency_code": "PLN",
+                "amount_minor": 1,
+            },
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/exchange/quote",
+            headers=headers,
+            json={
+                "source_account_id": too_large,
+                "destination_account_id": 1,
+                "source_amount_minor": 1,
+            },
+        ).status_code
+        == 422
+    )
 
 
 def test_one_quote_cannot_be_executed_concurrently_twice(client):
     user = create_user(client, "concurrent-fx@example.com")
-    ids = account_ids(client, user["token"])
+    ids = account_ids(client, user["access_token"])
     quote = client.post(
-        "/api/exchange/quote", headers=auth(user["token"]),
-        json={"source_account_id": ids["PLN"], "destination_account_id": ids["EUR"], "source_amount_minor": 1_000},
+        "/api/exchange/quote",
+        headers=auth(user["access_token"]),
+        json={
+            "source_account_id": ids["PLN"],
+            "destination_account_id": ids["EUR"],
+            "source_amount_minor": 1_000,
+        },
     ).json()
 
     def submit(key):
         return client.post(
-            "/api/exchange", headers={**auth(user["token"]), "Idempotency-Key": key},
+            "/api/exchange",
+            headers={**auth(user["access_token"]), "Idempotency-Key": key},
             json={"quote_id": quote["quote_id"]},
         )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         responses = list(pool.map(submit, ("parallel-a", "parallel-b")))
     assert sorted(response.status_code for response in responses) == [201, 409]
-    balances = client.get("/api/accounts", headers=auth(user["token"])).json()["accounts"]
+    balances = client.get("/api/accounts", headers=auth(user["access_token"])).json()["accounts"]
     assert next(a["balance_minor"] for a in balances if a["currency_code"] == "PLN") == 99_000
     assert next(a["balance_minor"] for a in balances if a["currency_code"] == "EUR") == 250
 
 
 def test_expired_quote_and_insufficient_funds_do_not_change_balances(client, tmp_path):
     user = create_user(client, "expiry@example.com")
-    ids = account_ids(client, user["token"])
-    token = user["token"]
+    ids = account_ids(client, user["access_token"])
+    token = user["access_token"]
     quote = client.post(
-        "/api/exchange/quote", headers=auth(token),
-        json={"source_account_id": ids["PLN"], "destination_account_id": ids["EUR"], "source_amount_minor": 100},
+        "/api/exchange/quote",
+        headers=auth(token),
+        json={
+            "source_account_id": ids["PLN"],
+            "destination_account_id": ids["EUR"],
+            "source_amount_minor": 100,
+        },
     ).json()
     with sqlite3.connect(tmp_path / "exchange.db") as db:
-        db.execute("UPDATE exchange_quotes SET created_at = 0, expires_at = 1 WHERE id = ?", (quote["quote_id"],))
+        db.execute(
+            "UPDATE exchange_quotes SET created_at = 0, expires_at = 1 WHERE id = ?",
+            (quote["quote_id"],),
+        )
     expired = client.post(
-        "/api/exchange", headers={**auth(token), "Idempotency-Key": "expired"},
+        "/api/exchange",
+        headers={**auth(token), "Idempotency-Key": "expired"},
         json={"quote_id": quote["quote_id"]},
     )
     assert expired.status_code == 409
 
     no_funds = client.post(
-        "/api/exchange/quote", headers=auth(token),
-        json={"source_account_id": ids["EUR"], "destination_account_id": ids["PLN"], "source_amount_minor": 100},
+        "/api/exchange/quote",
+        headers=auth(token),
+        json={
+            "source_account_id": ids["EUR"],
+            "destination_account_id": ids["PLN"],
+            "source_amount_minor": 100,
+        },
     ).json()
     insufficient = client.post(
-        "/api/exchange", headers={**auth(token), "Idempotency-Key": "no-funds"},
+        "/api/exchange",
+        headers={**auth(token), "Idempotency-Key": "no-funds"},
         json={"quote_id": no_funds["quote_id"]},
     )
     assert insufficient.status_code == 409
@@ -587,29 +746,45 @@ def test_expired_quote_and_insufficient_funds_do_not_change_balances(client, tmp
 
 def test_exchange_rejects_destination_balance_overflow(client, tmp_path):
     user = create_user(client, "overflow-fx@example.com")
-    ids = account_ids(client, user["token"])
+    ids = account_ids(client, user["access_token"])
     quote = client.post(
-        "/api/exchange/quote", headers=auth(user["token"]),
-        json={"source_account_id": ids["PLN"], "destination_account_id": ids["EUR"], "source_amount_minor": 1_000},
+        "/api/exchange/quote",
+        headers=auth(user["access_token"]),
+        json={
+            "source_account_id": ids["PLN"],
+            "destination_account_id": ids["EUR"],
+            "source_amount_minor": 1_000,
+        },
     ).json()
     with sqlite3.connect(tmp_path / "exchange.db") as db:
-        db.execute("UPDATE accounts SET balance_minor = 9000000000000000 WHERE id = ?", (ids["EUR"],))
+        db.execute(
+            "UPDATE accounts SET balance_minor = 9000000000000000 WHERE id = ?", (ids["EUR"],)
+        )
     response = client.post(
-        "/api/exchange", headers={**auth(user["token"]), "Idempotency-Key": "overflow"},
+        "/api/exchange",
+        headers={**auth(user["access_token"]), "Idempotency-Key": "overflow"},
         json={"quote_id": quote["quote_id"]},
     )
     assert response.status_code == 409
-    balances = client.get("/api/accounts", headers=auth(user["token"])).json()["accounts"]
+    balances = client.get("/api/accounts", headers=auth(user["access_token"])).json()["accounts"]
     assert next(a["balance_minor"] for a in balances if a["currency_code"] == "PLN") == 100_000
-    assert next(a["balance_minor"] for a in balances if a["currency_code"] == "EUR") == 9_000_000_000_000_000
+    assert (
+        next(a["balance_minor"] for a in balances if a["currency_code"] == "EUR")
+        == 9_000_000_000_000_000
+    )
 
 
 def test_exchange_rolls_back_both_balances_when_ledger_insert_fails(client, tmp_path):
     user = create_user(client, "rollback-fx@example.com")
-    ids = account_ids(client, user["token"])
+    ids = account_ids(client, user["access_token"])
     quote = client.post(
-        "/api/exchange/quote", headers=auth(user["token"]),
-        json={"source_account_id": ids["PLN"], "destination_account_id": ids["EUR"], "source_amount_minor": 5_000},
+        "/api/exchange/quote",
+        headers=auth(user["access_token"]),
+        json={
+            "source_account_id": ids["PLN"],
+            "destination_account_id": ids["EUR"],
+            "source_amount_minor": 5_000,
+        },
     ).json()
     with sqlite3.connect(tmp_path / "exchange.db") as db:
         db.execute(
@@ -618,27 +793,36 @@ def test_exchange_rolls_back_both_balances_when_ledger_insert_fails(client, tmp_
         )
     with pytest.raises(sqlite3.IntegrityError):
         client.post(
-            "/api/exchange", headers={**auth(user["token"]), "Idempotency-Key": "rollback"},
+            "/api/exchange",
+            headers={**auth(user["access_token"]), "Idempotency-Key": "rollback"},
             json={"quote_id": quote["quote_id"]},
         )
-    balances = client.get("/api/accounts", headers=auth(user["token"])).json()["accounts"]
+    balances = client.get("/api/accounts", headers=auth(user["access_token"])).json()["accounts"]
     assert next(a["balance_minor"] for a in balances if a["currency_code"] == "PLN") == 100_000
     assert next(a["balance_minor"] for a in balances if a["currency_code"] == "EUR") == 0
     with sqlite3.connect(tmp_path / "exchange.db") as db:
-        assert db.execute("SELECT consumed_at FROM exchange_quotes WHERE id = ?", (quote["quote_id"],)).fetchone() == (None,)
-        assert db.execute("SELECT count(*) FROM transactions WHERE kind = 'exchange'").fetchone() == (0,)
+        assert db.execute(
+            "SELECT consumed_at FROM exchange_quotes WHERE id = ?", (quote["quote_id"],)
+        ).fetchone() == (None,)
+        assert db.execute(
+            "SELECT count(*) FROM transactions WHERE kind = 'exchange'"
+        ).fetchone() == (0,)
 
 
 def test_analyst_cannot_quote_or_exchange(client):
     from app.admin import create_analyst
 
-    analyst_id = create_analyst("analyst-fx@example.com", "analyst-password")
+    analyst_id = create_analyst("analyst-fx@example.com", "violet-bridge-2026!")
     assert analyst_id > 0
     login = client.post(
-        "/api/login", json={"email": "analyst-fx@example.com", "password": "analyst-password"}
+        "/api/login", json={"email": "analyst-fx@example.com", "password": "violet-bridge-2026!"}
     ).json()
-    assert client.get("/api/exchange-rates", headers=auth(login["token"])).status_code == 403
-    assert client.post(
-        "/api/exchange/quote", headers=auth(login["token"]),
-        json={"source_account_id": 1, "destination_account_id": 2, "source_amount_minor": 100},
-    ).status_code == 403
+    assert client.get("/api/exchange-rates", headers=auth(login["access_token"])).status_code == 403
+    assert (
+        client.post(
+            "/api/exchange/quote",
+            headers=auth(login["access_token"]),
+            json={"source_account_id": 1, "destination_account_id": 2, "source_amount_minor": 100},
+        ).status_code
+        == 403
+    )

@@ -1,3 +1,4 @@
+import {authenticatedFetch} from '../../auth/session';
 import React from 'react';
 import {
   ActivityIndicator,
@@ -44,7 +45,7 @@ export function TransactionHistoryScreen({token, goHome}: TransactionHistoryScre
       let total = 0;
 
       do {
-        const response = await fetch(
+        const response = await authenticatedFetch(
           `${apiBaseUrl}/api/transactions?limit=${limit}&offset=${offset}`,
           {headers: {Authorization: `Bearer ${token}`}},
         );

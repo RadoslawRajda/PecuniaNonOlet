@@ -1,3 +1,4 @@
+import {authenticatedFetch} from '../../auth/session';
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {ActivityIndicator, Animated, Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {API_URL} from '@env';
@@ -15,6 +16,7 @@ import {TransactionDetails} from './TransactionDetails';
 import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
 import {formatExchangeRate, formatExchangeRateLabel} from '../formatters';
 import {estimateExchangeAmount, parseExchangeAmountMinor} from '../exchange';
+import {isAllowedHttpsNavigation} from '../webViewSecurity';
 
 type ExchangeRatesProps = {token: string | null; goHome: () => void};
 type ExchangeRate = {currency_code: string; pln_per_unit: string};
@@ -85,8 +87,8 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
     try {
       const headers = {Authorization: `Bearer ${token}`};
       const [rateResponse, accountResponse] = await Promise.all([
-        fetch(`${apiBaseUrl}/api/exchange-rates`, {headers}),
-        fetch(`${apiBaseUrl}/api/accounts`, {headers}),
+        authenticatedFetch(`${apiBaseUrl}/api/exchange-rates`, {headers}),
+        authenticatedFetch(`${apiBaseUrl}/api/accounts`, {headers}),
       ]);
       const [rateData, accountData] = await Promise.all([
         rateResponse.json().catch(() => null),
@@ -132,7 +134,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
     setError(null);
     setQuote(null);
     try {
-      const response = await fetch(`${apiBaseUrl}/api/exchange/quote`, {
+      const response = await authenticatedFetch(`${apiBaseUrl}/api/exchange/quote`, {
         method: 'POST', headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
         body: JSON.stringify({source_account_id: sourceAccount.id, destination_account_id: destinationAccount.id, source_amount_minor: sourceAmountMinor}),
       });
@@ -154,7 +156,7 @@ export function ExchangeRatesScreen({token, goHome}: ExchangeRatesProps) {
     setIsExchanging(true);
     setError(null);
     try {
-      const response = await fetch(`${apiBaseUrl}/api/exchange`, {
+      const response = await authenticatedFetch(`${apiBaseUrl}/api/exchange`, {
         method: 'POST',
         headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey.current ?? `exchange-${quote.quote_id}`},
         body: JSON.stringify({quote_id: quote.quote_id}),
@@ -297,7 +299,21 @@ function RatesWebViewModal({visible, onClose}: {visible: boolean; onClose: () =>
               <Text style={styles.sourcePageCloseText}>Zamknij</Text>
             </Pressable>
           </View>
-          <WebView source={{uri: 'https://nbp.pl/statystyka-i-sprawozdawczosc/kursy/tabela-a/'}} startInLoadingState javaScriptEnabled domStorageEnabled scrollEnabled nestedScrollEnabled style={styles.webView} />
+          {/* Route all URLs through the explicit allowlist instead of opening unknown schemes externally. */}
+          <WebView
+            source={{uri: 'https://nbp.pl/statystyka-i-sprawozdawczosc/kursy/tabela-a/'}}
+            originWhitelist={['*']}
+            onShouldStartLoadWithRequest={request =>
+              request.url === 'about:blank'
+              || isAllowedHttpsNavigation(request.url, ['nbp.pl', 'www.nbp.pl'])
+            }
+            startInLoadingState
+            javaScriptEnabled
+            domStorageEnabled
+            scrollEnabled
+            nestedScrollEnabled
+            style={styles.webView}
+          />
         </SafeAreaView>
       </SafeAreaProvider>
     </Modal>

@@ -1,3 +1,4 @@
+import {authenticatedFetch} from '../../auth/session';
 import React, {useCallback, useEffect, useState} from 'react';
 import {
   ScrollView,
@@ -20,7 +21,6 @@ import {API_URL} from '@env';
 import type {Account} from '../../types/Account';
 import type {TransactionCreationFormValues} from '../../types/TransactionCreationFormValues';
 import {TransactionCreation} from './TransactionCreation';
-import {TransactionDetails} from './TransactionDetails';
 import {handleForbiddenResponse, useAppPreferences} from '../../context/AppPreferences';
 
 type QrScannerProps = {token: string | null; onTransferCreated: (transactionId?: string) => void};
@@ -40,7 +40,7 @@ export function QrScannerScreen({token, onTransferCreated}: QrScannerProps) {
     if (!token) {
       return;
     }
-    fetch(`${apiBaseUrl}/api/accounts`, {headers: {Authorization: `Bearer ${token}`}})
+    authenticatedFetch(`${apiBaseUrl}/api/accounts`, {headers: {Authorization: `Bearer ${token}`}})
       .then(async response => {
         if (handleForbiddenResponse(response, handleForbidden)) return;
         const data = await response.json().catch(() => null);

@@ -80,6 +80,7 @@ android {
     namespace "com.pecunianonolet"
     defaultConfig {
         applicationId "com.pecunianonolet"
+        manifestPlaceholders = [appAuthRedirectScheme: "com.googleusercontent.apps.318451605908-a04jhpg7stoakkiq9skkcocbq45oofsa"]
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -110,6 +111,7 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")

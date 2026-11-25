@@ -91,18 +91,22 @@ def _new_ca(now: datetime) -> tuple[ec.EllipticCurvePrivateKey, x509.Certificate
                 key_agreement=False,
                 key_cert_sign=True,
                 crl_sign=True,
-                encipher_only=None,
-                decipher_only=None,
+                encipher_only=False,
+                decipher_only=False,
             ),
             critical=True,
         )
-        .add_extension(x509.SubjectKeyIdentifier.from_public_key(private_key.public_key()), critical=False)
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(private_key.public_key()), critical=False
+        )
         .sign(private_key, hashes.SHA256())
     )
     return private_key, certificate
 
 
-def _load_or_create_ca(directory: Path, now: datetime) -> tuple[ec.EllipticCurvePrivateKey, x509.Certificate]:
+def _load_or_create_ca(
+    directory: Path, now: datetime
+) -> tuple[ec.EllipticCurvePrivateKey, x509.Certificate]:
     key_path = directory / "local-root-ca-key.pem"
     certificate_path = directory / "local-root-ca.pem"
     try:
@@ -162,10 +166,13 @@ def _valid_server_certificate(
         ca_public_key = ca_certificate.public_key()
         if not isinstance(ca_public_key, ec.EllipticCurvePublicKey):
             return False
+        signature_hash_algorithm = certificate.signature_hash_algorithm
+        if signature_hash_algorithm is None:
+            return False
         ca_public_key.verify(
             certificate.signature,
             certificate.tbs_certificate_bytes,
-            ec.ECDSA(certificate.signature_hash_algorithm),
+            ec.ECDSA(signature_hash_algorithm),
         )
         return True
     except (ValueError, TypeError, x509.ExtensionNotFound):
@@ -205,15 +212,15 @@ def _new_server_certificate(
                 key_agreement=False,
                 key_cert_sign=False,
                 crl_sign=False,
-                encipher_only=None,
-                decipher_only=None,
+                encipher_only=False,
+                decipher_only=False,
             ),
             critical=True,
         )
+        .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
         .add_extension(
-            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False
+            x509.SubjectKeyIdentifier.from_public_key(private_key.public_key()), critical=False
         )
-        .add_extension(x509.SubjectKeyIdentifier.from_public_key(private_key.public_key()), critical=False)
         .add_extension(
             x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
             critical=False,
@@ -258,7 +265,9 @@ def ensure_local_tls(directory: Path, lan_ip: str) -> LocalTLSFiles:
         mode=0o644,
     )
     fingerprint = hashlib.sha256(ca_der).hexdigest().upper()
-    fingerprint = ":".join(fingerprint[index : index + 2] for index in range(0, len(fingerprint), 2))
+    fingerprint = ":".join(
+        fingerprint[index : index + 2] for index in range(0, len(fingerprint), 2)
+    )
     return LocalTLSFiles(
         certificate=certificate_path,
         private_key=key_path,

@@ -1,10 +1,9 @@
 import sqlite3
 
 import pytest
+from app.database import migrate_database
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
-
-from app.database import migrate_database
 
 
 @pytest.fixture
@@ -18,13 +17,34 @@ def test_migrates_empty_database(database_path):
     migrate_database()
     with sqlite3.connect(database_path) as db:
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert {"users", "sessions", "currencies", "accounts", "transactions", "ledger_entries", "exchange_rate_snapshots", "exchange_quotes", "profile_photos", "audit_events", "user_totp", "totp_login_challenges", "totp_recovery_codes", "alembic_version"} <= tables
+        assert {
+            "users",
+            "auth_sessions",
+            "consumed_refresh_tokens",
+            "security_events",
+            "currencies",
+            "accounts",
+            "transactions",
+            "ledger_entries",
+            "exchange_rate_snapshots",
+            "exchange_quotes",
+            "profile_photos",
+            "audit_events",
+            "user_totp",
+            "totp_login_challenges",
+            "totp_recovery_codes",
+            "alembic_version",
+        } <= tables
         assert db.execute("SELECT code FROM currencies ORDER BY code").fetchall() == [
-            ("CZK",), ("EUR",), ("GBP",), ("PLN",), ("USD",)
+            ("CZK",),
+            ("EUR",),
+            ("GBP",),
+            ("PLN",),
+            ("USD",),
         ]
 
 
-def test_migrates_existing_users_and_active_sessions_without_loss(database_path):
+def test_migrates_existing_users_and_revokes_legacy_sessions(database_path):
     with sqlite3.connect(database_path) as db:
         db.executescript(
             """
@@ -50,15 +70,21 @@ def test_migrates_existing_users_and_active_sessions_without_loss(database_path)
         assert db.execute("SELECT id, email, password_hash, created_at FROM users").fetchall() == [
             (41, "old@example.com", "argon2-hash", 123456)
         ]
-        assert db.execute("SELECT token_hash, user_id, expires_at FROM sessions").fetchall() == [
-            ("saved-token-hash", 41, 9876543210)
-        ]
-        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0008_totp_mfa",)
-        assert "consumed_transaction_id" in {row[1] for row in db.execute("PRAGMA table_info(exchange_quotes)")}
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "sessions" not in tables
+        assert db.execute("SELECT count(*) FROM auth_sessions").fetchone() == (0,)
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == (
+            "0015_legacy_password_origin",
+        )
+        assert "consumed_transaction_id" in {
+            row[1] for row in db.execute("PRAGMA table_info(exchange_quotes)")
+        }
         assert {"source_pln_rate", "destination_pln_rate", "rate_table_id"} <= {
             row[1] for row in db.execute("PRAGMA table_info(exchange_quotes)")
         }
-        assert db.execute("SELECT role_name FROM user_roles WHERE user_id = 41").fetchone() == ("user",)
+        assert db.execute("SELECT role_name FROM user_roles WHERE user_id = 41").fetchone() == (
+            "user",
+        )
         assert db.execute(
             "SELECT currency_code, balance_minor FROM accounts WHERE user_id = 41 ORDER BY currency_code"
         ).fetchall() == [("CZK", 0), ("EUR", 0), ("GBP", 0), ("PLN", 100_000), ("USD", 0)]
@@ -68,20 +94,30 @@ def test_migrates_existing_users_and_active_sessions_without_loss(database_path)
         assert db.execute(
             "SELECT amount_minor FROM ledger_entries WHERE transaction_id = 'init-pln-41'"
         ).fetchall() == [(100_000,)]
-        assert db.execute(
-            "SELECT action, entity_type, entity_id FROM audit_events"
-        ).fetchall() == [("financial.transaction_recorded", "transaction", "init-pln-41")]
+        assert db.execute("SELECT action, entity_type, entity_id FROM audit_events").fetchall() == [
+            ("financial.transaction_recorded", "transaction", "init-pln-41")
+        ]
 
 
 def test_migration_is_repeatable_and_preserves_financial_data(database_path):
     migrate_database()
     with sqlite3.connect(database_path) as db:
-        db.execute("INSERT INTO users(email, password_hash, created_at) VALUES (?, ?, ?)", ("repeat@example.com", "hash", 1))
-        user_id = db.execute("SELECT id FROM users WHERE email = ?", ("repeat@example.com",)).fetchone()[0]
-        db.execute("INSERT INTO accounts(user_id, currency_code, balance_minor) VALUES (?, 'PLN', 100000)", (user_id,))
+        db.execute(
+            "INSERT INTO users(email, password_hash, created_at) VALUES (?, ?, ?)",
+            ("repeat@example.com", "hash", 1),
+        )
+        user_id = db.execute(
+            "SELECT id FROM users WHERE email = ?", ("repeat@example.com",)
+        ).fetchone()[0]
+        db.execute(
+            "INSERT INTO accounts(user_id, currency_code, balance_minor) VALUES (?, 'PLN', 100000)",
+            (user_id,),
+        )
     migrate_database()
     with sqlite3.connect(database_path) as db:
-        assert db.execute("SELECT balance_minor FROM accounts WHERE user_id = ?", (user_id,)).fetchone() == (100000,)
+        assert db.execute(
+            "SELECT balance_minor FROM accounts WHERE user_id = ?", (user_id,)
+        ).fetchone() == (100000,)
 
 
 def test_failed_migration_rolls_back_ddl_and_can_be_retried(database_path):
@@ -102,16 +138,24 @@ def test_failed_migration_rolls_back_ddl_and_can_be_retried(database_path):
 
     assert interrupted
     with sqlite3.connect(database_path) as db:
-        assert db.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'currencies'"
-        ).fetchone() is None
-        assert db.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'alembic_version'"
-        ).fetchone() is None
+        assert (
+            db.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'currencies'"
+            ).fetchone()
+            is None
+        )
+        assert (
+            db.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'alembic_version'"
+            ).fetchone()
+            is None
+        )
 
     migrate_database()
     with sqlite3.connect(database_path) as db:
-        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0008_totp_mfa",)
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == (
+            "0015_legacy_password_origin",
+        )
         assert db.execute("SELECT count(*) FROM currencies").fetchone()[0] == 5
 
 
@@ -130,24 +174,58 @@ def test_migration_resumes_legacy_partial_currency_setup(database_path):
 
     with sqlite3.connect(database_path) as db:
         assert db.execute("SELECT code FROM currencies ORDER BY code").fetchall() == [
-            ("CZK",), ("EUR",), ("GBP",), ("PLN",), ("USD",)
+            ("CZK",),
+            ("EUR",),
+            ("GBP",),
+            ("PLN",),
+            ("USD",),
         ]
-        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0008_totp_mfa",)
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == (
+            "0015_legacy_password_origin",
+        )
+
+
+def test_security_event_records_are_append_only(database_path):
+    migrate_database()
+    with sqlite3.connect(database_path) as db:
+        db.execute(
+            """INSERT INTO security_events(
+                   event_type,outcome,authentication_method,endpoint,occurred_at
+               ) VALUES ('authentication','failure','password','/api/login',1)"""
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            db.execute("UPDATE security_events SET outcome='success' WHERE id=1")
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            db.execute("DELETE FROM security_events WHERE id=1")
 
 
 def test_constraints_reject_duplicate_accounts_negative_balance_and_unknown_currency(database_path):
     migrate_database()
     with sqlite3.connect(database_path) as db:
         db.execute("PRAGMA foreign_keys = ON")
-        db.execute("INSERT INTO users(email, password_hash, created_at) VALUES ('owner@example.com', 'hash', 1)")
+        db.execute(
+            "INSERT INTO users(email, password_hash, created_at) VALUES ('owner@example.com', 'hash', 1)"
+        )
         user_id = db.execute("SELECT id FROM users").fetchone()[0]
-        db.execute("INSERT INTO accounts(user_id, currency_code, balance_minor) VALUES (?, 'PLN', 0)", (user_id,))
+        db.execute(
+            "INSERT INTO accounts(user_id, currency_code, balance_minor) VALUES (?, 'PLN', 0)",
+            (user_id,),
+        )
         with pytest.raises(sqlite3.IntegrityError):
-            db.execute("INSERT INTO accounts(user_id, currency_code, balance_minor) VALUES (?, 'PLN', 0)", (user_id,))
+            db.execute(
+                "INSERT INTO accounts(user_id, currency_code, balance_minor) VALUES (?, 'PLN', 0)",
+                (user_id,),
+            )
         with pytest.raises(sqlite3.IntegrityError):
-            db.execute("INSERT INTO accounts(user_id, currency_code, balance_minor) VALUES (?, 'EUR', -1)", (user_id,))
+            db.execute(
+                "INSERT INTO accounts(user_id, currency_code, balance_minor) VALUES (?, 'EUR', -1)",
+                (user_id,),
+            )
         with pytest.raises(sqlite3.IntegrityError):
-            db.execute("INSERT INTO accounts(user_id, currency_code, balance_minor) VALUES (?, 'ABC', 0)", (user_id,))
+            db.execute(
+                "INSERT INTO accounts(user_id, currency_code, balance_minor) VALUES (?, 'ABC', 0)",
+                (user_id,),
+            )
 
 
 def test_foreign_keys_prevent_orphan_sessions_accounts_and_entries(database_path):
@@ -155,8 +233,17 @@ def test_foreign_keys_prevent_orphan_sessions_accounts_and_entries(database_path
     with sqlite3.connect(database_path) as db:
         db.execute("PRAGMA foreign_keys = ON")
         with pytest.raises(sqlite3.IntegrityError):
-            db.execute("INSERT INTO sessions(token_hash, user_id, expires_at) VALUES ('orphan', 999, 1)")
+            db.execute(
+                """INSERT INTO auth_sessions(
+                       session_id,user_id,access_token_hash,access_expires_at,
+                       refresh_token_hash,refresh_expires_at,absolute_expires_at,
+                       created_at,authenticated_at,authentication_method
+                   ) VALUES (?,999,?,10,?,20,30,1,1,'password')""",
+                ("s" * 43, "a" * 64, "b" * 64),
+            )
         with pytest.raises(sqlite3.IntegrityError):
             db.execute("INSERT INTO accounts(user_id, currency_code) VALUES (999, 'PLN')")
         with pytest.raises(sqlite3.IntegrityError):
-            db.execute("INSERT INTO ledger_entries(transaction_id, account_id, account_user_id, amount_minor, created_at) VALUES ('missing', 1, 1, 10, 1)")
+            db.execute(
+                "INSERT INTO ledger_entries(transaction_id, account_id, account_user_id, amount_minor, created_at) VALUES ('missing', 1, 1, 10, 1)"
+            )

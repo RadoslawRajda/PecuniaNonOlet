@@ -6,8 +6,8 @@ import {check, PERMISSIONS, request, RESULTS} from 'react-native-permissions';
 import {API_URL} from '@env';
 import type {PropsWithChildren} from 'react';
 import {setColorScheme, type ColorScheme} from '../views/theme';
-import { Alert } from 'react-native';
 import type {UserRole} from '../models/auth';
+import {authenticatedFetch} from '../auth/session';
 
 const THEME_KEY = '@app_theme';
 const CURRENCY_KEY = '@app_preferred_currency';
@@ -77,7 +77,7 @@ export function AppPreferencesProvider({token, role, handleForbidden, children}:
 
     let active = true;
     setPhotoResolvedToken(null);
-    fetch(profilePhotoUrl(profilePhotoRevision), {
+    authenticatedFetch(profilePhotoUrl(profilePhotoRevision), {
       headers: {Authorization: `Bearer ${token}`},
     })
       .then(async response => {
@@ -104,7 +104,7 @@ export function AppPreferencesProvider({token, role, handleForbidden, children}:
       });
 
     return () => { active = false; };
-  }, [token, role, profilePhotoRevision]);
+  }, [token, role, profilePhotoRevision, handleForbidden]);
 
   useEffect(() => {
     let active = true;
